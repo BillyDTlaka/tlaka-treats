@@ -3,6 +3,6 @@ builder = "nixpacks"
 buildCommand = "npm install && npx prisma generate --schema src/prisma/schema.prisma && npm run build"
 
 [deploy]
-startCommand = "npx prisma migrate deploy --schema src/prisma/schema.prisma && node dist/server.js"
+startCommand = "npx prisma migrate resolve --applied 20260228064701_init --schema src/prisma/schema.prisma 2>/dev/null || true && npx prisma migrate deploy --schema src/prisma/schema.prisma && node dist/server.js"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
