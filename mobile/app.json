@@ -28,7 +28,7 @@
     ],
     "scheme": "tlakatreats",
     "extra": {
-      "apiUrl": "http://localhost:3000"
+      "apiUrl": "https://tlaka-treats-production.up.railway.app"
     }
   }
 }
