@@ -1,0 +1,10 @@
+{
+  "name": "tlaka-treats",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["api"],
+  "scripts": {
+    "api": "npm run dev --workspace=api",
+    "mobile": "cd mobile && npm start"
+  }
+}

@@ -1,0 +1,534 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum AmbassadorStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum KycStatus {
+  NOT_SUBMITTED
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  BAKING
+  READY
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum PricingTier {
+  RETAIL
+  AMBASSADOR
+  WHOLESALE
+}
+
+enum ProductClassification {
+  SELLABLE     // Finished item we produce and sell to customers
+  INGREDIENT   // Raw material used in production
+  PACKAGING    // Packaging used for products
+  CONSUMABLE   // Other consumables used internally
+  SERVICE      // Fees, delivery, or other services
+}
+
+// ─── User & Auth ──────────────────────────────────────────────────────────────
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  phone        String?    @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  roles      UserRole[]
+  ambassador Ambassador?
+  orders     Order[]
+  addresses  Address[]
+}
+
+model Role {
+  id          String       @id @default(cuid())
+  name        String       @unique
+  description String?
+  permissions Permission[]
+  users       UserRole[]
+}
+
+model UserRole {
+  userId    String
+  roleId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+model Permission {
+  id      String @id @default(cuid())
+  action  String // create | read | update | delete | manage
+  subject String // order | product | commission | user | payout | ambassador
+
+  roleId String
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([action, subject, roleId])
+}
+
+model Address {
+  id         String   @id @default(cuid())
+  userId     String
+  label      String? // Home, Work, etc.
+  street     String
+  suburb     String?
+  city       String
+  province   String
+  postalCode String
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders Order[]
+}
+
+// ─── Ambassador ───────────────────────────────────────────────────────────────
+
+model Ambassador {
+  id             String           @id @default(cuid())
+  userId         String           @unique
+  code           String           @unique // shareable referral code e.g. TT-BILLY01
+  commissionRate Decimal          @default(0.10) @db.Decimal(5, 4)
+  status         AmbassadorStatus @default(PENDING)
+  bio            String?
+
+  // KYC fields
+  kycStatus      KycStatus        @default(NOT_SUBMITTED)
+  kycData        Json?            // { phone, address:{street,suburb,city,province,postalCode}, idType, idNumber, idDocumentUrl, submittedAt }
+  kycNote        String?          // Admin review note (reason for rejection, etc.)
+
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders      Order[]
+  commissions Commission[]
+  payouts     Payout[]
+}
+
+// ─── Products ─────────────────────────────────────────────────────────────────
+
+model Category {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  description String?
+  imageUrl    String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  products    Product[]
+}
+
+model Product {
+  id             String                @id @default(cuid())
+  name           String
+  description    String?
+  brand          String?               // Brand name (e.g. Tlaka Treats, or a third-party brand)
+  supplierId     String?               // FK to Supplier — who we buy/source this product from
+  imageUrl       String?               // Primary image URL (for customer-facing display)
+  images         Json?                 // Array of {url:string, isPrimary:boolean} for gallery
+  classification ProductClassification @default(SELLABLE)
+  isActive       Boolean               @default(true)
+  categoryId     String?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  category  Category?      @relation(fields: [categoryId], references: [id])
+  supplier  Supplier?      @relation(fields: [supplierId], references: [id])
+  variants  ProductVariant[]
+  stockItem StockItem?
+}
+
+model ProductVariant {
+  id          String  @id @default(cuid())
+  productId   String
+  name        String // e.g. "12 Pack", "24 Pack"
+  description String?
+  isActive    Boolean @default(true)
+
+  product    Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  prices     VariantPrice[]
+  orderItems OrderItem[]
+}
+
+model VariantPrice {
+  id        String      @id @default(cuid())
+  variantId String
+  tier      PricingTier
+  price     Decimal     @db.Decimal(10, 2)
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([variantId, tier])
+}
+
+// ─── Orders ───────────────────────────────────────────────────────────────────
+
+model Order {
+  id           String      @id @default(cuid())
+  customerId   String
+  ambassadorId String? // null = direct order, no commission
+  addressId    String?
+  status       OrderStatus @default(PENDING)
+  subtotal     Decimal     @db.Decimal(10, 2)
+  deliveryFee  Decimal     @default(0) @db.Decimal(10, 2)
+  total        Decimal     @db.Decimal(10, 2)
+  notes        String?
+  paymentRef   String?
+  paidAt       DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  customer   User        @relation(fields: [customerId], references: [id])
+  ambassador Ambassador? @relation(fields: [ambassadorId], references: [id])
+  address    Address?    @relation(fields: [addressId], references: [id])
+  items      OrderItem[]
+  commission Commission?
+  statusLogs OrderStatusLog[]
+  financeTransaction FinanceTransaction?
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  variantId String
+  quantity  Int
+  unitPrice Decimal @db.Decimal(10, 2)
+  subtotal  Decimal @db.Decimal(10, 2)
+
+  order   Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id])
+}
+
+model OrderStatusLog {
+  id        String      @id @default(cuid())
+  orderId   String
+  status    OrderStatus
+  note      String?
+  createdAt DateTime    @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+// ─── Commissions & Payouts ────────────────────────────────────────────────────
+
+model Commission {
+  id           String           @id @default(cuid())
+  orderId      String           @unique
+  ambassadorId String
+  amount       Decimal          @db.Decimal(10, 2)
+  rate         Decimal          @db.Decimal(5, 4)
+  status       CommissionStatus @default(PENDING)
+  payoutId     String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  order      Order      @relation(fields: [orderId], references: [id])
+  ambassador Ambassador @relation(fields: [ambassadorId], references: [id])
+  payout     Payout?    @relation(fields: [payoutId], references: [id])
+}
+
+model Payout {
+  id           String       @id @default(cuid())
+  ambassadorId String
+  amount       Decimal      @db.Decimal(10, 2)
+  method       String       @default("bank_transfer")
+  reference    String?
+  status       PayoutStatus @default(PENDING)
+  notes        String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  ambassador  Ambassador   @relation(fields: [ambassadorId], references: [id])
+  commissions Commission[]
+}
+
+// ─── Inventory & Operations ───────────────────────────────────────────────────
+
+enum SupplierStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum StockMovementType {
+  PURCHASE         // Stock received from supplier / purchase
+  PRODUCTION_USE   // Consumed in a production run
+  ADJUSTMENT_IN    // Manual upward correction
+  ADJUSTMENT_OUT   // Manual downward correction / write-off
+  WASTE            // Spoilage or expiry
+  RETURN           // Returned to supplier
+}
+
+enum ProductionStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  ORDERED
+  PARTIAL
+  RECEIVED
+  CANCELLED
+}
+
+model Supplier {
+  id          String         @id @default(cuid())
+  name        String
+  contactName String?
+  phone       String?
+  email       String?
+  address     String?
+  city        String?
+  notes       String?
+  status      SupplierStatus @default(ACTIVE)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  products       Product[]
+  purchaseOrders PurchaseOrder[]
+}
+
+model StockItem {
+  id            String   @id @default(cuid())
+  productId     String   @unique          // Every stock item must be backed by a Product
+  name          String
+  sku           String?  @unique
+  unit          String   // g, kg, ml, l, units, pcs, bags, boxes
+  currentStock  Decimal  @default(0) @db.Decimal(12, 3)
+  minStockLevel Decimal  @default(0) @db.Decimal(12, 3)
+  costPerUnit   Decimal  @default(0) @db.Decimal(10, 4)
+  notes         String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  product            Product            @relation(fields: [productId], references: [id])
+  movements          StockMovement[]
+  recipeIngredients  RecipeIngredient[]
+  purchaseOrderItems PurchaseOrderItem[]
+}
+
+model StockMovement {
+  id              String            @id @default(cuid())
+  stockItemId     String
+  type            StockMovementType
+  quantity        Decimal           @db.Decimal(12, 3) // positive=in, negative=out
+  unitCost        Decimal?          @db.Decimal(10, 4)
+  reference       String?           // PO id, production run id, etc.
+  note            String?
+  productionRunId String?
+  purchaseOrderId String?
+  createdAt       DateTime          @default(now())
+
+  stockItem     StockItem      @relation(fields: [stockItemId], references: [id])
+  productionRun ProductionRun? @relation(fields: [productionRunId], references: [id])
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+}
+
+model Recipe {
+  id        String   @id @default(cuid())
+  name      String
+  productId String?
+  yieldQty  Decimal  @default(1) @db.Decimal(10, 3) // units this recipe produces
+  yieldUnit String   @default("batch")
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ingredients    RecipeIngredient[]
+  productionRuns ProductionRun[]
+}
+
+model RecipeIngredient {
+  id          String  @id @default(cuid())
+  recipeId    String
+  stockItemId String
+  quantity    Decimal @db.Decimal(12, 3)
+  unit        String
+  notes       String?
+
+  recipe    Recipe    @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  stockItem StockItem @relation(fields: [stockItemId], references: [id])
+}
+
+model ProductionRun {
+  id          String           @id @default(cuid())
+  recipeId    String
+  batches     Decimal          @default(1) @db.Decimal(10, 3)
+  status      ProductionStatus @default(PLANNED)
+  plannedDate DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  notes       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  recipe         Recipe          @relation(fields: [recipeId], references: [id])
+  stockMovements StockMovement[]
+}
+
+model PurchaseOrder {
+  id           String              @id @default(cuid())
+  supplierId   String
+  status       PurchaseOrderStatus @default(DRAFT)
+  orderDate    DateTime            @default(now())
+  expectedDate DateTime?
+  notes        String?
+  total        Decimal             @default(0) @db.Decimal(10, 2)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  supplier       Supplier            @relation(fields: [supplierId], references: [id])
+  items          PurchaseOrderItem[]
+  stockMovements StockMovement[]
+}
+
+model PurchaseOrderItem {
+  id              String  @id @default(cuid())
+  purchaseOrderId String
+  stockItemId     String
+  orderedQty      Decimal @db.Decimal(12, 3)
+  receivedQty     Decimal @default(0) @db.Decimal(12, 3)
+  unitCost        Decimal @db.Decimal(10, 4)
+  total           Decimal @db.Decimal(10, 2)
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  stockItem     StockItem     @relation(fields: [stockItemId], references: [id])
+}
+
+// ─── Finance ──────────────────────────────────────────────────────────────────
+
+enum AccountType {
+  ASSET       // Cash, bank accounts, receivables
+  LIABILITY   // Loans, payables
+  EQUITY      // Owner's equity, retained earnings
+  INCOME      // Revenue streams
+  EXPENSE     // Operating costs
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+enum BankTransactionStatus {
+  UNMATCHED
+  MATCHED
+  IGNORED
+}
+
+model FinanceAccount {
+  id          String      @id @default(cuid())
+  code        String      @unique   // e.g. "4001"
+  name        String                // e.g. "Product Sales"
+  type        AccountType
+  description String?
+  isActive    Boolean     @default(true)
+  isSystem    Boolean     @default(false) // system accounts cannot be deleted
+  sortOrder   Int         @default(0)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  transactions FinanceTransaction[]
+}
+
+model FinanceTransaction {
+  id            String          @id @default(cuid())
+  date          DateTime        @default(now())
+  amount        Decimal         @db.Decimal(10, 2)
+  type          TransactionType
+  category      String          // mirrors account name; free-text fallback if no accountId
+  accountId     String?         // FK to FinanceAccount (optional)
+  description   String
+  reference     String?
+  attachmentUrl String?
+  orderId       String?         @unique // auto-linked when a sale is recorded
+  bankTxnId     String?         @unique // linked when matched to a bank transaction
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  account FinanceAccount?  @relation(fields: [accountId], references: [id])
+  order   Order?           @relation(fields: [orderId], references: [id])
+  bankTxn BankTransaction? @relation(fields: [bankTxnId], references: [id])
+}
+
+model BankAccount {
+  id            String   @id @default(cuid())
+  name          String   // e.g. "FNB Business Cheque"
+  bankName      String?
+  accountNumber String?
+  balance       Decimal  @default(0) @db.Decimal(10, 2)
+  currency      String   @default("ZAR")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  transactions BankTransaction[]
+}
+
+model BankTransaction {
+  id            String                @id @default(cuid())
+  bankAccountId String
+  date          DateTime
+  description   String
+  amount        Decimal               @db.Decimal(10, 2) // positive=credit, negative=debit
+  balance       Decimal?              @db.Decimal(10, 2)
+  reference     String?
+  status        BankTransactionStatus @default(UNMATCHED)
+  createdAt     DateTime              @default(now())
+
+  bankAccount BankAccount         @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  transaction FinanceTransaction? // reverse relation via bankTxnId on FinanceTransaction
+}

@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "Tlaka Treats",
+    "slug": "tlaka-treats",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#8B3A3A"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "za.co.tlakatreats.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#8B3A3A"
+      },
+      "package": "za.co.tlakatreats.app"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ],
+    "scheme": "tlakatreats",
+    "extra": {
+      "apiUrl": "http://localhost:3000"
+    }
+  }
+}
