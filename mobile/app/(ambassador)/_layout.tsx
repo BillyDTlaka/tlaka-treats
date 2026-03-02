@@ -7,6 +7,9 @@ export default function AmbassadorLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="dashboard" />
         <Stack.Screen name="orders" />
+        <Stack.Screen name="shop" />
+        <Stack.Screen name="checkout" />
+        <Stack.Screen name="product/[id]" />
         <Stack.Screen name="profile" />
         <Stack.Screen name="settings" />
         <Stack.Screen name="reports" />

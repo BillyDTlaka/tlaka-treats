@@ -28,7 +28,11 @@
     ],
     "scheme": "tlakatreats",
     "extra": {
-      "apiUrl": "https://tlaka-treats-production.up.railway.app"
+      "apiUrl": "https://tlaka-treats-production.up.railway.app",
+      "router": {},
+      "eas": {
+        "projectId": "82c9a857-c74b-4ead-bf67-02306c03885a"
+      }
     }
   }
 }

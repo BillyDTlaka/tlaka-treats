@@ -7,26 +7,16 @@ const db = prisma as any
 async function main() {
   console.log('🌱 Seeding database…')
 
-  // ─── Clean slate (FK-safe order) ────────────────────────────────────────────
-  await db.recipeIngredient.deleteMany({})
-  await db.productionRun.deleteMany({})
-  await db.recipe.deleteMany({})
-  await db.stockMovement.deleteMany({})
-  await db.purchaseOrderItem.deleteMany({})
-  await db.purchaseOrder.deleteMany({})
-  await db.stockItem.deleteMany({})
-  await prisma.variantPrice.deleteMany({})
-  await prisma.productVariant.deleteMany({})
-  await db.product.deleteMany({})
-  await db.supplier.deleteMany({})
-  await prisma.category.deleteMany({})
-  await db.ambassador.deleteMany({})
-  await prisma.address.deleteMany({})
-  await prisma.userRole.deleteMany({})
-  await prisma.user.deleteMany({})
-  await prisma.permission.deleteMany({})
-  await prisma.role.deleteMany({})
-  await db.financeAccount.deleteMany({})
+  // ─── Clean slate (CASCADE handles all FK dependencies in one shot) ────────────
+  await prisma.$executeRawUnsafe(`
+    DO $$ DECLARE
+      r RECORD;
+    BEGIN
+      FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
+        EXECUTE 'TRUNCATE TABLE "' || r.tablename || '" CASCADE';
+      END LOOP;
+    END $$;
+  `)
   console.log('🧹  Cleaned existing data')
 
   // ─── Roles & Permissions ────────────────────────────────────────────────────
@@ -107,9 +97,9 @@ async function main() {
     prisma.user.create({ data: { email: 'sibusiso.zulu@gmail.com',    firstName: 'Sibusiso', lastName: 'Zulu',     phone: '0612227788', passwordHash: ambPw, roles: { create: [{ roleId: customerRole.id }, { roleId: ambassadorRole.id }] } } }),
   ])
   await Promise.all([
-    db.ambassador.create({ data: { userId: ambUser1.id, code: 'TT-ZANE7823', commissionRate: 0.12, status: 'ACTIVE', bio: 'Passionate foodie and mom of 3.', kycStatus: 'APPROVED', kycData: { phone: '0835559988', idType: 'ID_BOOK', idNumber: '8504150XXXX084' } } }),
-    db.ambassador.create({ data: { userId: ambUser2.id, code: 'TT-MICH4419', commissionRate: 0.10, status: 'ACTIVE', bio: 'Gym trainer promoting quality baked goods.', kycStatus: 'SUBMITTED', kycData: { phone: '0724448899', idType: 'PASSPORT', idNumber: 'M234567XX' } } }),
-    db.ambassador.create({ data: { userId: ambUser3.id, code: 'TT-SIBU0312', commissionRate: 0.10, status: 'ACTIVE', bio: 'Community leader in Soweto.', kycStatus: 'APPROVED', kycData: { phone: '0612227788', idType: 'ID_BOOK', idNumber: '9011235XXXX088' } } }),
+    db.ambassador.create({ data: { userId: ambUser1.id, code: 'TT-ZANE7823', commissionRate: 0.12, status: 'ACTIVE', bio: 'Passionate foodie and mom of 3.' } }),
+    db.ambassador.create({ data: { userId: ambUser2.id, code: 'TT-MICH4419', commissionRate: 0.10, status: 'ACTIVE', bio: 'Gym trainer promoting quality baked goods.' } }),
+    db.ambassador.create({ data: { userId: ambUser3.id, code: 'TT-SIBU0312', commissionRate: 0.10, status: 'ACTIVE', bio: 'Community leader in Soweto.' } }),
   ])
   console.log('✅  Ambassadors: 3')
 
