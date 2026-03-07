@@ -3261,128 +3261,431 @@ function renderAdminOrders(data, container, reload) {
 
 // ── ADMIN: PLACE ORDER FOR CLIENT ─────────────────────────────────────────
 function showAdminPlaceOrderModal(customers, products, onDone) {
-  const modal = el('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4' });
-  const close = () => document.body.removeChild(modal);
+  // ── STATE ──────────────────────────────────────────────────────────────────
+  let step = 1;
+  let selectedCustomer = null;
+  let cart = []; // { variantId, productName, variantName, unitPrice, quantity }
+  let ambassadorCode = '';
+  let notes = '';
 
-  // Build flat list of sellable variants
-  const sellableVariants = [];
-  (products || []).forEach(p => {
-    if (!p.isActive) return;
-    (p.variants || []).forEach(v => {
-      if (v.isActive !== false) {
-        sellableVariants.push({ id: v.id, label: `${p.name}${v.name ? ' — ' + v.name : ''}`, price: v.retailPrice });
-      }
-    });
-  });
+  const custList = [...(customers || [])]; // local mutable copy so new customers can be pushed
 
-  // Order line state
-  let lines = [{ variantId: '', quantity: 1 }];
+  const catMap = new Map();
+  (products || []).filter(p => p.isActive).forEach(p => { if (p.category) catMap.set(p.category.id, p.category); });
+  const categories = [...catMap.values()];
 
-  const linesContainer = el('div', { className: 'space-y-2 mb-3' });
+  // ── SHELL ──────────────────────────────────────────────────────────────────
+  const overlay = el('div', { className: 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4' });
+  const panel = el('div', { className: 'bg-white rounded-2xl w-full max-w-4xl h-[92vh] flex flex-col shadow-2xl overflow-hidden' });
+  const close = () => document.body.removeChild(overlay);
 
-  function renderLines() {
-    linesContainer.innerHTML = '';
-    lines.forEach((line, idx) => {
-      const varSel = el('select', {
-        className: 'flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand',
-        onChange: e => { lines[idx].variantId = e.target.value; },
-      });
-      const defOpt = document.createElement('option'); defOpt.value = ''; defOpt.textContent = '— Select product —'; varSel.append(defOpt);
-      sellableVariants.forEach(v => {
-        const o = document.createElement('option'); o.value = v.id;
-        o.textContent = v.label + (v.price ? ` (R${Number(v.price).toFixed(2)})` : '');
-        if (v.id === line.variantId) o.selected = true;
-        varSel.append(o);
-      });
+  // Header
+  const stepBarEl = el('div', { className: 'flex items-center gap-1 sm:gap-2' });
+  const header = el('div', { className: 'flex items-center justify-between px-5 py-3.5 border-b border-gray-100 flex-shrink-0 gap-4' },
+    el('h2', { className: 'font-black text-gray-900 text-base sm:text-lg flex-shrink-0' }, 'Place Order for Client'),
+    stepBarEl,
+    el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold ml-2 flex-shrink-0', onClick: close }, '×'),
+  );
+  panel.append(header);
 
-      const qtyInput = el('input', {
-        type: 'number', min: '1', value: String(line.quantity),
-        className: 'w-20 border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand',
-        onInput: e => { lines[idx].quantity = Math.max(1, parseInt(e.target.value) || 1); },
-      });
+  // Content (scrollable)
+  const content = el('div', { className: 'flex-1 min-h-0 overflow-y-auto' });
+  panel.append(content);
 
-      const removeBtn = el('button', {
-        className: 'text-gray-400 hover:text-red-500 text-lg font-bold px-1 transition',
-        onClick: () => { if (lines.length > 1) { lines.splice(idx, 1); renderLines(); } },
-      }, '×');
+  // Footer (fixed)
+  const footer = el('div', { className: 'flex-shrink-0 px-5 py-4 border-t border-gray-100 bg-white' });
+  panel.append(footer);
 
-      linesContainer.append(el('div', { className: 'flex items-center gap-2' }, varSel, qtyInput, removeBtn));
+  function cartTotal() { return cart.reduce((s, i) => s + i.unitPrice * i.quantity, 0); }
+  function cartCount() { return cart.reduce((s, i) => s + i.quantity, 0); }
+
+  function renderStepBar() {
+    stepBarEl.innerHTML = '';
+    ['Customer', 'Build Order', 'Review'].forEach((s, i) => {
+      const num = i + 1, done = step > num, active = step === num;
+      stepBarEl.append(
+        el('div', { className: 'flex items-center gap-1' },
+          el('div', {
+            className: `w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center text-xs font-black flex-shrink-0 transition ${done ? 'bg-green-500 text-white' : active ? 'bg-brand text-white' : 'bg-gray-200 text-gray-400'}`,
+          }, done ? '✓' : String(num)),
+          el('span', { className: `text-xs font-semibold hidden sm:block ${active ? 'text-gray-900' : 'text-gray-400'}` }, s),
+        ),
+        i < 2 ? el('div', { className: 'w-3 sm:w-5 h-px bg-gray-200 mx-0.5' }) : null,
+      );
     });
   }
-  renderLines();
 
-  const addLineBtn = el('button', {
-    className: 'text-brand text-sm font-bold hover:underline',
-    onClick: () => { lines.push({ variantId: '', quantity: 1 }); renderLines(); },
-  }, '+ Add item');
+  // ── STEP 1: CUSTOMER ───────────────────────────────────────────────────────
+  function renderStep1() {
+    content.innerHTML = '';
+    footer.innerHTML = '';
+    let searchQ = '';
+    let showCreate = false;
+    let newCust = { firstName: '', lastName: '', email: '', phone: '', password: '' };
 
-  // Customer select
-  const customerSel = el('select', {
-    className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3',
-  });
-  const defCustOpt = document.createElement('option'); defCustOpt.value = ''; defCustOpt.textContent = '— Select customer —'; customerSel.append(defCustOpt);
-  (customers || []).sort((a, b) => `${a.firstName}${a.lastName}`.localeCompare(`${b.firstName}${b.lastName}`)).forEach(c => {
-    const o = document.createElement('option'); o.value = c.id;
-    o.textContent = `${c.firstName || ''} ${c.lastName || ''}`.trim() + (c.email ? ` (${c.email})` : '');
-    customerSel.append(o);
-  });
+    const listEl = el('div', {});
+    const createEl = el('div', {});
 
-  const ambassadorInput = el('input', {
-    type: 'text', placeholder: 'Ambassador code (optional)',
-    className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3',
-  });
+    function displayName(c) { return `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'Unknown'; }
 
-  const notesInput = el('textarea', {
-    placeholder: 'Order notes (optional)',
-    className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand resize-none mb-4',
-    rows: '2',
-  });
+    function renderList() {
+      listEl.innerHTML = '';
+      const q = searchQ.toLowerCase().trim();
+      const filtered = q
+        ? custList.filter(c => displayName(c).toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q) || (c.phone || '').toLowerCase().includes(q))
+        : custList.slice().sort((a, b) => displayName(a).localeCompare(displayName(b)));
+      const shown = filtered.slice(0, 30);
 
-  const submitBtn = el('button', {
-    className: 'w-full bg-brand text-white font-black py-2.5 rounded-xl hover:opacity-90 transition',
-    onClick: async () => {
-      const customerId = customerSel.value;
-      if (!customerId) { toast('Please select a customer', 'error'); return; }
-      const items = lines.filter(l => l.variantId).map(l => ({ variantId: l.variantId, quantity: l.quantity }));
-      if (!items.length) { toast('Add at least one item', 'error'); return; }
-
-      const payload = { customerId, items };
-      if (ambassadorInput.value.trim()) payload.ambassadorCode = ambassadorInput.value.trim();
-      if (notesInput.value.trim()) payload.notes = notesInput.value.trim();
-
-      submitBtn.disabled = true; submitBtn.textContent = 'Placing order…';
-      try {
-        await api.orders.createAdmin(payload);
-        toast('Order placed successfully', 'success');
-        close(); onDone();
-      } catch (err) {
-        toast(err?.message || 'Failed to place order', 'error');
-        submitBtn.disabled = false; submitBtn.textContent = 'Place Order';
+      if (!shown.length) {
+        listEl.append(el('p', { className: 'text-sm text-gray-400 text-center py-8' }, q ? 'No customers match your search' : 'No customers yet'));
+        return;
       }
-    },
-  }, 'Place Order');
+      shown.forEach(c => {
+        const isSelected = selectedCustomer?.id === c.id;
+        const initials = ((c.firstName?.[0] || '') + (c.lastName?.[0] || '')).toUpperCase() || '?';
+        listEl.append(el('button', {
+          className: `w-full text-left px-5 py-3 border-b border-gray-50 hover:bg-orange-50 transition flex items-center gap-3 ${isSelected ? 'bg-orange-50' : ''}`,
+          onClick: () => { selectedCustomer = isSelected ? null : c; renderList(); renderBanner(); updateFooter(); },
+        },
+          el('div', { className: `w-8 h-8 rounded-full flex items-center justify-center text-xs font-black flex-shrink-0 ${isSelected ? 'bg-brand text-white' : 'bg-gray-100 text-gray-500'}` }, initials),
+          el('div', { className: 'flex-1 min-w-0' },
+            el('p', { className: 'font-semibold text-gray-900 text-sm' }, displayName(c)),
+            el('p', { className: 'text-xs text-gray-400 truncate' }, c.email || ''),
+          ),
+          isSelected ? el('span', { className: 'text-green-500 font-black text-sm flex-shrink-0' }, '✓') : null,
+        ));
+      });
+      if (filtered.length > 30) {
+        listEl.append(el('p', { className: 'text-xs text-gray-400 text-center py-2' }, `${filtered.length - 30} more — type to narrow down`));
+      }
+    }
 
-  const form = el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto' },
-    el('div', { className: 'flex items-center justify-between mb-5' },
-      el('h3', { className: 'font-black text-gray-900 text-lg' }, 'Place Order for Client'),
-      el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×'),
-    ),
-    el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Customer *'),
-    customerSel,
-    el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Items *'),
-    linesContainer,
-    addLineBtn,
-    el('div', { className: 'mt-3 mb-3 border-t border-gray-100' }),
-    el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Ambassador Code'),
-    ambassadorInput,
-    el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Notes'),
-    notesInput,
-    submitBtn,
-  );
+    function renderCreate() {
+      createEl.innerHTML = '';
+      if (!showCreate) return;
+      const inputs = {};
+      const fields = [
+        { key: 'firstName', ph: 'First Name *', type: 'text', half: true },
+        { key: 'lastName',  ph: 'Last Name *',  type: 'text', half: true },
+        { key: 'email',     ph: 'Email *',       type: 'email' },
+        { key: 'phone',     ph: 'Phone (optional)', type: 'tel' },
+        { key: 'password',  ph: 'Password *',    type: 'password' },
+      ];
+      const form = el('div', { className: 'mx-5 mb-4 p-4 border border-brand border-opacity-30 rounded-xl bg-orange-50 space-y-2' },
+        el('p', { className: 'text-xs font-black text-gray-500 uppercase tracking-wider mb-1' }, '+ New Customer'),
+      );
+      const halfRow = el('div', { className: 'grid grid-cols-2 gap-2' });
+      fields.forEach(f => {
+        const inp = el('input', {
+          type: f.type, placeholder: f.ph, value: newCust[f.key] || '',
+          className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand bg-white',
+          onInput: e => { newCust[f.key] = e.target.value; },
+        });
+        inputs[f.key] = inp;
+        if (f.half) { halfRow.append(inp); }
+        else { form.append(inp); }
+      });
+      form.insertBefore(halfRow, form.children[1]);
+      const createBtn = el('button', {
+        className: 'w-full bg-brand text-white text-sm font-bold py-2 rounded-lg hover:opacity-90 transition',
+        onClick: async () => {
+          if (!newCust.firstName || !newCust.lastName || !newCust.email || !newCust.password) {
+            toast('First name, last name, email and password are required', 'error'); return;
+          }
+          createBtn.disabled = true; createBtn.textContent = 'Creating…';
+          try {
+            const { user } = await api.auth.register(newCust);
+            custList.push(user);
+            selectedCustomer = user;
+            showCreate = false;
+            newCust = { firstName: '', lastName: '', email: '', phone: '', password: '' };
+            toast(`${user.firstName} ${user.lastName} created`, 'success');
+            searchQ = '';
+            searchInput.value = '';
+            renderList(); renderCreate(); renderBanner(); updateFooter();
+          } catch (err) { toast(err?.message || 'Failed to create customer', 'error'); createBtn.disabled = false; createBtn.textContent = 'Create Customer'; }
+        },
+      }, 'Create Customer');
+      const cancelBtn = el('button', {
+        className: 'w-full text-sm text-gray-500 hover:text-gray-700 py-1',
+        onClick: () => { showCreate = false; renderCreate(); },
+      }, 'Cancel');
+      form.append(createBtn, cancelBtn);
+      createEl.append(form);
+    }
 
-  modal.append(form);
-  modal.addEventListener('click', e => { if (e.target === modal) close(); });
-  document.body.appendChild(modal);
+    const bannerEl = el('div', { className: 'px-5 py-3 border-b border-gray-100' });
+    function renderBanner() {
+      bannerEl.innerHTML = '';
+      if (!selectedCustomer) { bannerEl.classList.add('hidden'); return; }
+      bannerEl.classList.remove('hidden');
+      bannerEl.append(el('div', { className: 'flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-4 py-2.5' },
+        el('span', { className: 'text-green-600 font-bold text-sm' }, '✓'),
+        el('span', { className: 'font-semibold text-gray-900 text-sm' }, displayName(selectedCustomer)),
+        selectedCustomer.email ? el('span', { className: 'text-gray-400 text-xs truncate' }, `· ${selectedCustomer.email}`) : null,
+        el('button', { className: 'ml-auto text-xs text-gray-400 hover:text-red-500 transition', onClick: () => { selectedCustomer = null; renderBanner(); updateFooter(); } }, '✕ Change'),
+      ));
+    }
+    bannerEl.classList.add('hidden');
+
+    const searchInput = el('input', {
+      type: 'text', placeholder: '🔍  Type name, email, or phone to search…',
+      className: 'w-full border-0 border-b border-gray-100 px-5 py-3 text-sm outline-none focus:bg-orange-50 transition placeholder-gray-400',
+      onInput: e => { searchQ = e.target.value; renderList(); },
+    });
+
+    const createToggleBtn = el('button', {
+      className: 'w-full px-5 py-3 text-sm font-bold text-brand hover:bg-orange-50 transition text-left border-t border-gray-100 flex items-center gap-2',
+      onClick: () => { showCreate = !showCreate; renderCreate(); },
+    }, '+ Create New Customer');
+
+    content.append(bannerEl, searchInput, listEl, createToggleBtn, createEl);
+
+    function updateFooter() {
+      footer.innerHTML = '';
+      footer.append(el('button', {
+        className: `w-full font-black py-3 rounded-xl transition ${selectedCustomer ? 'bg-brand text-white hover:opacity-90' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`,
+        disabled: !selectedCustomer,
+        onClick: () => { if (selectedCustomer) { step = 2; renderStep2(); renderStepBar(); } },
+      }, 'Next: Build Order →'));
+    }
+
+    renderList(); renderBanner(); updateFooter();
+  }
+
+  // ── STEP 2: BUILD ORDER ────────────────────────────────────────────────────
+  function renderStep2() {
+    content.innerHTML = '';
+    content.classList.remove('overflow-y-auto');
+    content.classList.add('overflow-hidden', 'flex');
+    footer.innerHTML = '';
+
+    let productSearch = '';
+    let activeCat = null;
+
+    function addToCart(variantId, productName, variantName, unitPrice) {
+      const existing = cart.find(c => c.variantId === variantId);
+      if (existing) { existing.quantity++; }
+      else { cart.push({ variantId, productName, variantName, unitPrice, quantity: 1 }); }
+      updateCart();
+    }
+    function decFromCart(variantId) {
+      const idx = cart.findIndex(c => c.variantId === variantId);
+      if (idx === -1) return;
+      if (cart[idx].quantity > 1) { cart[idx].quantity--; } else { cart.splice(idx, 1); }
+      updateCart();
+    }
+
+    // ── Left: product browser ─────────────────────────────────────────────
+    const left = el('div', { className: 'flex-1 min-w-0 overflow-y-auto p-4' });
+
+    const catRow = el('div', { className: 'flex gap-2 flex-wrap mb-3' });
+    function renderCats() {
+      catRow.innerHTML = '';
+      [{ id: null, name: 'All' }, ...categories].forEach(cat => {
+        const active = activeCat === cat.id;
+        catRow.append(el('button', {
+          className: `px-3 py-1 text-xs font-bold rounded-full border-2 transition ${active ? 'bg-brand border-brand text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-brand'}`,
+          onClick: () => { activeCat = cat.id; renderCats(); renderGrid(); },
+        }, cat.name));
+      });
+    }
+
+    const productGrid = el('div', { className: 'grid grid-cols-2 sm:grid-cols-3 gap-3' });
+    function renderGrid() {
+      productGrid.innerHTML = '';
+      const q = productSearch.toLowerCase().trim();
+      const filtered = (products || []).filter(p => {
+        if (!p.isActive) return false;
+        if (q && !p.name.toLowerCase().includes(q)) return false;
+        if (activeCat !== null && p.categoryId !== activeCat) return false;
+        return (p.variants || []).some(v => v.isActive !== false);
+      });
+      if (!filtered.length) {
+        productGrid.append(el('div', { className: 'col-span-full text-center py-10 text-sm text-gray-400' }, 'No products found'));
+        return;
+      }
+      filtered.forEach(p => {
+        const imgs = Array.isArray(p.images) ? p.images : [];
+        const imgUrl = p.imageUrl || imgs.find(i => i.isPrimary)?.url || imgs[0]?.url || null;
+        const variants = (p.variants || []).filter(v => v.isActive !== false);
+        const card = el('div', { className: 'bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden' });
+        const imgBox = el('div', { className: 'aspect-video bg-orange-50 overflow-hidden flex items-center justify-center' });
+        if (imgUrl) { const img = el('img', { className: 'w-full h-full object-cover', alt: p.name }); img.src = imgUrl; imgBox.append(img); }
+        else { imgBox.append(makeLogo(32, 'rounded-lg opacity-30')); }
+        card.append(imgBox);
+        const body = el('div', { className: 'p-2.5' });
+        body.append(el('p', { className: 'font-bold text-gray-900 text-xs mb-1.5 truncate' }, p.name));
+        variants.forEach(v => {
+          const price = Number(v.prices?.find(px => px.tier === 'RETAIL')?.price ?? v.prices?.[0]?.price ?? v.retailPrice ?? 0);
+          const inCart = cart.find(c => c.variantId === v.id);
+          body.append(el('div', { className: 'flex items-center justify-between py-1 border-t border-gray-50' },
+            el('div', { className: 'min-w-0 mr-1' },
+              variants.length > 1 ? el('p', { className: 'text-xs text-gray-600 truncate' }, v.name || 'Default') : null,
+              el('p', { className: 'text-xs font-bold text-brand' }, `R${price.toFixed(2)}`),
+            ),
+            inCart
+              ? el('div', { className: 'flex items-center gap-1 flex-shrink-0' },
+                  el('button', { className: 'w-5 h-5 rounded-full bg-gray-100 text-gray-700 text-xs font-bold flex items-center justify-center hover:bg-gray-200 transition', onClick: () => { decFromCart(v.id); renderGrid(); } }, '−'),
+                  el('span', { className: 'text-xs font-black w-4 text-center text-gray-900' }, String(inCart.quantity)),
+                  el('button', { className: 'w-5 h-5 rounded-full bg-brand text-white text-xs font-bold flex items-center justify-center hover:opacity-80 transition', onClick: () => { addToCart(v.id, p.name, v.name || '', price); renderGrid(); } }, '+'),
+                )
+              : el('button', { className: 'bg-brand text-white text-xs font-bold px-2 py-1 rounded-lg hover:opacity-90 transition flex-shrink-0', onClick: () => { addToCart(v.id, p.name, v.name || '', price); renderGrid(); } }, '+ Add'),
+          ));
+        });
+        card.append(body);
+        productGrid.append(card);
+      });
+    }
+
+    const searchInput = el('input', {
+      type: 'text', placeholder: '🔍  Search products…',
+      className: 'w-full border border-gray-200 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3',
+      onInput: e => { productSearch = e.target.value; renderGrid(); },
+    });
+    left.append(searchInput, catRow, productGrid);
+
+    // ── Right: cart ───────────────────────────────────────────────────────
+    const right = el('div', { className: 'w-52 sm:w-64 flex-shrink-0 border-l border-gray-100 overflow-y-auto bg-gray-50 flex flex-col' });
+    const cartBody = el('div', { className: 'flex-1 p-3' });
+    const cartFooterEl = el('div', { className: 'p-3 border-t border-gray-100' });
+    right.append(
+      el('div', { className: 'px-4 py-3 border-b border-gray-100 bg-white flex-shrink-0' },
+        el('p', { className: 'font-black text-gray-800 text-sm' }, '🛒 Cart'),
+      ),
+      cartBody,
+      cartFooterEl,
+    );
+
+    function updateCart() {
+      cartBody.innerHTML = '';
+      cartFooterEl.innerHTML = '';
+      if (!cart.length) {
+        cartBody.append(el('p', { className: 'text-xs text-gray-400 text-center py-8' }, 'No items added yet'));
+      } else {
+        cart.forEach(item => {
+          cartBody.append(el('div', { className: 'bg-white rounded-lg p-2 mb-2 shadow-sm border border-gray-100' },
+            el('p', { className: 'text-xs font-bold text-gray-800 truncate' }, item.productName),
+            item.variantName ? el('p', { className: 'text-xs text-gray-400 truncate' }, item.variantName) : null,
+            el('div', { className: 'flex items-center justify-between mt-1' },
+              el('div', { className: 'flex items-center gap-1' },
+                el('button', { className: 'w-5 h-5 rounded-full bg-gray-100 text-xs font-bold flex items-center justify-center hover:bg-gray-200 transition', onClick: () => { decFromCart(item.variantId); updateCart(); renderGrid(); } }, '−'),
+                el('span', { className: 'text-xs font-black w-4 text-center' }, String(item.quantity)),
+                el('button', { className: 'w-5 h-5 rounded-full bg-brand text-white text-xs font-bold flex items-center justify-center hover:opacity-80 transition', onClick: () => { const e = cart.find(c => c.variantId === item.variantId); if (e) e.quantity++; updateCart(); renderGrid(); } }, '+'),
+              ),
+              el('p', { className: 'text-xs font-black text-gray-900' }, `R${(item.unitPrice * item.quantity).toFixed(2)}`),
+            ),
+          ));
+        });
+        cartFooterEl.append(
+          el('div', { className: 'flex justify-between text-sm font-black text-gray-900 mb-3' },
+            el('span', {}, 'Total'), el('span', { className: 'text-brand' }, `R${cartTotal().toFixed(2)}`),
+          ),
+        );
+      }
+      // update footer nav
+      footer.innerHTML = '';
+      footer.append(el('div', { className: 'flex gap-3' },
+        el('button', { className: 'px-4 py-2.5 border border-gray-200 text-sm font-bold text-gray-600 rounded-xl hover:bg-gray-50 transition', onClick: () => { content.classList.add('overflow-y-auto'); content.classList.remove('overflow-hidden', 'flex'); step = 1; renderStep1(); renderStepBar(); } }, '← Back'),
+        el('button', {
+          className: `flex-1 font-black py-2.5 rounded-xl transition ${cart.length ? 'bg-brand text-white hover:opacity-90' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`,
+          disabled: !cart.length,
+          onClick: () => { if (cart.length) { content.classList.add('overflow-y-auto'); content.classList.remove('overflow-hidden', 'flex'); step = 3; renderStep3(); renderStepBar(); } },
+        }, cart.length ? `Next: Review (${cartCount()} item${cartCount() !== 1 ? 's' : ''}) →` : 'Add items to continue'),
+      ));
+    }
+
+    content.append(left, right);
+    renderCats(); renderGrid(); updateCart();
+  }
+
+  // ── STEP 3: REVIEW & PLACE ─────────────────────────────────────────────────
+  function renderStep3() {
+    content.innerHTML = '';
+    footer.innerHTML = '';
+
+    const wrap = el('div', { className: 'p-5 max-w-2xl mx-auto' });
+
+    // Customer chip
+    const cName = `${selectedCustomer.firstName || ''} ${selectedCustomer.lastName || ''}`.trim();
+    wrap.append(el('div', { className: 'flex items-center gap-3 bg-green-50 border border-green-200 rounded-xl px-4 py-3 mb-4' },
+      el('span', { className: 'text-green-600 font-bold text-sm' }, '👤'),
+      el('div', {},
+        el('p', { className: 'font-bold text-gray-900 text-sm' }, cName),
+        el('p', { className: 'text-xs text-gray-500' }, selectedCustomer.email || ''),
+      ),
+    ));
+
+    // Items
+    const itemsCard = el('div', { className: 'bg-white rounded-xl border border-gray-100 shadow-sm mb-4 overflow-hidden' });
+    itemsCard.append(el('div', { className: 'px-4 py-2.5 bg-gray-50 border-b border-gray-100' },
+      el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider' }, '🛒 Order Items'),
+    ));
+    cart.forEach(item => {
+      itemsCard.append(el('div', { className: 'flex justify-between items-center px-4 py-3 border-b border-gray-50 last:border-0 text-sm' },
+        el('div', {},
+          el('p', { className: 'font-semibold text-gray-800' }, `${item.quantity}× ${item.productName}`),
+          item.variantName ? el('p', { className: 'text-xs text-gray-400' }, item.variantName) : null,
+        ),
+        el('p', { className: 'font-black text-gray-900 flex-shrink-0 ml-3' }, `R${(item.unitPrice * item.quantity).toFixed(2)}`),
+      ));
+    });
+    itemsCard.append(el('div', { className: 'flex justify-between font-black text-brand text-base px-4 py-3 bg-gray-50 border-t border-gray-100' },
+      el('span', {}, 'Total'), el('span', {}, `R${cartTotal().toFixed(2)}`),
+    ));
+    wrap.append(itemsCard);
+
+    // Ambassador code
+    const ambInp = el('input', {
+      type: 'text', placeholder: 'Ambassador code (optional)', value: ambassadorCode,
+      className: 'w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand transition mb-3',
+      onInput: e => { ambassadorCode = e.target.value; },
+    });
+    wrap.append(el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Ambassador Code'), ambInp);
+
+    // Notes
+    const notesInp = el('textarea', {
+      placeholder: 'Order notes (optional)', rows: '3',
+      className: 'w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand transition resize-none mb-2',
+      onInput: e => { notes = e.target.value; },
+    });
+    notesInp.value = notes;
+    wrap.append(el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Notes'), notesInp);
+    content.append(wrap);
+
+    // Footer
+    const placeBtn = el('button', {
+      className: 'flex-1 bg-brand text-white font-black py-3 rounded-xl hover:opacity-90 transition',
+      onClick: async () => {
+        placeBtn.disabled = true;
+        placeBtn.innerHTML = '';
+        placeBtn.append(spinner(), document.createTextNode(' Placing order…'));
+        try {
+          const payload = { customerId: selectedCustomer.id, items: cart.map(i => ({ variantId: i.variantId, quantity: i.quantity })) };
+          if (ambassadorCode.trim()) payload.ambassadorCode = ambassadorCode.trim();
+          if (notes.trim()) payload.notes = notes.trim();
+          await api.orders.createAdmin(payload);
+          toast(`Order placed for ${selectedCustomer.firstName || 'customer'} 🎉`, 'success');
+          close(); onDone();
+        } catch (err) {
+          toast(err?.message || 'Failed to place order', 'error');
+          placeBtn.disabled = false; placeBtn.textContent = `Place Order — R${cartTotal().toFixed(2)}`;
+        }
+      },
+    }, `Place Order — R${cartTotal().toFixed(2)}`);
+
+    footer.append(el('div', { className: 'flex gap-3' },
+      el('button', { className: 'px-4 py-3 border border-gray-200 text-sm font-bold text-gray-600 rounded-xl hover:bg-gray-50 transition', onClick: () => { step = 2; renderStep2(); renderStepBar(); } }, '← Back'),
+      placeBtn,
+    ));
+  }
+
+  // ── INIT ───────────────────────────────────────────────────────────────────
+  overlay.append(panel);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  document.body.appendChild(overlay);
+  renderStepBar();
+  renderStep1();
 }
 
 // ── AMBASSADORS MODULE ────────────────────────────────────────────────────
