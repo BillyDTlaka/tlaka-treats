@@ -326,6 +326,115 @@ const STATUS_COLORS = {
   READY: '#10B981', DELIVERED: '#6B7280', CANCELLED: '#EF4444',
 };
 
+// ── AMBASSADOR CODE PICKER ─────────────────────────────────────────────────
+// Returns a wrapper element. Fetches active ambassadors and shows a searchable
+// dropdown. Call with { value, onChange, placeholder?, wrapClass? }.
+function createAmbPicker({ value = '', onChange, placeholder = 'Select ambassador code…', wrapClass = '' } = {}) {
+  let selected = value;
+  let ambList = [];
+  let dropOpen = false;
+  let searchQ = '';
+
+  const wrap = el('div', { className: `relative ${wrapClass}` });
+
+  // Trigger button
+  const trigger = el('button', {
+    type: 'button',
+    className: 'w-full flex items-center justify-between border border-gray-200 rounded-xl px-4 py-2.5 text-sm bg-white outline-none focus:ring-2 focus:ring-brand transition text-left',
+    onClick: openDrop,
+  });
+
+  const triggerText = el('span', {});
+  const triggerRight = el('span', { className: 'flex items-center gap-1 flex-shrink-0 ml-2' });
+  trigger.append(triggerText, triggerRight);
+  wrap.append(trigger);
+
+  // Dropdown panel (appended to body so z-index works inside modals)
+  let dropEl = null;
+
+  function updateTrigger() {
+    if (selected) {
+      triggerText.textContent = selected;
+      triggerText.className = 'font-semibold text-brand flex-1 truncate';
+      triggerRight.innerHTML = '';
+      const clearBtn = el('span', {
+        className: 'text-gray-300 hover:text-gray-500 cursor-pointer text-xs',
+        onClick: (e) => { e.stopPropagation(); selected = ''; onChange(''); updateTrigger(); },
+      }, '✕');
+      triggerRight.append(clearBtn);
+    } else {
+      triggerText.textContent = placeholder;
+      triggerText.className = 'text-gray-400 flex-1';
+      triggerRight.innerHTML = '<span class="text-gray-400 text-xs">▾</span>';
+    }
+  }
+  updateTrigger();
+
+  function closeDrop() {
+    dropEl?.remove(); dropEl = null; dropOpen = false;
+  }
+
+  function openDrop() {
+    if (dropOpen) { closeDrop(); return; }
+    dropOpen = true;
+    searchQ = '';
+
+    // Position dropdown below trigger
+    const rect = trigger.getBoundingClientRect();
+    dropEl = el('div', {
+      className: 'fixed bg-white border border-gray-200 rounded-xl shadow-xl z-[999] flex flex-col',
+      style: `top:${rect.bottom + 4 + window.scrollY}px;left:${rect.left + window.scrollX}px;width:${rect.width}px;max-height:280px;`,
+    });
+
+    const searchInp = el('input', {
+      type: 'text', placeholder: 'Search by code…',
+      className: 'w-full border-b border-gray-100 px-4 py-2.5 text-sm outline-none rounded-t-xl',
+      value: searchQ,
+      onInput: (e) => { searchQ = e.target.value; renderList(); },
+    });
+    dropEl.append(searchInp);
+
+    const listWrap = el('div', { className: 'overflow-y-auto flex-1' });
+    dropEl.append(listWrap);
+
+    function renderList() {
+      listWrap.innerHTML = '';
+      const q = searchQ.toLowerCase().trim();
+      const filtered = ambList.filter(a => !q || (a.code || '').toLowerCase().includes(q) || `${a.user?.firstName || ''} ${a.user?.lastName || ''}`.toLowerCase().includes(q));
+      if (!filtered.length) {
+        listWrap.append(el('p', { className: 'text-center text-gray-400 text-sm py-5' }, ambList.length ? 'No results' : 'Loading…'));
+        return;
+      }
+      filtered.forEach(a => {
+        const row = el('div', {
+          className: `flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 border-b border-gray-50 last:border-0 ${selected === a.code ? 'bg-brand-light' : ''}`,
+          onClick: () => { selected = a.code; onChange(a.code); updateTrigger(); closeDrop(); },
+        },
+          el('span', { className: 'font-bold text-brand text-sm' }, a.code || ''),
+          a.user ? el('span', { className: 'text-xs text-gray-400 ml-2' }, `${a.user.firstName || ''} ${a.user.lastName || ''}`.trim()) : null,
+        );
+        listWrap.append(row);
+      });
+    }
+
+    document.body.append(dropEl);
+    setTimeout(() => searchInp.focus(), 50);
+    renderList();
+
+    // Fetch ambassadors
+    api.ambassadors.getAll().then(list => {
+      ambList = list.filter(a => a.status === 'ACTIVE');
+      renderList();
+    }).catch(() => {});
+
+    // Close on outside click
+    const onOutside = (e) => { if (!dropEl?.contains(e.target) && e.target !== trigger) { closeDrop(); document.removeEventListener('mousedown', onOutside); } };
+    setTimeout(() => document.addEventListener('mousedown', onOutside), 0);
+  }
+
+  return wrap;
+}
+
 // ─── PAGES ────────────────────────────────────────────────────────
 
 // ── LOGIN ──────────────────────────────────────────────────────────
@@ -818,13 +927,11 @@ function CustomerHomePage() {
     // Ambassador code
     const ambRow = el('div', { className: 'bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-4' },
       el('label', { className: 'block text-sm font-semibold text-gray-700 mb-2' }, '🎟️ Ambassador Code (optional)'),
-      el('input', {
-        type: 'text', placeholder: 'e.g. TT-ZANE7823',
-        value: checkoutData.ambassadorCode,
-        className: 'w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand transition',
-        onInput: (e) => checkoutData.ambassadorCode = e.target.value,
-      })
     );
+    ambRow.append(createAmbPicker({
+      value: checkoutData.ambassadorCode,
+      onChange: (code) => { checkoutData.ambassadorCode = code; },
+    }));
     cartView.append(ambRow);
 
     // Order summary
@@ -1396,13 +1503,11 @@ function showProductModal(product, options = {}) {
       modal.append(addBtn);
     } else {
       // ── Order mode: ambassador code + "Place Order" button (ambassador flow)
-      const codeInput = el('input', {
-        type: 'text', placeholder: 'Ambassador code (optional)',
-        className: 'w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-4 outline-none focus:ring-2 focus:ring-brand',
+      modal.append(createAmbPicker({
         value: ambassadorCode,
-        onInput: (e) => ambassadorCode = e.target.value,
-      });
-      modal.append(codeInput);
+        onChange: (code) => { ambassadorCode = code; },
+        wrapClass: 'mb-4',
+      }));
 
       const orderBtn = el('button', {
         className: 'w-full bg-brand text-white font-bold py-4 rounded-xl hover:opacity-90 transition flex items-center justify-center gap-2',
@@ -3636,12 +3741,12 @@ function showAdminPlaceOrderModal(customers, products, onDone) {
     wrap.append(itemsCard);
 
     // Ambassador code
-    const ambInp = el('input', {
-      type: 'text', placeholder: 'Ambassador code (optional)', value: ambassadorCode,
-      className: 'w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand transition mb-3',
-      onInput: e => { ambassadorCode = e.target.value; },
+    const ambPickerEl = createAmbPicker({
+      value: ambassadorCode,
+      onChange: (code) => { ambassadorCode = code; },
+      wrapClass: 'mb-3',
     });
-    wrap.append(el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Ambassador Code'), ambInp);
+    wrap.append(el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Ambassador Code'), ambPickerEl);
 
     // Notes
     const notesInp = el('textarea', {
