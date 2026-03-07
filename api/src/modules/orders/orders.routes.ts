@@ -54,6 +54,27 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
     return orderService.getForAmbassador(ambassador.id)
   })
 
+  // GET /orders/:id - admin gets single order
+  fastify.get('/:id', {
+    preHandler: [authenticate, authorize('manage', 'order')],
+  }, async (request) => {
+    const { id } = request.params as { id: string }
+    return orderService.getById(id)
+  })
+
+  // PATCH /orders/:id - admin edits order fields
+  fastify.patch('/:id', {
+    preHandler: [authenticate, authorize('manage', 'order')],
+  }, async (request) => {
+    const { id } = request.params as { id: string }
+    const { notes, deliveryFee, ambassadorCode } = request.body as {
+      notes?: string
+      deliveryFee?: number
+      ambassadorCode?: string | null
+    }
+    return orderService.update(id, { notes, deliveryFee, ambassadorCode })
+  })
+
   // PATCH /orders/:id/status - admin updates order status
   fastify.patch('/:id/status', {
     preHandler: [authenticate, authorize('update', 'order')],

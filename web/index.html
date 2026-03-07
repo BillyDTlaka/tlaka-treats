@@ -148,6 +148,8 @@ const api = {
     getMy: () => req('GET', '/orders/my'),
     getAmbassador: () => req('GET', '/orders/ambassador'),
     getAll: () => req('GET', '/orders'),
+    getById: (id) => req('GET', `/orders/${id}`),
+    update: (id, data) => req('PATCH', `/orders/${id}`, data),
     updateStatus: (id, status, note) => req('PATCH', `/orders/${id}/status`, { status, ...(note ? { note } : {}) }),
   },
   addresses: {
@@ -3038,390 +3040,478 @@ const STATUS_NEXT_ACTION = {
 function renderAdminOrders(data, container, reload) {
   let allOrders = [...data.orders];
   let searchQ = '', statusFilter = '', sortDir = 'desc';
-  let expandedId = null;
+  let detailOrder = null;
 
-  const page = el('div', { className: 'p-6 max-w-6xl mx-auto' });
+  const page = el('div', {});
+  container.append(page);
 
-  // ── STATUS FILTER CHIPS ─────────────────────────────────────────────────
-  const chipsRow = el('div', { className: 'flex gap-2 flex-wrap mb-5' });
-
-  function renderChips() {
-    chipsRow.innerHTML = '';
-    const active = statusFilter === '';
-    chipsRow.append(el('button', {
-      className: `px-3 py-2 rounded-lg text-sm font-semibold border-2 transition ${active ? 'bg-gray-800 border-gray-800 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-400'}`,
-      onClick: () => { statusFilter = ''; renderChips(); renderTable(); },
-    }, `All (${allOrders.length})`));
-
-    ['PENDING','CONFIRMED','BAKING','READY','DELIVERED','CANCELLED'].forEach(s => {
-      const count = allOrders.filter(o => o.status === s).length;
-      const isActive = statusFilter === s;
-      const btn = el('button', {
-        className: `flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border-2 transition ${isActive ? 'text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'}`,
-        style: isActive ? { backgroundColor: STATUS_COLORS[s], borderColor: STATUS_COLORS[s] } : {},
-        onClick: () => { statusFilter = s; renderChips(); renderTable(); },
-      },
-        el('span', { className: 'w-2 h-2 rounded-full flex-shrink-0', style: { backgroundColor: isActive ? 'rgba(255,255,255,0.6)' : STATUS_COLORS[s] } }),
-        s,
-        el('span', { className: `text-xs px-1.5 py-0 rounded-full ml-0.5 ${isActive ? 'bg-white bg-opacity-25 text-white' : 'bg-gray-100 text-gray-500'}` }, String(count))
-      );
-      chipsRow.append(btn);
-    });
-  }
-  page.append(chipsRow);
-
-  // ── TOOLBAR ─────────────────────────────────────────────────────────────
-  const toolbar = el('div', { className: 'flex flex-wrap items-center gap-3 mb-5' });
-
-  const searchBox = el('input', {
-    type: 'text', placeholder: '🔍  Search by customer name, email, or ambassador code…',
-    className: 'flex-1 min-w-56 bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand',
-    onInput: e => { searchQ = e.target.value; renderTable(); },
-  });
-
-  const sortSel = el('select', {
-    className: 'bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand',
-  });
-  [['desc','Newest first'],['asc','Oldest first'],['total-desc','Highest value'],['total-asc','Lowest value']].forEach(([v,l]) => {
-    const o = document.createElement('option'); o.value = v; o.textContent = l; sortSel.append(o);
-  });
-  sortSel.addEventListener('change', e => { sortDir = e.target.value; renderTable(); });
-
-  const revSummary = el('div', { className: 'ml-auto' });
-
-  const placeOrderBtn = el('button', {
-    className: 'bg-brand text-white text-sm font-bold px-4 py-2.5 rounded-xl hover:opacity-90 transition flex-shrink-0',
-    onClick: () => showAdminPlaceOrderModal(data.customers, data.products, () => reload()),
-  }, '+ Place Order for Client');
-
-  toolbar.append(searchBox, sortSel, placeOrderBtn, revSummary);
-  page.append(toolbar);
-
-  // ── TABLE WRAPPER ───────────────────────────────────────────────────────
-  const tableWrap = el('div', {});
-  page.append(tableWrap);
-
-  // ── HELPERS ─────────────────────────────────────────────────────────────
-  function getFiltered() {
-    const q = searchQ.toLowerCase().trim();
-    let list = allOrders.filter(o => {
-      if (statusFilter && o.status !== statusFilter) return false;
-      if (q) {
-        const name  = `${o.customer?.firstName || ''} ${o.customer?.lastName || ''}`.toLowerCase();
-        const email = (o.customer?.email  || '').toLowerCase();
-        const code  = (o.ambassador?.code || '').toLowerCase();
-        const phone = (o.customer?.phone  || '').toLowerCase();
-        if (!name.includes(q) && !email.includes(q) && !code.includes(q) && !phone.includes(q)) return false;
-      }
-      return true;
-    });
-    if (sortDir === 'asc')        list.sort((a,b) => new Date(a.createdAt) - new Date(b.createdAt));
-    else if (sortDir === 'desc')  list.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
-    else if (sortDir === 'total-desc') list.sort((a,b) => Number(b.total) - Number(a.total));
-    else if (sortDir === 'total-asc')  list.sort((a,b) => Number(a.total) - Number(b.total));
-    return list;
+  async function refreshDetail(id) {
+    try {
+      const fresh = await api.orders.getById(id);
+      const idx = allOrders.findIndex(o => o.id === id);
+      if (idx !== -1) allOrders[idx] = fresh;
+      detailOrder = fresh;
+      renderPage();
+    } catch (e) { toast(e.message || 'Failed to refresh order'); }
   }
 
-  function statusStepper(currentStatus) {
-    const steps = STATUS_SEQUENCE;
-    const currentIdx = steps.indexOf(currentStatus);
-    const wrap = el('div', { className: 'flex items-center gap-1 flex-wrap' });
-    steps.forEach((s, i) => {
-      const done = i < currentIdx;
-      const active = i === currentIdx;
-      wrap.append(
-        el('span', {
-          className: `text-xs font-bold px-2 py-0.5 rounded-full transition ${active ? 'text-white' : done ? 'text-green-700 bg-green-100' : 'text-gray-300 bg-gray-100'}`,
-          style: active ? { backgroundColor: STATUS_COLORS[s] } : {},
-        }, s)
-      );
-      if (i < steps.length - 1) wrap.append(el('span', { className: 'text-gray-300 text-xs' }, '→'));
-    });
-    return wrap;
+  function renderPage() {
+    page.innerHTML = '';
+    if (detailOrder) renderDetailView(detailOrder);
+    else renderListView();
   }
 
-  // ── RENDER TABLE ─────────────────────────────────────────────────────────
-  function renderTable() {
-    tableWrap.innerHTML = '';
-    const filtered = getFiltered();
-    const revenue  = filtered.reduce((s,o) => s + Number(o.total || 0), 0);
+  // ── LIST VIEW ───────────────────────────────────────────────────────────
+  function renderListView() {
+    const wrap = el('div', { className: 'p-6 max-w-6xl mx-auto' });
 
-    // Revenue summary chip
-    revSummary.innerHTML = '';
-    revSummary.append(
-      el('div', { className: 'bg-white rounded-lg px-4 py-2 border border-gray-200 text-sm whitespace-nowrap' },
-        el('span', { className: 'text-gray-500' }, `${filtered.length} orders · `),
-        el('span', { className: 'font-black text-gray-900' }, `R${revenue.toFixed(2)}`)
-      )
-    );
+    // Status chips
+    const chipsRow = el('div', { className: 'flex gap-2 flex-wrap mb-5' });
+    function renderChips() {
+      chipsRow.innerHTML = '';
+      chipsRow.append(el('button', {
+        className: `px-3 py-2 rounded-lg text-sm font-semibold border-2 transition ${statusFilter === '' ? 'bg-gray-800 border-gray-800 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-400'}`,
+        onClick: () => { statusFilter = ''; renderChips(); renderTable(); },
+      }, `All (${allOrders.length})`));
+      ['PENDING','CONFIRMED','BAKING','READY','DELIVERED','CANCELLED'].forEach(s => {
+        const count = allOrders.filter(o => o.status === s).length;
+        const isActive = statusFilter === s;
+        chipsRow.append(el('button', {
+          className: `flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border-2 transition ${isActive ? 'text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'}`,
+          style: isActive ? { backgroundColor: STATUS_COLORS[s], borderColor: STATUS_COLORS[s] } : {},
+          onClick: () => { statusFilter = s; renderChips(); renderTable(); },
+        },
+          el('span', { className: 'w-2 h-2 rounded-full flex-shrink-0', style: { backgroundColor: isActive ? 'rgba(255,255,255,0.6)' : STATUS_COLORS[s] } }),
+          s,
+          el('span', { className: `text-xs px-1.5 py-0 rounded-full ml-0.5 ${isActive ? 'bg-white bg-opacity-25 text-white' : 'bg-gray-100 text-gray-500'}` }, String(count))
+        ));
+      });
+    }
+    wrap.append(chipsRow);
 
-    if (!filtered.length) {
-      tableWrap.append(el('div', { className: 'bg-white rounded-xl p-14 text-center shadow-sm border border-gray-100' },
-        el('p', { className: 'text-4xl mb-3' }, '📦'),
-        el('p', { className: 'font-bold text-gray-700 mb-1' }, 'No orders found'),
-        el('p', { className: 'text-sm text-gray-400' }, searchQ ? 'Try adjusting your search' : 'No orders yet')
-      )); return;
+    // Toolbar
+    const revSummary = el('div', { className: 'ml-auto' });
+    const searchBox = el('input', {
+      type: 'text', placeholder: '🔍  Search by customer name, email, or ambassador code…',
+      className: 'flex-1 min-w-56 bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand',
+      onInput: e => { searchQ = e.target.value; renderTable(); },
+    });
+    const sortSel = el('select', {
+      className: 'bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand',
+    });
+    [['desc','Newest first'],['asc','Oldest first'],['total-desc','Highest value'],['total-asc','Lowest value']].forEach(([v,l]) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = l; sortSel.append(o);
+    });
+    sortSel.value = sortDir;
+    sortSel.addEventListener('change', e => { sortDir = e.target.value; renderTable(); });
+    wrap.append(el('div', { className: 'flex flex-wrap items-center gap-3 mb-5' },
+      searchBox, sortSel,
+      el('button', {
+        className: 'bg-brand text-white text-sm font-bold px-4 py-2.5 rounded-xl hover:opacity-90 transition flex-shrink-0',
+        onClick: () => showAdminPlaceOrderModal(data.customers, data.products, () => reload()),
+      }, '+ Place Order for Client'),
+      revSummary
+    ));
+
+    const tableWrap = el('div', {});
+    wrap.append(tableWrap);
+
+    function getFiltered() {
+      const q = searchQ.toLowerCase().trim();
+      let list = allOrders.filter(o => {
+        if (statusFilter && o.status !== statusFilter) return false;
+        if (q) {
+          const name  = `${o.customer?.firstName || ''} ${o.customer?.lastName || ''}`.toLowerCase();
+          const email = (o.customer?.email  || '').toLowerCase();
+          const code  = (o.ambassador?.code || '').toLowerCase();
+          const phone = (o.customer?.phone  || '').toLowerCase();
+          if (!name.includes(q) && !email.includes(q) && !code.includes(q) && !phone.includes(q)) return false;
+        }
+        return true;
+      });
+      if (sortDir === 'asc')             list.sort((a,b) => new Date(a.createdAt) - new Date(b.createdAt));
+      else if (sortDir === 'desc')       list.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+      else if (sortDir === 'total-desc') list.sort((a,b) => Number(b.total) - Number(a.total));
+      else if (sortDir === 'total-asc')  list.sort((a,b) => Number(a.total) - Number(b.total));
+      return list;
     }
 
-    const table = el('div', { className: 'bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden' });
+    function renderTable() {
+      tableWrap.innerHTML = '';
+      const filtered = getFiltered();
+      const revenue  = filtered.reduce((s,o) => s + Number(o.total || 0), 0);
+      revSummary.innerHTML = '';
+      revSummary.append(
+        el('div', { className: 'bg-white rounded-lg px-4 py-2 border border-gray-200 text-sm whitespace-nowrap' },
+          el('span', { className: 'text-gray-500' }, `${filtered.length} orders · `),
+          el('span', { className: 'font-black text-gray-900' }, `R${revenue.toFixed(2)}`)
+        )
+      );
+      if (!filtered.length) {
+        tableWrap.append(el('div', { className: 'bg-white rounded-xl p-14 text-center shadow-sm border border-gray-100' },
+          el('p', { className: 'text-4xl mb-3' }, '📦'),
+          el('p', { className: 'font-bold text-gray-700 mb-1' }, 'No orders found'),
+          el('p', { className: 'text-sm text-gray-400' }, searchQ ? 'Try adjusting your search' : 'No orders yet')
+        )); return;
+      }
+      const table = el('div', { className: 'bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden' });
+      table.append(
+        el('div', { className: 'hidden md:grid grid-cols-12 bg-gray-50 border-b border-gray-100 px-5 py-3 text-xs font-black text-gray-400 uppercase tracking-wider' },
+          el('div', { className: 'col-span-3' }, 'Customer'),
+          el('div', { className: 'col-span-2' }, 'Date & Time'),
+          el('div', { className: 'col-span-1 text-center' }, 'Items'),
+          el('div', { className: 'col-span-2' }, 'Total'),
+          el('div', { className: 'col-span-2' }, 'Ambassador'),
+          el('div', { className: 'col-span-2' }, 'Status'),
+        )
+      );
+      const tbody = el('div', { className: 'divide-y divide-gray-50' });
+      filtered.forEach(order => {
+        const dateObj = new Date(order.createdAt);
+        const dateStr = dateObj.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: '2-digit' });
+        const timeStr = dateObj.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
+        const row = el('div', {
+          className: 'grid grid-cols-12 items-center px-5 py-3.5 cursor-pointer hover:bg-gray-50 transition select-none',
+          onClick: () => { detailOrder = order; renderPage(); },
+        });
+        row.append(el('div', { className: 'col-span-6 md:col-span-3 min-w-0 pr-2' },
+          el('p', { className: 'font-semibold text-gray-900 text-sm truncate' }, `${order.customer?.firstName || ''} ${order.customer?.lastName || ''}`),
+          el('p', { className: 'text-xs text-gray-400 truncate' }, order.customer?.email || '—')
+        ));
+        row.append(el('div', { className: 'hidden md:block col-span-2' },
+          el('p', { className: 'text-sm text-gray-700' }, dateStr),
+          el('p', { className: 'text-xs text-gray-400' }, timeStr)
+        ));
+        row.append(el('div', { className: 'hidden md:flex col-span-1 justify-center' },
+          el('span', { className: 'bg-gray-100 text-gray-700 text-xs font-bold px-2 py-0.5 rounded-full' }, String(order.items?.length || 0))
+        ));
+        row.append(el('div', { className: 'col-span-3 md:col-span-2' },
+          el('p', { className: 'font-black text-gray-900 text-sm' }, `R${Number(order.total).toFixed(2)}`),
+          order.commission ? el('p', { className: 'text-xs text-green-600 font-semibold' }, `comm. R${Number(order.commission.amount).toFixed(2)}`) : null
+        ));
+        row.append(el('div', { className: 'hidden md:block col-span-2' },
+          order.ambassador
+            ? el('span', { className: 'text-xs bg-brand-light text-brand-dark font-bold px-2 py-0.5 rounded-full' }, order.ambassador.code)
+            : el('span', { className: 'text-xs text-gray-300' }, '—')
+        ));
+        row.append(el('div', { className: 'col-span-3 md:col-span-2 flex items-center gap-2' },
+          badge(order.status, STATUS_COLORS[order.status] || '#999'),
+          el('span', { className: 'hidden md:block text-gray-400 text-sm ml-auto' }, '›')
+        ));
+        tbody.append(row);
+      });
+      table.append(tbody);
+      tableWrap.append(table);
+    }
 
-    // Column header (desktop only)
-    table.append(
-      el('div', { className: 'hidden md:grid grid-cols-12 bg-gray-50 border-b border-gray-100 px-5 py-3 text-xs font-black text-gray-400 uppercase tracking-wider' },
-        el('div', { className: 'col-span-3' }, 'Customer'),
-        el('div', { className: 'col-span-2' }, 'Date & Time'),
-        el('div', { className: 'col-span-1 text-center' }, 'Items'),
-        el('div', { className: 'col-span-2' }, 'Total'),
-        el('div', { className: 'col-span-2' }, 'Ambassador'),
-        el('div', { className: 'col-span-1' }, 'Status'),
-        el('div', { className: 'col-span-1' }, '')
+    renderChips();
+    renderTable();
+    page.append(wrap);
+  }
+
+  // ── DETAIL VIEW ─────────────────────────────────────────────────────────
+  function renderDetailView(order) {
+    const isTerminal = ['DELIVERED','CANCELLED'].includes(order.status);
+    const dateObj = new Date(order.createdAt);
+    const dateStr = dateObj.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: '2-digit' });
+    const timeStr = dateObj.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
+    const wrap = el('div', { className: 'p-6 max-w-4xl mx-auto' });
+
+    // Header
+    wrap.append(
+      el('div', { className: 'flex items-center justify-between mb-5 flex-wrap gap-3' },
+        el('div', { className: 'flex items-center gap-2' },
+          el('button', {
+            className: 'flex items-center gap-1 text-sm font-semibold text-gray-500 hover:text-gray-900 transition',
+            onClick: () => { detailOrder = null; renderPage(); },
+          }, '← All Orders'),
+          el('span', { className: 'text-gray-300' }, '/'),
+          el('span', { className: 'text-sm font-black text-gray-900' }, `Order #${order.id.slice(-8).toUpperCase()}`)
+        ),
+        el('div', { className: 'flex items-center gap-2' },
+          badge(order.status, STATUS_COLORS[order.status] || '#999'),
+          !isTerminal && el('button', {
+            className: 'px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-50 transition',
+            onClick: () => showOrderEditModal(order, () => refreshDetail(order.id)),
+          }, '✏️ Edit Order')
+        )
       )
     );
 
-    const tbody = el('div', { className: 'divide-y divide-gray-50' });
+    // Status stepper
+    const currentIdx = STATUS_SEQUENCE.indexOf(order.status);
+    wrap.append(
+      el('div', { className: 'bg-white rounded-xl px-4 py-3 border border-gray-100 mb-4 flex items-center gap-1 flex-wrap' },
+        ...STATUS_SEQUENCE.flatMap((s, i) => {
+          const done = i < currentIdx, active = i === currentIdx;
+          const chip = el('span', {
+            className: `text-xs font-bold px-2.5 py-1 rounded-full ${active ? 'text-white' : done ? 'text-green-700 bg-green-100' : 'text-gray-300 bg-gray-100'}`,
+            style: active ? { backgroundColor: STATUS_COLORS[s] } : {},
+          }, s);
+          return i < STATUS_SEQUENCE.length - 1 ? [chip, el('span', { className: 'text-gray-300 text-xs' }, '→')] : [chip];
+        })
+      )
+    );
 
-    filtered.forEach(order => {
-      const dateObj = new Date(order.createdAt);
-      const dateStr = dateObj.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: '2-digit' });
-      const timeStr = dateObj.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
-      const isExpanded = expandedId === order.id;
-      const isTerminal = ['DELIVERED','CANCELLED'].includes(order.status);
-
-      const rowWrap = el('div', {});
-
-      // ── Main row ──
-      const row = el('div', {
-        className: `grid grid-cols-12 items-center gap-0 px-5 py-3.5 cursor-pointer hover:bg-gray-50 transition select-none ${isExpanded ? 'bg-orange-50 border-l-4 border-brand' : ''}`,
-        onClick: () => { expandedId = isExpanded ? null : order.id; renderTable(); },
-      });
-
-      // Customer
-      row.append(el('div', { className: 'col-span-6 md:col-span-3 min-w-0 pr-2' },
-        el('p', { className: 'font-semibold text-gray-900 text-sm truncate' }, `${order.customer?.firstName || ''} ${order.customer?.lastName || ''}`),
-        el('p', { className: 'text-xs text-gray-400 truncate' }, order.customer?.email || '—')
-      ));
-      // Date
-      row.append(el('div', { className: 'hidden md:block col-span-2' },
-        el('p', { className: 'text-sm text-gray-700' }, dateStr),
-        el('p', { className: 'text-xs text-gray-400' }, timeStr)
-      ));
-      // Items count
-      row.append(el('div', { className: 'hidden md:flex col-span-1 justify-center' },
-        el('span', { className: 'bg-gray-100 text-gray-700 text-xs font-bold px-2 py-0.5 rounded-full' }, String(order.items?.length || 0))
-      ));
-      // Total
-      row.append(el('div', { className: 'col-span-3 md:col-span-2' },
-        el('p', { className: 'font-black text-gray-900 text-sm' }, `R${Number(order.total).toFixed(2)}`),
-        order.commission ? el('p', { className: 'text-xs text-green-600 font-semibold' }, `comm. R${Number(order.commission.amount).toFixed(2)}`) : null
-      ));
-      // Ambassador
-      row.append(el('div', { className: 'hidden md:block col-span-2' },
-        order.ambassador
-          ? el('span', { className: 'text-xs bg-brand-light text-brand-dark font-bold px-2 py-0.5 rounded-full' }, order.ambassador.code)
-          : el('span', { className: 'text-xs text-gray-300' }, '—')
-      ));
-      // Status badge
-      row.append(el('div', { className: 'hidden md:block col-span-1' },
-        badge(order.status, STATUS_COLORS[order.status] || '#999')
-      ));
-      // Expand toggle
-      row.append(el('div', { className: 'col-span-3 md:col-span-1 flex items-center justify-end gap-2' },
-        el('div', { className: 'md:hidden' }, badge(order.status, STATUS_COLORS[order.status] || '#999')),
-        el('span', { className: `text-gray-400 text-sm font-bold transition-transform ${isExpanded ? 'rotate-180' : ''}` }, '▼')
-      ));
-
-      rowWrap.append(row);
-
-      // ── Expanded detail panel ──
-      if (isExpanded) {
-        const panel = el('div', { className: 'bg-orange-50 border-l-4 border-brand px-5 pb-6 pt-4 space-y-4' });
-
-        // Items breakdown table
-        if (order.items?.length) {
-          panel.append(
-            el('div', { className: 'bg-white rounded-xl overflow-hidden border border-gray-100' },
-              el('div', { className: 'px-4 py-2.5 bg-gray-50 border-b border-gray-100' },
-                el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider' }, `Order Items (${order.items.length})`)
+    // Items table
+    if (order.items?.length) {
+      wrap.append(
+        el('div', { className: 'bg-white rounded-xl overflow-hidden border border-gray-100 mb-4' },
+          el('div', { className: 'px-4 py-2.5 bg-gray-50 border-b border-gray-100' },
+            el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider' }, `Order Items (${order.items.length})`)
+          ),
+          el('div', { className: 'divide-y divide-gray-50' },
+            ...order.items.map(item => {
+              const pname = item.variant?.product?.name || 'Unknown Product';
+              const vname = item.variant?.name || '';
+              const unitP = Number(item.unitPrice || 0);
+              const qty   = item.quantity;
+              return el('div', { className: 'px-4 py-3 flex justify-between items-center' },
+                el('div', {},
+                  el('p', { className: 'text-sm font-semibold text-gray-900' }, pname + (vname ? ` — ${vname}` : '')),
+                  el('p', { className: 'text-xs text-gray-400 mt-0.5' }, `${qty} × R${unitP.toFixed(2)} each`)
+                ),
+                el('p', { className: 'font-black text-gray-900 text-sm' }, `R${(unitP * qty).toFixed(2)}`)
+              );
+            }),
+            el('div', { className: 'px-4 py-3 bg-gray-50 space-y-1' },
+              el('div', { className: 'flex justify-between text-xs text-gray-500' },
+                el('span', {}, 'Subtotal'), el('span', {}, `R${Number(order.subtotal || 0).toFixed(2)}`)
               ),
-              el('div', { className: 'divide-y divide-gray-50' },
-                ...order.items.map(item => {
-                  const pname   = item.variant?.product?.name || 'Unknown Product';
-                  const vname   = item.variant?.name || '';
-                  const unitP   = Number(item.unitPrice || 0);
-                  const qty     = item.quantity;
-                  return el('div', { className: 'px-4 py-3 flex justify-between items-center' },
-                    el('div', {},
-                      el('p', { className: 'text-sm font-semibold text-gray-900' }, pname + (vname ? ` — ${vname}` : '')),
-                      el('p', { className: 'text-xs text-gray-400 mt-0.5' }, `${qty} × R${unitP.toFixed(2)} each`)
-                    ),
-                    el('p', { className: 'font-black text-gray-900 text-sm' }, `R${(unitP * qty).toFixed(2)}`)
-                  );
-                }),
-                // Totals footer
-                el('div', { className: 'px-4 py-3 bg-gray-50 space-y-1' },
-                  el('div', { className: 'flex justify-between text-xs text-gray-500' },
-                    el('span', {}, 'Subtotal'), el('span', {}, `R${Number(order.subtotal || 0).toFixed(2)}`)
-                  ),
-                  el('div', { className: 'flex justify-between text-xs text-gray-500' },
-                    el('span', {}, 'Delivery fee'), el('span', {}, `R${Number(order.deliveryFee || 0).toFixed(2)}`)
-                  ),
-                  el('div', { className: 'flex justify-between text-sm font-black text-gray-900 mt-1 pt-1.5 border-t border-gray-200' },
-                    el('span', {}, 'Total'), el('span', {}, `R${Number(order.total).toFixed(2)}`)
-                  )
-                )
+              el('div', { className: 'flex justify-between text-xs text-gray-500' },
+                el('span', {}, 'Delivery fee'), el('span', {}, `R${Number(order.deliveryFee || 0).toFixed(2)}`)
+              ),
+              el('div', { className: 'flex justify-between text-sm font-black text-gray-900 mt-1 pt-1.5 border-t border-gray-200' },
+                el('span', {}, 'Total'), el('span', {}, `R${Number(order.total).toFixed(2)}`)
               )
             )
-          );
-        }
-
-        // Customer + Ambassador cards
-        const infoRow = el('div', { className: 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3' });
-
-        // Customer card
-        infoRow.append(
-          el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100 space-y-1' },
-            el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-2' }, '👤 Customer'),
-            el('p', { className: 'font-bold text-gray-900' }, `${order.customer?.firstName || ''} ${order.customer?.lastName || ''}`),
-            order.customer?.email ? el('a', { href: `mailto:${order.customer.email}`, className: 'text-sm text-blue-500 hover:underline block' }, order.customer.email) : null,
-            order.customer?.phone ? el('a', { href: `tel:${order.customer.phone}`, className: 'text-sm text-brand hover:underline block' }, order.customer.phone) : null
           )
-        );
+        )
+      );
+    }
 
-        // Ambassador card
-        if (order.ambassador) {
-          const comm = order.commission;
-          infoRow.append(
-            el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
-              el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-2' }, '🌟 Ambassador'),
-              el('p', { className: 'font-black text-brand text-lg tracking-wide' }, order.ambassador.code),
-              comm
-                ? el('div', { className: 'mt-1 flex items-center gap-2 flex-wrap' },
-                    el('span', { className: 'text-sm font-semibold text-gray-700' }, `R${Number(comm.amount).toFixed(2)} commission`),
-                    badge(comm.status, comm.status === 'PAID' ? '#10B981' : '#F59E0B')
-                  )
-                : el('p', { className: 'text-xs text-gray-400 mt-1' }, 'Commission generated on confirmation')
-            )
+    // Info cards
+    const infoRow = el('div', { className: 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4' });
+    infoRow.append(
+      el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100 space-y-1' },
+        el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-2' }, '👤 Customer'),
+        el('p', { className: 'font-bold text-gray-900' }, `${order.customer?.firstName || ''} ${order.customer?.lastName || ''}`),
+        order.customer?.email ? el('a', { href: `mailto:${order.customer.email}`, className: 'text-sm text-blue-500 hover:underline block' }, order.customer.email) : null,
+        order.customer?.phone ? el('a', { href: `tel:${order.customer.phone}`, className: 'text-sm text-brand hover:underline block' }, order.customer.phone) : null
+      )
+    );
+    if (order.ambassador) {
+      const comm = order.commission;
+      infoRow.append(
+        el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
+          el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-2' }, '🌟 Ambassador'),
+          el('p', { className: 'font-black text-brand text-lg tracking-wide' }, order.ambassador.code),
+          comm
+            ? el('div', { className: 'mt-1 flex items-center gap-2 flex-wrap' },
+                el('span', { className: 'text-sm font-semibold text-gray-700' }, `R${Number(comm.amount).toFixed(2)} commission`),
+                badge(comm.status, comm.status === 'PAID' ? '#10B981' : '#F59E0B')
+              )
+            : el('p', { className: 'text-xs text-gray-400 mt-1' }, 'Commission generated on confirmation')
+        )
+      );
+    }
+    infoRow.append(
+      el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
+        el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-2' }, '🕐 Timeline'),
+        el('p', { className: 'text-sm text-gray-600 mb-1' }, `Placed: ${dateStr} at ${timeStr}`),
+        ...((order.statusLogs || []).map(log => {
+          const logDate = new Date(log.createdAt).toLocaleTimeString('en-ZA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+          return el('p', { className: 'text-xs text-gray-400' },
+            el('span', { className: 'font-semibold', style: { color: STATUS_COLORS[log.status] || '#999' } }, log.status),
+            ` — ${logDate}${log.note ? ` · "${log.note}"` : ''}`
           );
+        }))
+      )
+    );
+    wrap.append(infoRow);
+
+    // Notes
+    if (order.notes) {
+      wrap.append(
+        el('div', { className: 'bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-3 mb-4' },
+          el('p', { className: 'text-xs font-black text-yellow-600 uppercase tracking-wider mb-1' }, '📝 Customer Note'),
+          el('p', { className: 'text-sm text-yellow-900' }, order.notes)
+        )
+      );
+    }
+
+    // Action panel
+    if (!isTerminal) {
+      const nextAction = STATUS_NEXT_ACTION[order.status];
+      let cancelNote = '', showingCancelInput = false;
+
+      const cancelNoteInput = el('input', {
+        type: 'text', placeholder: 'Reason for cancellation (optional)…',
+        className: 'flex-1 min-w-48 border border-red-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-red-400 hidden',
+        onInput: e => { cancelNote = e.target.value; },
+      });
+
+      const cancelBtn = el('button', {
+        className: 'border-2 border-red-300 text-red-500 text-sm font-bold px-5 py-2.5 rounded-xl hover:bg-red-50 transition',
+      }, '✕ Cancel Order');
+      cancelBtn.addEventListener('click', async () => {
+        if (!showingCancelInput) {
+          showingCancelInput = true;
+          cancelNoteInput.classList.remove('hidden');
+          cancelBtn.textContent = '✕ Confirm Cancellation';
+          cancelBtn.className = 'bg-red-500 text-white text-sm font-bold px-5 py-2.5 rounded-xl hover:bg-red-600 transition';
+          return;
         }
+        cancelBtn.disabled = true; cancelBtn.textContent = 'Cancelling…';
+        try {
+          await api.orders.updateStatus(order.id, 'CANCELLED', cancelNote || undefined);
+          toast('Order cancelled', 'success');
+          await refreshDetail(order.id);
+        } catch (err) { toast(err.message || 'Failed'); cancelBtn.disabled = false; cancelBtn.textContent = '✕ Confirm Cancellation'; }
+      });
 
-        // Dates card
-        infoRow.append(
-          el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100 space-y-1' },
-            el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-2' }, '🕐 Timeline'),
-            el('p', { className: 'text-sm text-gray-600' }, `Placed: ${dateStr} at ${timeStr}`),
-            ...((order.statusLogs || []).map(log => {
-              const logDate = new Date(log.createdAt).toLocaleTimeString('en-ZA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-              return el('p', { className: 'text-xs text-gray-400' },
-                el('span', { className: 'font-semibold', style: { color: STATUS_COLORS[log.status] || '#999' } }, log.status),
-                ` — ${logDate}${log.note ? ` · "${log.note}"` : ''}`
-              );
-            }))
-          )
-        );
-
-        panel.append(infoRow);
-
-        // Customer note
-        if (order.notes) {
-          panel.append(
-            el('div', { className: 'bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-3' },
-              el('p', { className: 'text-xs font-black text-yellow-600 uppercase tracking-wider mb-1' }, '📝 Customer Note'),
-              el('p', { className: 'text-sm text-yellow-900' }, order.notes)
-            )
-          );
-        }
-
-        // ── Status action panel ──
-        if (!isTerminal) {
-          const nextAction = STATUS_NEXT_ACTION[order.status];
-
-          let cancelNote = '';
-          let showingCancelInput = false;
-
-          const cancelNoteInput = el('input', {
-            type: 'text', placeholder: 'Reason for cancellation (optional)…',
-            className: 'flex-1 min-w-48 border border-red-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-red-400 hidden',
-            onInput: e => { cancelNote = e.target.value; },
-          });
-
-          const cancelBtn = el('button', {
-            className: 'border-2 border-red-300 text-red-500 text-sm font-bold px-5 py-2.5 rounded-xl hover:bg-red-50 transition',
-          }, '✕ Cancel Order');
-
-          cancelBtn.addEventListener('click', async () => {
-            if (!showingCancelInput) {
-              showingCancelInput = true;
-              cancelNoteInput.classList.remove('hidden');
-              cancelBtn.textContent = '✕ Confirm Cancellation';
-              cancelBtn.className = 'bg-red-500 text-white text-sm font-bold px-5 py-2.5 rounded-xl hover:bg-red-600 transition';
-              return;
+      const actionsRow = el('div', { className: 'flex flex-wrap gap-2 items-center' });
+      if (nextAction) {
+        const advBtn = el('button', {
+          className: `text-sm font-bold px-6 py-2.5 rounded-xl transition ${nextAction.btnClass}`,
+        }, nextAction.label);
+        advBtn.addEventListener('click', async () => {
+          advBtn.disabled = true; advBtn.textContent = 'Updating…';
+          try {
+            const result = await api.orders.updateStatus(order.id, nextAction.next);
+            if (result?.fulfilledFromStock) {
+              toast('✅ Stock available — baking skipped! Order is now Ready.', 'success');
+            } else {
+              const actual = result?.status || result?.actualStatus || nextAction.next;
+              const labels = { BAKING: '🍞 Sent to baking', READY: '✅ Marked Ready', DELIVERED: '🚚 Delivered', CONFIRMED: '✓ Confirmed' };
+              toast(labels[actual] || `Marked ${actual} ✓`, 'success');
             }
-            cancelBtn.disabled = true; cancelBtn.textContent = 'Cancelling…';
-            try {
-              await api.orders.updateStatus(order.id, 'CANCELLED', cancelNote || undefined);
-              toast('Order cancelled', 'success'); reload();
-            } catch (err) { toast(err.message || 'Failed'); cancelBtn.disabled = false; cancelBtn.textContent = '✕ Confirm Cancellation'; }
-          });
-
-          const actionsRow = el('div', { className: 'flex flex-wrap gap-2 items-center' });
-
-          if (nextAction) {
-            const advBtn = el('button', {
-              className: `text-sm font-bold px-6 py-2.5 rounded-xl transition ${nextAction.btnClass}`,
-            }, nextAction.label);
-            advBtn.addEventListener('click', async () => {
-              advBtn.disabled = true; advBtn.textContent = 'Updating…';
-              try {
-                const result = await api.orders.updateStatus(order.id, nextAction.next);
-                if (result?.fulfilledFromStock) {
-                  toast('✅ Stock available — baking skipped! Order is now Ready.', 'success');
-                } else {
-                  const actual = result?.status || result?.actualStatus || nextAction.next;
-                  const labels = { BAKING: '🍞 Sent to baking', READY: '✅ Marked Ready', DELIVERED: '🚚 Delivered', CONFIRMED: '✓ Confirmed' };
-                  toast(labels[actual] || `Marked ${actual} ✓`, 'success');
-                }
-                reload();
-              } catch (err) { toast(err.message || 'Failed'); advBtn.disabled = false; advBtn.textContent = nextAction.label; }
-            });
-            actionsRow.append(advBtn);
-          }
-
-          actionsRow.append(cancelNoteInput, cancelBtn);
-
-          panel.append(
-            el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
-              el('div', { className: 'flex items-center justify-between mb-3 flex-wrap gap-2' },
-                el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider' }, 'Update Status'),
-                statusStepper(order.status)
-              ),
-              actionsRow
-            )
-          );
-        } else {
-          panel.append(
-            el('div', {
-              className: `rounded-xl px-4 py-3 text-sm font-semibold ${order.status === 'DELIVERED' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-600 border border-red-200'}`
-            },
-              order.status === 'DELIVERED'
-                ? '✅ This order has been successfully delivered.'
-                : `✕ This order was cancelled.${(order.statusLogs || []).find(l => l.status === 'CANCELLED' && l.note) ? ' Reason: "' + order.statusLogs.find(l => l.status === 'CANCELLED').note + '"' : ''}`
-            )
-          );
-        }
-
-        rowWrap.append(panel);
+            await refreshDetail(order.id);
+          } catch (err) { toast(err.message || 'Failed'); advBtn.disabled = false; advBtn.textContent = nextAction.label; }
+        });
+        actionsRow.append(advBtn);
       }
+      actionsRow.append(cancelNoteInput, cancelBtn);
 
-      tbody.append(rowWrap);
-    });
+      wrap.append(
+        el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
+          el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-3' }, 'Update Status'),
+          actionsRow
+        )
+      );
+    } else {
+      wrap.append(
+        el('div', {
+          className: `rounded-xl px-4 py-3 text-sm font-semibold ${order.status === 'DELIVERED' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-600 border border-red-200'}`,
+        },
+          order.status === 'DELIVERED'
+            ? '✅ This order has been successfully delivered.'
+            : `✕ This order was cancelled.${(order.statusLogs || []).find(l => l.status === 'CANCELLED' && l.note) ? ' Reason: "' + order.statusLogs.find(l => l.status === 'CANCELLED').note + '"' : ''}`
+        )
+      );
+    }
 
-    table.append(tbody);
-    tableWrap.append(table);
+    page.append(wrap);
   }
 
-  renderChips();
-  renderTable();
-  container.append(page);
+  renderPage();
+}
+
+function showOrderEditModal(order, onSaved) {
+  let notes = order.notes || '';
+  let deliveryFee = Number(order.deliveryFee || 0);
+  let ambassadorCode = order.ambassador?.code || '';
+
+  const overlay = el('div', { className: 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4' });
+  const panel = el('div', { className: 'bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden' });
+  const close = () => document.body.removeChild(overlay);
+
+  panel.append(
+    el('div', { className: 'flex items-center justify-between px-5 py-4 border-b border-gray-100' },
+      el('h2', { className: 'font-black text-gray-900 text-base' }, `Edit Order #${order.id.slice(-8).toUpperCase()}`),
+      el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×')
+    )
+  );
+
+  const body = el('div', { className: 'p-5 space-y-4' });
+
+  // Ambassador code picker
+  const ambPicker = createAmbPicker({
+    value: ambassadorCode,
+    onChange: v => { ambassadorCode = v; },
+    placeholder: 'No ambassador code…',
+  });
+  body.append(
+    el('div', {},
+      el('label', { className: 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5' }, 'Ambassador Code'),
+      ambPicker
+    )
+  );
+
+  // Delivery fee
+  const feeInput = el('input', {
+    type: 'number', min: '0', step: '0.01',
+    className: 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand',
+    onInput: e => { deliveryFee = Number(e.target.value) || 0; },
+  });
+  feeInput.value = String(deliveryFee);
+  body.append(
+    el('div', {},
+      el('label', { className: 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5' }, 'Delivery Fee (R)'),
+      feeInput
+    )
+  );
+
+  // Notes
+  const notesInput = el('textarea', {
+    rows: 3,
+    placeholder: 'Customer notes…',
+    className: 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand resize-none',
+    onInput: e => { notes = e.target.value; },
+  });
+  notesInput.value = notes;
+  body.append(
+    el('div', {},
+      el('label', { className: 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5' }, 'Customer Notes'),
+      notesInput
+    )
+  );
+
+  const errMsg = el('p', { className: 'text-red-500 text-sm hidden' });
+  body.append(errMsg);
+  panel.append(body);
+
+  const saveBtn = el('button', {
+    className: 'flex-1 bg-brand text-white text-sm font-bold py-2.5 px-4 rounded-xl hover:opacity-90 transition',
+  }, 'Save Changes');
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    errMsg.classList.add('hidden');
+    try {
+      await api.orders.update(order.id, {
+        notes: notes || undefined,
+        deliveryFee,
+        ambassadorCode: ambassadorCode || null,
+      });
+      toast('Order updated', 'success');
+      close();
+      onSaved();
+    } catch (err) {
+      errMsg.textContent = err.message || 'Failed to save';
+      errMsg.classList.remove('hidden');
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Changes';
+    }
+  });
+
+  panel.append(
+    el('div', { className: 'flex gap-2 px-5 py-4 border-t border-gray-100' },
+      el('button', { className: 'flex-1 bg-white border border-gray-200 text-gray-600 text-sm font-semibold py-2.5 px-4 rounded-xl hover:bg-gray-50 transition', onClick: close }, 'Cancel'),
+      saveBtn
+    )
+  );
+
+  overlay.append(panel);
+  document.body.append(overlay);
 }
 
 // ── ADMIN: PLACE ORDER FOR CLIENT ─────────────────────────────────────────

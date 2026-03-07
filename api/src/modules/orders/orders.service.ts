@@ -191,4 +191,53 @@ export class OrderService {
       orderBy: { createdAt: 'desc' },
     })
   }
+
+  private orderInclude = {
+    customer: { select: { id: true, email: true, phone: true, firstName: true, lastName: true, status: true, createdAt: true, updatedAt: true } },
+    ambassador: true,
+    commission: true,
+    items: { include: { variant: { include: { product: true } } } },
+    statusLogs: { orderBy: { createdAt: 'asc' } as const },
+  }
+
+  async getById(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: this.orderInclude,
+    })
+    if (!order) throw new NotFoundError('Order')
+    return order
+  }
+
+  async update(orderId: string, data: { notes?: string; deliveryFee?: number; ambassadorCode?: string | null }) {
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } })
+    if (!order) throw new NotFoundError('Order')
+
+    let ambassadorId: string | null | undefined = undefined
+    if (data.ambassadorCode !== undefined) {
+      if (!data.ambassadorCode) {
+        ambassadorId = null
+      } else {
+        const amb = await this.prisma.ambassador.findUnique({
+          where: { code: data.ambassadorCode, status: 'ACTIVE' },
+        })
+        if (!amb) throw new AppError('Invalid ambassador code', 400)
+        ambassadorId = amb.id
+      }
+    }
+
+    const updateData: Record<string, unknown> = {}
+    if (data.notes !== undefined) updateData.notes = data.notes
+    if (data.deliveryFee !== undefined) {
+      updateData.deliveryFee = data.deliveryFee
+      updateData.total = Number(order.subtotal) + data.deliveryFee
+    }
+    if (ambassadorId !== undefined) updateData.ambassadorId = ambassadorId
+
+    return this.prisma.order.update({
+      where: { id: orderId },
+      data: updateData,
+      include: this.orderInclude,
+    })
+  }
 }
