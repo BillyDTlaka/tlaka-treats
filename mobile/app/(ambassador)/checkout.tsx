@@ -1,25 +1,38 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet,
-  Alert, ActivityIndicator,
+  Alert, ActivityIndicator, Modal,
 } from 'react-native'
 import { router } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useCartStore } from '../../store/cart.store'
 import { useAuthStore } from '../../store/auth.store'
-import { ordersApi } from '../../services/api'
+import { ordersApi, ambassadorsApi } from '../../services/api'
 import AddressAutocomplete from '../../components/AddressAutocomplete'
 
 export default function AmbassadorCheckout() {
   const insets = useSafeAreaInsets()
   const { user } = useAuthStore()
   const {
-    items, notes,
-    setNotes, removeItem, updateQuantity, getTotal, clearCart,
+    items, ambassadorCode, notes,
+    setAmbassadorCode, setNotes, removeItem, updateQuantity, getTotal, clearCart,
   } = useCartStore()
 
   const [placing, setPlacing] = useState(false)
   const [deliveryAddress, setDeliveryAddress] = useState('')
+  const [ambassadors, setAmbassadors] = useState<any[]>([])
+  const [showAmbPicker, setShowAmbPicker] = useState(false)
+  const [ambSearch, setAmbSearch] = useState('')
+
+  useEffect(() => {
+    ambassadorsApi.getAll()
+      .then(list => setAmbassadors(list.filter((a: any) => a.status === 'ACTIVE')))
+      .catch(() => {})
+  }, [])
+
+  const filteredAmbs = ambassadors.filter(a =>
+    !ambSearch.trim() || a.code?.toLowerCase().includes(ambSearch.toLowerCase())
+  )
 
   const handlePlaceOrder = async () => {
     if (items.length === 0) return Alert.alert('Empty Cart', 'Add some items first!')
@@ -29,6 +42,7 @@ export default function AmbassadorCheckout() {
     try {
       await ordersApi.create({
         items: items.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
+        ambassadorCode: ambassadorCode.trim() || undefined,
         notes: `Delivery: ${deliveryAddress.trim()}${notes.trim() ? ` | ${notes.trim()}` : ''}`,
       })
       clearCart()
@@ -104,6 +118,21 @@ export default function AmbassadorCheckout() {
             placeholder="e.g. 12 Rose Street, Soweto, 1804"
           />
 
+          {/* Ambassador Code */}
+          <Text style={styles.sectionTitle}>Ambassador Code (optional)</Text>
+          <TouchableOpacity style={styles.pickerBtn} onPress={() => { setAmbSearch(''); setShowAmbPicker(true) }}>
+            <Text style={ambassadorCode ? styles.pickerBtnValue : styles.pickerBtnPlaceholder}>
+              {ambassadorCode || 'Select ambassador code…'}
+            </Text>
+            {ambassadorCode ? (
+              <TouchableOpacity onPress={() => setAmbassadorCode('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={styles.pickerClear}>✕</Text>
+              </TouchableOpacity>
+            ) : (
+              <Text style={styles.pickerChevron}>▾</Text>
+            )}
+          </TouchableOpacity>
+
           <Text style={styles.sectionTitle}>Special Instructions (optional)</Text>
           <TextInput
             style={[styles.textInput, { height: 80 }]}
@@ -150,6 +179,43 @@ export default function AmbassadorCheckout() {
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Ambassador Picker Modal */}
+      <Modal visible={showAmbPicker} animationType="slide" transparent>
+        <TouchableOpacity style={styles.ambOverlay} activeOpacity={1} onPress={() => setShowAmbPicker(false)}>
+          <View style={styles.ambSheet}>
+            <Text style={styles.ambTitle}>Select Ambassador</Text>
+            <TextInput
+              style={styles.ambSearch}
+              placeholder="Search by code…"
+              placeholderTextColor="#bbb"
+              value={ambSearch}
+              onChangeText={setAmbSearch}
+              autoCapitalize="characters"
+              autoFocus
+            />
+            <ScrollView keyboardShouldPersistTaps="handled">
+              {filteredAmbs.length === 0 ? (
+                <Text style={styles.ambEmpty}>{ambassadors.length === 0 ? 'No active ambassadors' : 'No results'}</Text>
+              ) : (
+                filteredAmbs.map(a => (
+                  <TouchableOpacity
+                    key={a.id}
+                    style={styles.ambItem}
+                    onPress={() => { setAmbassadorCode(a.code); setAmbSearch(''); setShowAmbPicker(false) }}
+                  >
+                    <Text style={styles.ambItemCode}>{a.code}</Text>
+                    {a.user && <Text style={styles.ambItemName}>{a.user.firstName} {a.user.lastName}</Text>}
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+            <TouchableOpacity style={styles.ambCancel} onPress={() => setShowAmbPicker(false)}>
+              <Text style={styles.ambCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   )
 }
@@ -195,4 +261,20 @@ const styles = StyleSheet.create({
   placeOrderBtn: { backgroundColor: '#8B3A3A', borderRadius: 14, padding: 16, alignItems: 'center' },
   placeOrderBtnDisabled: { opacity: 0.6 },
   placeOrderText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  // Ambassador picker
+  pickerBtn: { backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e8d5d5', padding: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+  pickerBtnValue: { flex: 1, fontSize: 15, color: '#8B3A3A', fontWeight: '600' },
+  pickerBtnPlaceholder: { flex: 1, fontSize: 15, color: '#bbb' },
+  pickerClear: { fontSize: 14, color: '#bbb', paddingLeft: 8 },
+  pickerChevron: { fontSize: 16, color: '#999' },
+  ambOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  ambSheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '70%' },
+  ambTitle: { fontSize: 17, fontWeight: '700', color: '#1a1a1a', textAlign: 'center', marginBottom: 14 },
+  ambSearch: { backgroundColor: '#f5f0eb', borderRadius: 10, padding: 12, fontSize: 15, color: '#1a1a1a', marginBottom: 12 },
+  ambEmpty: { textAlign: 'center', color: '#999', paddingVertical: 24, fontSize: 14 },
+  ambItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f5f0eb' },
+  ambItemCode: { fontSize: 16, fontWeight: '700', color: '#8B3A3A' },
+  ambItemName: { fontSize: 13, color: '#999' },
+  ambCancel: { alignItems: 'center', paddingTop: 16 },
+  ambCancelText: { fontSize: 15, color: '#999', fontWeight: '600' },
 })
