@@ -92,6 +92,20 @@ const ambassadorRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.code(201).send(ambassador)
   })
 
+  // ── GET /ambassadors/active ───────────────────────────────────────────────
+  // Any authenticated user: list active ambassadors (for checkout picker)
+  fastify.get('/active', { preHandler: [authenticate] }, async () => {
+    return fastify.prisma.ambassador.findMany({
+      where: { status: 'ACTIVE' },
+      select: {
+        id: true,
+        code: true,
+        user: { select: { firstName: true, lastName: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+  })
+
   // ── GET /ambassadors ──────────────────────────────────────────────────────
   // Admin: list all ambassadors with earnings summary
   fastify.get('/', {

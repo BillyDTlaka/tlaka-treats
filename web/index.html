@@ -159,6 +159,7 @@ const api = {
     apply:       (bio)                    => req('POST',  '/ambassadors/apply',             { bio }),
     me:          ()                       => req('GET',   '/ambassadors/me'),
     getAll:      ()                       => req('GET',   '/ambassadors'),
+    getActive:   ()                       => req('GET',   '/ambassadors/active'),
     create:      (data)                   => req('POST',  '/ambassadors/admin/create',       data),
     updateStatus:(id, status, note)       => req('PATCH', `/ambassadors/${id}/status`,       { status, ...(note ? { note } : {}) }),
     update:      (id, data)               => req('PATCH', `/ambassadors/${id}`,              data),
@@ -422,8 +423,8 @@ function createAmbPicker({ value = '', onChange, placeholder = 'Select ambassado
     renderList();
 
     // Fetch ambassadors
-    api.ambassadors.getAll().then(list => {
-      ambList = list.filter(a => a.status === 'ACTIVE');
+    api.ambassadors.getActive().then(list => {
+      ambList = list;
       renderList();
     }).catch(() => {});
 

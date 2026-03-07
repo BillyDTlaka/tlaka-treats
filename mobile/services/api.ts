@@ -94,6 +94,7 @@ export const ambassadorsApi = {
   apply: (bio?: string) => api.post('/ambassadors/apply', { bio }).then(r => r.data),
   me: () => api.get('/ambassadors/me').then(r => r.data),
   getAll: () => api.get('/ambassadors').then(r => r.data),
+  getActive: () => api.get('/ambassadors/active').then(r => r.data),
   updateStatus: (id: string, status: string) =>
     api.patch(`/ambassadors/${id}/status`, { status }).then(r => r.data),
 }

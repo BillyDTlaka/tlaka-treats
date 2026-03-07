@@ -24,8 +24,8 @@ export default function CheckoutScreen() {
   const [ambSearch, setAmbSearch] = useState('')
 
   useEffect(() => {
-    ambassadorsApi.getAll()
-      .then(list => setAmbassadors(list.filter((a: any) => a.status === 'ACTIVE')))
+    ambassadorsApi.getActive()
+      .then(list => setAmbassadors(list))
       .catch(() => {})
   }, [])
 
