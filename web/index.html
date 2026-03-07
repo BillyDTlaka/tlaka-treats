@@ -150,6 +150,7 @@ const api = {
     getAll: () => req('GET', '/orders'),
     getById: (id) => req('GET', `/orders/${id}`),
     update: (id, data) => req('PATCH', `/orders/${id}`, data),
+    updateItems: (id, items) => req('PUT', `/orders/${id}/items`, { items }),
     updateStatus: (id, status, note) => req('PATCH', `/orders/${id}/status`, { status, ...(note ? { note } : {}) }),
   },
   addresses: {
@@ -2880,21 +2881,26 @@ function renderAdminSoon(module, container) {
 function renderAdminDashboard(data, container, reload, navigate) {
   const { orders: allOrders, ambassadors, products } = data;
 
-  let dateFilter = 'all'; // 'today' | '7d' | '30d' | 'all'
+  let dateFilter = 'all'; // 'today' | '7d' | '30d' | 'all' | 'custom'
+  let customFrom = '', customTo = '';
 
   const page = el('div', { className: 'p-6 max-w-5xl mx-auto' });
   container.append(page);
 
   function getFilteredOrders() {
     if (dateFilter === 'all') return allOrders;
-    const cutoff = new Date();
-    if (dateFilter === 'today') {
-      cutoff.setHours(0, 0, 0, 0);
-    } else if (dateFilter === '7d') {
-      cutoff.setDate(cutoff.getDate() - 7);
-    } else if (dateFilter === '30d') {
-      cutoff.setDate(cutoff.getDate() - 30);
+    if (dateFilter === 'custom') {
+      return allOrders.filter(o => {
+        const d = new Date(o.createdAt);
+        if (customFrom && d < new Date(customFrom)) return false;
+        if (customTo) { const to = new Date(customTo); to.setHours(23,59,59,999); if (d > to) return false; }
+        return true;
+      });
     }
+    const cutoff = new Date();
+    if (dateFilter === 'today')     cutoff.setHours(0, 0, 0, 0);
+    else if (dateFilter === '7d')   cutoff.setDate(cutoff.getDate() - 7);
+    else if (dateFilter === '30d')  cutoff.setDate(cutoff.getDate() - 30);
     return allOrders.filter(o => new Date(o.createdAt) >= cutoff);
   }
 
@@ -2908,14 +2914,26 @@ function renderAdminDashboard(data, container, reload, navigate) {
 
     // Date filter row
     const filterDefs = [
-      { id: 'all',   label: 'All Time'    },
-      { id: 'today', label: 'Today'       },
-      { id: '7d',    label: 'Last 7 Days' },
-      { id: '30d',   label: 'Last 30 Days'},
+      { id: 'all',   label: 'All Time' },
+      { id: 'today', label: 'Today'    },
+      { id: '7d',    label: '7 Days'   },
+      { id: '30d',   label: '30 Days'  },
     ];
+    const fromInput = el('input', {
+      type: 'date',
+      className: `border rounded-lg px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-brand ${dateFilter === 'custom' ? 'border-brand' : 'border-gray-200 bg-white'}`,
+      onInput: e => { customFrom = e.target.value; dateFilter = 'custom'; render(); },
+    });
+    if (customFrom) fromInput.value = customFrom;
+    const toInput = el('input', {
+      type: 'date',
+      className: `border rounded-lg px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-brand ${dateFilter === 'custom' ? 'border-brand' : 'border-gray-200 bg-white'}`,
+      onInput: e => { customTo = e.target.value; dateFilter = 'custom'; render(); },
+    });
+    if (customTo) toInput.value = customTo;
     page.append(
-      el('div', { className: 'flex items-center gap-2 mb-5' },
-        el('span', { className: 'text-xs font-semibold text-gray-500 uppercase tracking-wide mr-1' }, 'Period:'),
+      el('div', { className: 'flex flex-wrap items-center gap-2 mb-5' },
+        el('span', { className: 'text-xs font-semibold text-gray-500 uppercase tracking-wide' }, 'Period:'),
         ...filterDefs.map(f =>
           el('button', {
             className: `px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
@@ -2923,9 +2941,14 @@ function renderAdminDashboard(data, container, reload, navigate) {
                 ? 'bg-brand text-white'
                 : 'bg-white text-gray-500 border border-gray-200 hover:border-brand hover:text-brand'
             }`,
-            onClick: () => { dateFilter = f.id; render(); }
+            onClick: () => { dateFilter = f.id; customFrom = ''; customTo = ''; render(); }
           }, f.label)
-        )
+        ),
+        el('span', { className: 'text-gray-200 text-sm mx-1' }, '|'),
+        el('span', { className: 'text-xs font-semibold text-gray-400' }, 'Custom:'),
+        fromInput,
+        el('span', { className: 'text-xs text-gray-400' }, '→'),
+        toInput
       )
     );
 
@@ -3232,7 +3255,7 @@ function renderAdminOrders(data, container, reload) {
           badge(order.status, STATUS_COLORS[order.status] || '#999'),
           !isTerminal && el('button', {
             className: 'px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-50 transition',
-            onClick: () => showOrderEditModal(order, () => refreshDetail(order.id)),
+            onClick: () => showOrderEditModal(order, data.products, () => refreshDetail(order.id)),
           }, '✏️ Edit Order')
         )
       )
@@ -3417,23 +3440,138 @@ function renderAdminOrders(data, container, reload) {
   renderPage();
 }
 
-function showOrderEditModal(order, onSaved) {
+function showOrderEditModal(order, products, onSaved) {
   let notes = order.notes || '';
   let deliveryFee = Number(order.deliveryFee || 0);
   let ambassadorCode = order.ambassador?.code || '';
+  let editItems = (order.items || []).map(i => ({
+    variantId: i.variant?.id || i.variantId,
+    productName: i.variant?.product?.name || 'Unknown',
+    variantName: i.variant?.name || '',
+    unitPrice: Number(i.unitPrice || 0),
+    quantity: i.quantity || 1,
+  }));
 
   const overlay = el('div', { className: 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4' });
-  const panel = el('div', { className: 'bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden' });
+  const panel = el('div', { className: 'bg-white rounded-2xl w-full max-w-xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden' });
   const close = () => document.body.removeChild(overlay);
 
+  // Header
   panel.append(
-    el('div', { className: 'flex items-center justify-between px-5 py-4 border-b border-gray-100' },
+    el('div', { className: 'flex items-center justify-between px-5 py-4 border-b border-gray-100 flex-shrink-0' },
       el('h2', { className: 'font-black text-gray-900 text-base' }, `Edit Order #${order.id.slice(-8).toUpperCase()}`),
       el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×')
     )
   );
 
-  const body = el('div', { className: 'p-5 space-y-4' });
+  const body = el('div', { className: 'flex-1 overflow-y-auto p-5 space-y-5' });
+
+  // ── ITEMS SECTION ──────────────────────────────────────────────────────
+  body.append(
+    el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wide' }, 'Order Items')
+  );
+
+  const itemsListEl = el('div', { className: 'border border-gray-100 rounded-xl overflow-hidden' });
+
+  function renderItemsList() {
+    itemsListEl.innerHTML = '';
+    if (!editItems.length) {
+      itemsListEl.append(el('p', { className: 'text-sm text-gray-400 text-center py-4' }, 'No items — add one below'));
+      return;
+    }
+    editItems.forEach((item, idx) => {
+      itemsListEl.append(
+        el('div', { className: 'flex items-center gap-2 px-3 py-2.5 border-b border-gray-50 last:border-b-0' },
+          el('div', { className: 'flex-1 min-w-0' },
+            el('p', { className: 'text-sm font-semibold text-gray-900 truncate' }, item.productName + (item.variantName ? ` — ${item.variantName}` : '')),
+            el('p', { className: 'text-xs text-gray-400' }, `R${item.unitPrice.toFixed(2)} each`)
+          ),
+          el('div', { className: 'flex items-center gap-1 flex-shrink-0' },
+            el('button', {
+              className: 'w-6 h-6 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm flex items-center justify-center',
+              onClick: () => { if (item.quantity > 1) { editItems[idx].quantity--; renderItemsList(); } },
+            }, '−'),
+            el('span', { className: 'w-7 text-center text-sm font-bold' }, String(item.quantity)),
+            el('button', {
+              className: 'w-6 h-6 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm flex items-center justify-center',
+              onClick: () => { editItems[idx].quantity++; renderItemsList(); },
+            }, '+'),
+          ),
+          el('button', {
+            className: 'text-red-400 hover:text-red-600 font-bold text-lg leading-none ml-1 flex-shrink-0',
+            onClick: () => { editItems.splice(idx, 1); renderItemsList(); },
+          }, '×')
+        )
+      );
+    });
+  }
+
+  renderItemsList();
+  body.append(itemsListEl);
+
+  // Add item row
+  const activeProducts = (products || []).filter(p => p.isActive && p.variants?.length > 0);
+  const variantPriceMap = new Map();
+
+  const productSel = el('select', { className: 'flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand' });
+  const variantSel = el('select', { className: 'flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand' });
+  const addQtyInput = el('input', {
+    type: 'number', min: '1', value: '1',
+    className: 'w-14 border border-gray-200 rounded-xl px-2 py-2 text-sm text-center outline-none focus:ring-2 focus:ring-brand',
+  });
+
+  function makeOpt(val, txt) { const o = document.createElement('option'); o.value = val; o.textContent = txt; return o; }
+
+  productSel.append(makeOpt('', '— Product —'));
+  activeProducts.forEach(p => productSel.append(makeOpt(p.id, p.name)));
+
+  function updateVariants() {
+    variantSel.innerHTML = '';
+    variantPriceMap.clear();
+    const pid = productSel.value;
+    variantSel.append(makeOpt('', '— Variant —'));
+    if (!pid) return;
+    const product = activeProducts.find(p => p.id === pid);
+    (product?.variants || []).forEach(v => {
+      const price = v.prices?.find(p => p.tier === (order.ambassador ? 'AMBASSADOR' : 'RETAIL'))
+                 || v.prices?.find(p => p.tier === 'RETAIL');
+      const unitPrice = price ? Number(price.price) : 0;
+      variantPriceMap.set(v.id, { unitPrice, variantName: v.name });
+      variantSel.append(makeOpt(v.id, `${v.name} — R${unitPrice.toFixed(2)}`));
+    });
+  }
+  productSel.addEventListener('change', updateVariants);
+  updateVariants();
+
+  const addItemBtn = el('button', {
+    className: 'px-3 py-2 bg-brand text-white text-sm font-bold rounded-xl hover:opacity-90 transition flex-shrink-0',
+  }, '+ Add');
+  addItemBtn.addEventListener('click', () => {
+    const variantId = variantSel.value;
+    if (!variantId) return;
+    const qty = Math.max(1, parseInt(addQtyInput.value) || 1);
+    const { unitPrice, variantName } = variantPriceMap.get(variantId) || {};
+    const product = activeProducts.find(p => p.id === productSel.value);
+    const existing = editItems.find(i => i.variantId === variantId);
+    if (existing) {
+      existing.quantity += qty;
+    } else {
+      editItems.push({ variantId, productName: product?.name || '', variantName: variantName || '', unitPrice: unitPrice || 0, quantity: qty });
+    }
+    productSel.value = ''; updateVariants(); addQtyInput.value = '1';
+    renderItemsList();
+  });
+
+  body.append(
+    el('div', { className: 'flex gap-2 items-center' },
+      productSel, variantSel, addQtyInput, addItemBtn
+    )
+  );
+
+  // ── DETAILS SECTION ─────────────────────────────────────────────────────
+  body.append(el('div', { className: 'border-t border-gray-100 pt-4' },
+    el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wide mb-3' }, 'Order Details')
+  ));
 
   // Ambassador code picker
   const ambPicker = createAmbPicker({
@@ -3464,7 +3602,7 @@ function showOrderEditModal(order, onSaved) {
 
   // Notes
   const notesInput = el('textarea', {
-    rows: 3,
+    rows: 2,
     placeholder: 'Customer notes…',
     className: 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand resize-none',
     onInput: e => { notes = e.target.value; },
@@ -3481,18 +3619,20 @@ function showOrderEditModal(order, onSaved) {
   body.append(errMsg);
   panel.append(body);
 
+  // Footer
   const saveBtn = el('button', {
     className: 'flex-1 bg-brand text-white text-sm font-bold py-2.5 px-4 rounded-xl hover:opacity-90 transition',
   }, 'Save Changes');
   saveBtn.addEventListener('click', async () => {
+    if (!editItems.length) {
+      errMsg.textContent = 'Order must have at least one item';
+      errMsg.classList.remove('hidden'); return;
+    }
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     errMsg.classList.add('hidden');
     try {
-      await api.orders.update(order.id, {
-        notes: notes || undefined,
-        deliveryFee,
-        ambassadorCode: ambassadorCode || null,
-      });
+      await api.orders.updateItems(order.id, editItems.map(i => ({ variantId: i.variantId, quantity: i.quantity })));
+      await api.orders.update(order.id, { notes: notes || undefined, deliveryFee, ambassadorCode: ambassadorCode || null });
       toast('Order updated', 'success');
       close();
       onSaved();
@@ -3504,7 +3644,7 @@ function showOrderEditModal(order, onSaved) {
   });
 
   panel.append(
-    el('div', { className: 'flex gap-2 px-5 py-4 border-t border-gray-100' },
+    el('div', { className: 'flex gap-2 px-5 py-4 border-t border-gray-100 flex-shrink-0' },
       el('button', { className: 'flex-1 bg-white border border-gray-200 text-gray-600 text-sm font-semibold py-2.5 px-4 rounded-xl hover:bg-gray-50 transition', onClick: close }, 'Cancel'),
       saveBtn
     )

@@ -209,6 +209,43 @@ export class OrderService {
     return order
   }
 
+  async updateItems(orderId: string, items: Array<{ variantId: string; quantity: number }>) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { ambassador: true },
+    })
+    if (!order) throw new NotFoundError('Order')
+
+    const tier = order.ambassador ? 'AMBASSADOR' : 'RETAIL'
+
+    const itemsWithPrices = await Promise.all(
+      items.map(async (item) => {
+        const variant = await this.prisma.productVariant.findUnique({
+          where: { id: item.variantId },
+          include: { prices: true },
+        })
+        if (!variant) throw new AppError(`Variant ${item.variantId} not found`, 400)
+        const price =
+          variant.prices.find((p) => p.tier === tier) ||
+          variant.prices.find((p) => p.tier === 'RETAIL')
+        if (!price) throw new AppError(`No price found for variant ${item.variantId}`, 400)
+        const unitPrice = Number(price.price)
+        return { variantId: item.variantId, quantity: item.quantity, unitPrice, subtotal: unitPrice * item.quantity }
+      }),
+    )
+
+    const subtotal = itemsWithPrices.reduce((sum, i) => sum + i.subtotal, 0)
+    const total = subtotal + Number(order.deliveryFee)
+
+    await this.prisma.$transaction([
+      this.prisma.orderItem.deleteMany({ where: { orderId } }),
+      ...itemsWithPrices.map((item) => this.prisma.orderItem.create({ data: { orderId, ...item } })),
+      this.prisma.order.update({ where: { id: orderId }, data: { subtotal, total } }),
+    ])
+
+    return this.getById(orderId)
+  }
+
   async update(orderId: string, data: { notes?: string; deliveryFee?: number; ambassadorCode?: string | null }) {
     const order = await this.prisma.order.findUnique({ where: { id: orderId } })
     if (!order) throw new NotFoundError('Order')

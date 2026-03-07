@@ -62,6 +62,15 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
     return orderService.getById(id)
   })
 
+  // PUT /orders/:id/items - admin replaces all order items
+  fastify.put('/:id/items', {
+    preHandler: [authenticate, authorize('manage', 'order')],
+  }, async (request) => {
+    const { id } = request.params as { id: string }
+    const { items } = request.body as { items: Array<{ variantId: string; quantity: number }> }
+    return orderService.updateItems(id, items)
+  })
+
   // PATCH /orders/:id - admin edits order fields
   fastify.patch('/:id', {
     preHandler: [authenticate, authorize('manage', 'order')],
