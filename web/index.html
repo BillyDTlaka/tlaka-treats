@@ -144,6 +144,7 @@ const api = {
   },
   orders: {
     create: (data) => req('POST', '/orders', data),
+    createAdmin: (data) => req('POST', '/orders/admin', data),
     getMy: () => req('GET', '/orders/my'),
     getAmbassador: () => req('GET', '/orders/ambassador'),
     getAll: () => req('GET', '/orders'),
@@ -2922,7 +2923,13 @@ function renderAdminOrders(data, container, reload) {
   sortSel.addEventListener('change', e => { sortDir = e.target.value; renderTable(); });
 
   const revSummary = el('div', { className: 'ml-auto' });
-  toolbar.append(searchBox, sortSel, revSummary);
+
+  const placeOrderBtn = el('button', {
+    className: 'bg-brand text-white text-sm font-bold px-4 py-2.5 rounded-xl hover:opacity-90 transition flex-shrink-0',
+    onClick: () => showAdminPlaceOrderModal(data.customers, data.products, () => reload()),
+  }, '+ Place Order for Client');
+
+  toolbar.append(searchBox, sortSel, placeOrderBtn, revSummary);
   page.append(toolbar);
 
   // ── TABLE WRAPPER ───────────────────────────────────────────────────────
@@ -3250,6 +3257,132 @@ function renderAdminOrders(data, container, reload) {
   renderChips();
   renderTable();
   container.append(page);
+}
+
+// ── ADMIN: PLACE ORDER FOR CLIENT ─────────────────────────────────────────
+function showAdminPlaceOrderModal(customers, products, onDone) {
+  const modal = el('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4' });
+  const close = () => document.body.removeChild(modal);
+
+  // Build flat list of sellable variants
+  const sellableVariants = [];
+  (products || []).forEach(p => {
+    if (!p.isActive) return;
+    (p.variants || []).forEach(v => {
+      if (v.isActive !== false) {
+        sellableVariants.push({ id: v.id, label: `${p.name}${v.name ? ' — ' + v.name : ''}`, price: v.retailPrice });
+      }
+    });
+  });
+
+  // Order line state
+  let lines = [{ variantId: '', quantity: 1 }];
+
+  const linesContainer = el('div', { className: 'space-y-2 mb-3' });
+
+  function renderLines() {
+    linesContainer.innerHTML = '';
+    lines.forEach((line, idx) => {
+      const varSel = el('select', {
+        className: 'flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand',
+        onChange: e => { lines[idx].variantId = e.target.value; },
+      });
+      const defOpt = document.createElement('option'); defOpt.value = ''; defOpt.textContent = '— Select product —'; varSel.append(defOpt);
+      sellableVariants.forEach(v => {
+        const o = document.createElement('option'); o.value = v.id;
+        o.textContent = v.label + (v.price ? ` (R${Number(v.price).toFixed(2)})` : '');
+        if (v.id === line.variantId) o.selected = true;
+        varSel.append(o);
+      });
+
+      const qtyInput = el('input', {
+        type: 'number', min: '1', value: String(line.quantity),
+        className: 'w-20 border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand',
+        onInput: e => { lines[idx].quantity = Math.max(1, parseInt(e.target.value) || 1); },
+      });
+
+      const removeBtn = el('button', {
+        className: 'text-gray-400 hover:text-red-500 text-lg font-bold px-1 transition',
+        onClick: () => { if (lines.length > 1) { lines.splice(idx, 1); renderLines(); } },
+      }, '×');
+
+      linesContainer.append(el('div', { className: 'flex items-center gap-2' }, varSel, qtyInput, removeBtn));
+    });
+  }
+  renderLines();
+
+  const addLineBtn = el('button', {
+    className: 'text-brand text-sm font-bold hover:underline',
+    onClick: () => { lines.push({ variantId: '', quantity: 1 }); renderLines(); },
+  }, '+ Add item');
+
+  // Customer select
+  const customerSel = el('select', {
+    className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3',
+  });
+  const defCustOpt = document.createElement('option'); defCustOpt.value = ''; defCustOpt.textContent = '— Select customer —'; customerSel.append(defCustOpt);
+  (customers || []).sort((a, b) => `${a.firstName}${a.lastName}`.localeCompare(`${b.firstName}${b.lastName}`)).forEach(c => {
+    const o = document.createElement('option'); o.value = c.id;
+    o.textContent = `${c.firstName || ''} ${c.lastName || ''}`.trim() + (c.email ? ` (${c.email})` : '');
+    customerSel.append(o);
+  });
+
+  const ambassadorInput = el('input', {
+    type: 'text', placeholder: 'Ambassador code (optional)',
+    className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3',
+  });
+
+  const notesInput = el('textarea', {
+    placeholder: 'Order notes (optional)',
+    className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand resize-none mb-4',
+    rows: '2',
+  });
+
+  const submitBtn = el('button', {
+    className: 'w-full bg-brand text-white font-black py-2.5 rounded-xl hover:opacity-90 transition',
+    onClick: async () => {
+      const customerId = customerSel.value;
+      if (!customerId) { toast('Please select a customer', 'error'); return; }
+      const items = lines.filter(l => l.variantId).map(l => ({ variantId: l.variantId, quantity: l.quantity }));
+      if (!items.length) { toast('Add at least one item', 'error'); return; }
+
+      const payload = { customerId, items };
+      if (ambassadorInput.value.trim()) payload.ambassadorCode = ambassadorInput.value.trim();
+      if (notesInput.value.trim()) payload.notes = notesInput.value.trim();
+
+      submitBtn.disabled = true; submitBtn.textContent = 'Placing order…';
+      try {
+        await api.orders.createAdmin(payload);
+        toast('Order placed successfully', 'success');
+        close(); onDone();
+      } catch (err) {
+        toast(err?.message || 'Failed to place order', 'error');
+        submitBtn.disabled = false; submitBtn.textContent = 'Place Order';
+      }
+    },
+  }, 'Place Order');
+
+  const form = el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto' },
+    el('div', { className: 'flex items-center justify-between mb-5' },
+      el('h3', { className: 'font-black text-gray-900 text-lg' }, 'Place Order for Client'),
+      el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×'),
+    ),
+    el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Customer *'),
+    customerSel,
+    el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Items *'),
+    linesContainer,
+    addLineBtn,
+    el('div', { className: 'mt-3 mb-3 border-t border-gray-100' }),
+    el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Ambassador Code'),
+    ambassadorInput,
+    el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Notes'),
+    notesInput,
+    submitBtn,
+  );
+
+  modal.append(form);
+  modal.addEventListener('click', e => { if (e.target === modal) close(); });
+  document.body.appendChild(modal);
 }
 
 // ── AMBASSADORS MODULE ────────────────────────────────────────────────────
