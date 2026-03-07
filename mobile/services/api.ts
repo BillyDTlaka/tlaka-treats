@@ -75,11 +75,13 @@ export const productsApi = {
     api.get('/products', { params: { tier } }).then(r => r.data),
   getById: (id: string) =>
     api.get(`/products/${id}`).then(r => r.data),
+  getAllAdmin: () => api.get('/products/admin').then(r => r.data),
 }
 
 // Orders
 export const ordersApi = {
   create: (data: any) => api.post('/orders', data).then(r => r.data),
+  createAdmin: (data: any) => api.post('/orders/admin', data).then(r => r.data),
   getMy: () => api.get('/orders/my').then(r => r.data),
   getAmbassador: () => api.get('/orders/ambassador').then(r => r.data),
   getAll: () => api.get('/orders').then(r => r.data),
@@ -94,6 +96,11 @@ export const ambassadorsApi = {
   getAll: () => api.get('/ambassadors').then(r => r.data),
   updateStatus: (id: string, status: string) =>
     api.patch(`/ambassadors/${id}/status`, { status }).then(r => r.data),
+}
+
+// Customers (admin)
+export const customersApi = {
+  getAll: () => api.get('/customers').then(r => r.data),
 }
 
 export default api
