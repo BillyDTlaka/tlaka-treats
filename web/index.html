@@ -5009,147 +5009,303 @@ function renderAdminInventory(data, container, reload) {
 
     const tracked   = sellable.filter(p => p.stockItem);
     const untracked = sellable.filter(p => !p.stockItem);
+    let avSearch = '', avFilter = 'all'; // all | low | out | untracked
 
-    // ── Header ──
+    function stockMeta(si) {
+      if (!si) return { label: 'NOT TRACKED', bg: '#F3F4F6', color: '#6B7280', dot: 'bg-gray-300' };
+      const qty = Number(si.currentStock), min = Number(si.minStockLevel);
+      if (qty <= 0)   return { label: 'OUT',  bg: '#FEE2E2', color: '#EF4444', dot: 'bg-red-500' };
+      if (qty <= min) return { label: 'LOW',  bg: '#FEF3C7', color: '#F59E0B', dot: 'bg-yellow-400' };
+      return              { label: 'OK',   bg: '#D1FAE5', color: '#10B981', dot: 'bg-green-400' };
+    }
+
+    function getFiltered() {
+      const q = avSearch.toLowerCase();
+      return sellable.filter(p => {
+        if (q && !p.name.toLowerCase().includes(q) && !(p.category?.name || '').toLowerCase().includes(q)) return false;
+        if (avFilter === 'low')       return p.stockItem && Number(p.stockItem.currentStock) > 0 && Number(p.stockItem.currentStock) <= Number(p.stockItem.minStockLevel);
+        if (avFilter === 'out')       return p.stockItem && Number(p.stockItem.currentStock) <= 0;
+        if (avFilter === 'untracked') return !p.stockItem;
+        return true;
+      });
+    }
+
+    // Toolbar
+    const searchInp = el('input', {
+      type: 'text', placeholder: '🔍 Search products…',
+      className: 'flex-1 min-w-40 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand',
+      onInput: e => { avSearch = e.target.value; renderList(); },
+    });
+
+    const filterRow = el('div', { className: 'flex gap-1 flex-wrap' });
+    function renderFilterChips() {
+      filterRow.innerHTML = '';
+      [
+        ['all', `All (${sellable.length})`],
+        ['low', `Low (${sellable.filter(p => p.stockItem && Number(p.stockItem.currentStock) > 0 && Number(p.stockItem.currentStock) <= Number(p.stockItem.minStockLevel)).length})`],
+        ['out', `Out (${sellable.filter(p => p.stockItem && Number(p.stockItem.currentStock) <= 0).length})`],
+        ['untracked', `Untracked (${untracked.length})`],
+      ].forEach(([f, label]) => {
+        const active = avFilter === f;
+        filterRow.append(el('button', {
+          className: `px-3 py-1.5 rounded-lg text-xs font-bold border transition ${active ? 'bg-gray-800 border-gray-800 text-white' : 'bg-white border-gray-200 text-gray-500 hover:border-gray-400'}`,
+          onClick: () => { avFilter = f; renderFilterChips(); renderList(); },
+        }, label));
+      });
+    }
+    renderFilterChips();
+
+    const toolbar = el('div', { className: 'flex flex-wrap items-center gap-2 mb-4' }, searchInp, filterRow);
+    tabContent.append(toolbar);
+
+    // ── Summary KPI strip ──────────────────────────────────────────────────
+    const totalValue = tracked.reduce((s, p) => {
+      const si = p.stockItem;
+      return s + Number(si?.currentStock || 0) * Number(si?.costPerUnit || 0);
+    }, 0);
     tabContent.append(
-      el('div', { className: 'flex items-start justify-between mb-5 gap-3 flex-wrap' },
-        el('div', {},
-          el('h3', { className: 'font-black text-gray-900 text-lg' }, 'Available Finished Goods'),
-          el('p', { className: 'text-xs text-gray-400 mt-0.5' },
-            `${tracked.length} product${tracked.length !== 1 ? 's' : ''} tracked · ${untracked.length} not yet set up`),
-        ),
-        el('div', { className: 'flex items-center gap-2 text-xs font-semibold' },
-          el('span', { className: 'flex items-center gap-1' }, el('span', { className: 'w-2.5 h-2.5 rounded-full bg-green-400 inline-block' }), 'In Stock'),
-          el('span', { className: 'flex items-center gap-1' }, el('span', { className: 'w-2.5 h-2.5 rounded-full bg-yellow-400 inline-block' }), 'Low'),
-          el('span', { className: 'flex items-center gap-1' }, el('span', { className: 'w-2.5 h-2.5 rounded-full bg-red-400 inline-block' }), 'Out'),
-          el('span', { className: 'flex items-center gap-1' }, el('span', { className: 'w-2.5 h-2.5 rounded-full bg-gray-300 inline-block' }), 'Not tracked'),
-        ),
+      el('div', { className: 'grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4' },
+        ...[
+          { label: 'Total Products', val: sellable.length,    color: '#3B82F6' },
+          { label: 'In Stock',       val: tracked.filter(p => Number(p.stockItem.currentStock) > Number(p.stockItem.minStockLevel)).length, color: '#10B981' },
+          { label: 'Low / Out',      val: tracked.filter(p => Number(p.stockItem.currentStock) <= Number(p.stockItem.minStockLevel)).length, color: '#F59E0B' },
+          { label: 'Stock Value',    val: `R${totalValue.toFixed(0)}`, color: '#8B3A3A' },
+        ].map(c =>
+          el('div', { className: 'bg-white rounded-xl px-4 py-3 border border-gray-100 shadow-sm flex items-center gap-3' },
+            el('div', { className: 'w-9 h-9 rounded-lg flex items-center justify-center text-white text-xs font-black flex-shrink-0', style: { backgroundColor: c.color } }, String(c.val)),
+            el('p', { className: 'text-xs font-semibold text-gray-500 leading-tight' }, c.label)
+          )
+        )
       )
     );
 
     if (!sellable.length) {
-      tabContent.append(el('div', { className: 'text-center py-12 text-gray-400 text-sm' }, 'No sellable products found.'));
+      tabContent.append(el('div', { className: 'bg-white rounded-xl p-14 text-center shadow-sm border border-gray-100' },
+        el('p', { className: 'text-4xl mb-3' }, '🛒'),
+        el('p', { className: 'font-bold text-gray-700' }, 'No sellable products found')
+      ));
       return;
     }
 
-    // ── Product cards ──
-    const grid = el('div', { className: 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-5' });
+    // ── List table ─────────────────────────────────────────────────────────
+    const tableWrap = el('div', {});
+    tabContent.append(tableWrap);
 
-    for (const product of sellable) {
-      const si  = product.stockItem;
-      const qty = si ? Number(si.currentStock) : null;
-      const min = si ? Number(si.minStockLevel) : null;
+    function renderList() {
+      tableWrap.innerHTML = '';
+      const filtered = getFiltered();
 
-      const { badge, cardCls, barCls, dotCls } = !si
-        ? { badge: 'NOT TRACKED', cardCls: 'border-gray-200',                           barCls: 'bg-gray-200',  dotCls: 'bg-gray-300'  }
-        : qty <= 0
-        ? { badge: 'OUT OF STOCK', cardCls: 'border-red-200 bg-red-50/40',              barCls: 'bg-red-400',   dotCls: 'bg-red-500'   }
-        : qty <= min
-        ? { badge: 'LOW STOCK',    cardCls: 'border-yellow-200 bg-yellow-50/40',        barCls: 'bg-yellow-400',dotCls: 'bg-yellow-500'}
-        : { badge: 'IN STOCK',     cardCls: 'border-green-200 bg-green-50/30',          barCls: 'bg-green-400', dotCls: 'bg-green-500' };
-
-      const pct = si && min > 0 ? Math.min(100, (qty / (min * 3)) * 100)
-                : si && qty > 0 ? 100 : 0;
-
-      const card = el('div', { className: `bg-white rounded-xl border shadow-sm p-4 flex flex-col gap-3 ${cardCls}` });
-
-      // Header row
-      card.append(
-        el('div', { className: 'flex items-start justify-between gap-2' },
-          el('div', { className: 'flex-1 min-w-0' },
-            el('p', { className: 'font-black text-gray-900 truncate leading-tight' }, product.name),
-            el('p', { className: 'text-xs text-gray-400 mt-0.5' }, product.category?.name || 'Uncategorised'),
-          ),
-          el('span', { className: 'flex items-center gap-1.5 text-xs font-bold whitespace-nowrap flex-shrink-0' },
-            el('span', { className: `w-2 h-2 rounded-full ${dotCls}` }),
-            badge,
-          ),
-        )
-      );
-
-      // Stock level section
-      if (si) {
-        card.append(
-          el('div', {},
-            el('div', { className: 'flex items-baseline gap-1.5 mb-1' },
-              el('span', { className: 'text-3xl font-black text-gray-900' }, String(qty)),
-              el('span', { className: 'text-sm font-semibold text-gray-500' }, si.unit + ' on hand'),
-            ),
-            el('p', { className: 'text-xs text-gray-400 mb-1.5' },
-              `Min level: ${min} ${si.unit}` +
-              (si.sku ? `  ·  SKU: ${si.sku}` : '')
-            ),
-            el('div', { className: 'bg-gray-100 rounded-full h-2.5' },
-              el('div', { className: `h-2.5 rounded-full transition-all ${barCls}`, style: { width: `${pct.toFixed(0)}%` } })
-            ),
-          )
-        );
-      } else {
-        card.append(
-          el('div', { className: 'bg-gray-50 border border-dashed border-gray-300 rounded-lg px-3 py-2 text-xs text-gray-500' },
-            '⚠ Stock tracking not set up for this product.',
-          )
-        );
+      if (!filtered.length) {
+        tableWrap.append(el('div', { className: 'bg-white rounded-xl p-10 text-center text-gray-400 text-sm border border-gray-100' },
+          'No products match your filter.'));
+        return;
       }
 
-      // Variant pills
-      if (product.variants?.length) {
-        const pills = el('div', { className: 'flex flex-wrap gap-1.5' });
-        product.variants.forEach(v => {
-          const rp = v.prices?.find(p => p.tier === 'RETAIL');
-          pills.append(
-            el('span', { className: 'text-xs bg-white border border-gray-200 text-gray-600 px-2 py-0.5 rounded-md font-medium' },
-              rp ? `${v.name} · R${Number(rp.price).toFixed(0)}` : v.name
-            )
-          );
-        });
-        card.append(pills);
-      }
+      const table = el('div', { className: 'bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden' });
 
-      // Action buttons
-      if (si) {
-        card.append(
-          el('div', { className: 'flex gap-2 mt-auto' },
-            el('button', {
-              className: 'flex-1 text-xs font-bold bg-brand text-white py-2 rounded-lg hover:opacity-90 transition',
-              onClick: () => showMovementForm(si, 'ADJUSTMENT_IN', () => switchTab('available')),
-            }, '+ Add Stock'),
-            el('button', {
-              className: 'flex-1 text-xs font-bold bg-gray-100 text-gray-700 py-2 rounded-lg hover:bg-gray-200 transition',
-              onClick: () => showMovementForm(si, 'ADJUSTMENT_OUT', () => switchTab('available')),
-            }, '− Remove'),
-          )
-        );
-      } else {
-        card.append(
-          el('button', {
-            className: 'mt-auto w-full text-xs font-bold bg-gray-100 text-gray-600 py-2 rounded-lg hover:bg-gray-200 transition',
+      // Header
+      table.append(el('div', { className: 'hidden md:grid grid-cols-12 gap-2 px-5 py-3 bg-gray-50 border-b border-gray-100 text-xs font-black text-gray-400 uppercase tracking-wider' },
+        el('div', { className: 'col-span-3' }, 'Product'),
+        el('div', { className: 'col-span-2 text-center' }, 'On Hand'),
+        el('div', { className: 'col-span-2 text-center' }, 'Min Level'),
+        el('div', { className: 'col-span-2 text-center' }, 'Stock Level'),
+        el('div', { className: 'col-span-1 text-center' }, 'Status'),
+        el('div', { className: 'col-span-2 text-center' }, 'Actions'),
+      ));
+
+      const body = el('div', { className: 'divide-y divide-gray-50' });
+      filtered.forEach(product => {
+        const si  = product.stockItem;
+        const qty = si ? Number(si.currentStock) : null;
+        const min = si ? Number(si.minStockLevel) : 0;
+        const meta = stockMeta(si);
+        const pct  = si && min > 0 ? Math.min(100, (qty / (min * 3)) * 100) : si && qty > 0 ? 100 : 0;
+        const barColor = meta.label === 'OK' ? '#10B981' : meta.label === 'LOW' ? '#F59E0B' : meta.label === 'OUT' ? '#EF4444' : '#D1D5DB';
+
+        const row = el('div', { className: 'grid grid-cols-12 gap-2 px-5 py-3.5 items-center hover:bg-gray-50 transition' });
+
+        // Product name + category
+        row.append(el('div', { className: 'col-span-6 md:col-span-3 min-w-0' },
+          el('p', { className: 'font-semibold text-gray-900 text-sm truncate' }, product.name),
+          el('p', { className: 'text-xs text-gray-400 mt-0.5' }, product.category?.name || 'Uncategorised')
+        ));
+
+        // On Hand
+        row.append(el('div', { className: 'hidden md:block col-span-2 text-center' },
+          si
+            ? el('div', {},
+                el('span', { className: 'text-lg font-black', style: { color: barColor } }, qty.toFixed(qty % 1 === 0 ? 0 : 2)),
+                el('span', { className: 'text-xs text-gray-400 ml-1' }, si.unit)
+              )
+            : el('span', { className: 'text-xs text-gray-300' }, '—')
+        ));
+
+        // Min Level
+        row.append(el('div', { className: 'hidden md:block col-span-2 text-center text-xs text-gray-500' },
+          si ? `${min % 1 === 0 ? min : min.toFixed(2)} ${si.unit}` : '—'
+        ));
+
+        // Progress bar
+        row.append(el('div', { className: 'hidden md:block col-span-2' },
+          si
+            ? el('div', {},
+                el('div', { className: 'bg-gray-100 rounded-full h-2 mb-1' },
+                  el('div', { className: 'h-2 rounded-full transition-all', style: { width: `${pct.toFixed(0)}%`, backgroundColor: barColor } })
+                ),
+                el('p', { className: 'text-xs text-gray-400 text-center' }, `${pct.toFixed(0)}% of target`)
+              )
+            : el('div', { className: 'text-center text-xs text-gray-300' }, 'Not tracked')
+        ));
+
+        // Status
+        row.append(el('div', { className: 'col-span-3 md:col-span-1 flex justify-center' },
+          el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full whitespace-nowrap',
+            style: { backgroundColor: meta.bg, color: meta.color } }, meta.label)
+        ));
+
+        // Actions
+        const actionsCell = el('div', { className: 'col-span-3 md:col-span-2 flex items-center justify-end md:justify-center gap-1.5 flex-wrap' });
+        if (si) {
+          const editBtn = el('button', {
+            className: 'p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition',
+            title: 'Edit stock item',
+            onClick: (e) => { e.stopPropagation(); showStockItemEditModal(si, () => switchTab('available')); },
+          }, '✏️');
+          const addBtn = el('button', {
+            className: 'p-1.5 rounded-lg bg-green-50 text-green-700 hover:bg-green-100 transition font-bold text-sm',
+            title: 'Add stock',
+            onClick: (e) => { e.stopPropagation(); showMovementForm(si, 'ADJUSTMENT_IN', () => switchTab('available')); },
+          }, '+');
+          const remBtn = el('button', {
+            className: 'p-1.5 rounded-lg bg-orange-50 text-orange-700 hover:bg-orange-100 transition font-bold text-sm',
+            title: 'Remove stock',
+            onClick: (e) => { e.stopPropagation(); showMovementForm(si, 'ADJUSTMENT_OUT', () => switchTab('available')); },
+          }, '−');
+          actionsCell.append(editBtn, addBtn, remBtn);
+        } else {
+          actionsCell.append(el('button', {
+            className: 'text-xs font-semibold text-brand hover:underline',
             onClick: () => switchTab('items'),
-          }, 'Set Up Stock Tracking →')
-        );
-      }
+          }, 'Set up →'));
+        }
+        row.append(actionsCell);
+        body.append(row);
+      });
 
-      grid.append(card);
+      table.append(body);
+      tableWrap.append(table);
     }
-    tabContent.append(grid);
+
+    renderList();
 
     // ── Info banner ──
-    tabContent.append(
-      el('div', { className: 'bg-blue-50 border border-blue-200 rounded-xl p-4 flex gap-3' },
-        el('span', { className: 'text-blue-400 text-lg flex-shrink-0' }, 'ℹ'),
-        el('div', {},
-          el('p', { className: 'text-sm font-bold text-blue-900' }, 'Smart order routing'),
-          el('p', { className: 'text-xs text-blue-600 mt-0.5 leading-relaxed' },
-            'When you advance a Confirmed order, the system checks finished-goods stock automatically. ' +
-            'If all items have sufficient stock, the order skips Baking and goes straight to Ready — ' +
-            'and stock is deducted. ' +
-            (untracked.length
-              ? `(${untracked.length} product${untracked.length !== 1 ? 's' : ''} not yet tracked — go to Stock Items to enable this.)`
-              : 'All products are currently tracked.')
-          ),
+    if (untracked.length) {
+      tabContent.append(
+        el('div', { className: 'bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3 mt-4' },
+          el('span', { className: 'text-amber-400 text-lg flex-shrink-0' }, '⚠️'),
+          el('p', { className: 'text-sm text-amber-800' },
+            `${untracked.length} product${untracked.length !== 1 ? 's are' : ' is'} not tracked. Go to the `,
+            el('button', { className: 'font-bold underline', onClick: () => switchTab('items') }, 'Stock Items'),
+            ' tab to set up tracking.'
+          )
         )
-      )
-    );
+      );
+    }
+  }
+
+  // ── Stock Item Edit Modal (from Available Stock tab) ──────────────────────
+  function showStockItemEditModal(si, onDone) {
+    const overlay = el('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4' });
+    const close = () => document.body.removeChild(overlay);
+
+    const fields = [
+      { label: 'Item Name',            key: 'name',          type: 'text',   required: true },
+      { label: 'SKU (optional)',        key: 'sku',           type: 'text' },
+      { label: 'Unit (kg / ml / pcs)', key: 'unit',          type: 'text',   required: true },
+      { label: 'Min Stock Level',       key: 'minStockLevel', type: 'number', step: '0.001' },
+      { label: 'Cost per Unit (R)',     key: 'costPerUnit',   type: 'number', step: '0.0001' },
+      { label: 'Notes',                 key: 'notes',         type: 'text' },
+    ];
+    const inputs = {};
+
+    const panel = el('div', { className: 'bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden' });
+
+    // Header
+    panel.append(el('div', { className: 'flex items-center justify-between px-5 py-4 border-b border-gray-100' },
+      el('div', {},
+        el('h2', { className: 'font-black text-gray-900 text-base' }, `Edit: ${si.name}`),
+        el('p', { className: 'text-xs text-gray-400 mt-0.5' }, `Current stock: ${Number(si.currentStock).toFixed(2)} ${si.unit}`)
+      ),
+      el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×')
+    ));
+
+    const body = el('div', { className: 'p-5 space-y-3 max-h-[60vh] overflow-y-auto' });
+
+    fields.forEach(f => {
+      const inp = el('input', {
+        type: f.type, step: f.step || undefined,
+        value: si[f.key] ?? '',
+        placeholder: f.label,
+        className: 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand',
+      });
+      inputs[f.key] = inp;
+      body.append(el('div', {},
+        el('label', { className: 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1' }, f.label),
+        inp
+      ));
+    });
+
+    // Quick stock adjustment section
+    body.append(el('div', { className: 'border-t border-gray-100 pt-3 mt-2' },
+      el('p', { className: 'text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2' }, 'Quick Stock Adjustment')
+    ));
+    const adjType = el('select', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand mb-2' });
+    [['ADJUSTMENT_IN', '+ Add Stock'], ['ADJUSTMENT_OUT', '− Remove Stock'], ['WASTE', '🗑 Waste']].forEach(([v, l]) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = l; adjType.append(o);
+    });
+    const adjQty  = el('input', { type: 'number', step: '0.001', min: '0', placeholder: 'Quantity (leave blank to skip)', className: 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand mb-2' });
+    const adjNote = el('input', { type: 'text', placeholder: 'Note / reason (optional)', className: 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand' });
+    body.append(adjType, adjQty, adjNote);
+
+    const errMsg = el('p', { className: 'text-red-500 text-sm hidden px-5' });
+    panel.append(body, errMsg);
+
+    const saveBtn = el('button', { className: 'flex-1 bg-brand text-white text-sm font-bold py-2.5 rounded-xl hover:opacity-90 transition' }, 'Save Changes');
+    saveBtn.addEventListener('click', async () => {
+      saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; errMsg.classList.add('hidden');
+      try {
+        const payload = {};
+        fields.forEach(f => { if (inputs[f.key].value !== '') payload[f.key] = inputs[f.key].value; });
+        await api.inventory.update(si.id, payload);
+
+        // Record adjustment if qty entered
+        if (adjQty.value && parseFloat(adjQty.value) > 0) {
+          await api.inventory.movement({
+            stockItemId: si.id,
+            type: adjType.value,
+            quantity: parseFloat(adjQty.value),
+            note: adjNote.value || undefined,
+          });
+        }
+
+        toast('Stock item updated', 'success');
+        close();
+        onDone();
+      } catch (err) {
+        errMsg.textContent = err?.message || 'Failed to save';
+        errMsg.classList.remove('hidden');
+        saveBtn.disabled = false; saveBtn.textContent = 'Save Changes';
+      }
+    });
+
+    panel.append(el('div', { className: 'flex gap-2 px-5 py-4 border-t border-gray-100' },
+      el('button', { className: 'flex-1 bg-white border border-gray-200 text-gray-600 text-sm font-semibold py-2.5 rounded-xl hover:bg-gray-50 transition', onClick: close }, 'Cancel'),
+      saveBtn
+    ));
+
+    overlay.append(panel);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    document.body.append(overlay);
   }
 
   // ── MODALS ────────────────────────────────────────────────────────────────
