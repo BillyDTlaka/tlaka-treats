@@ -84,6 +84,14 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
     return orderService.update(id, { notes, deliveryFee, ambassadorCode })
   })
 
+  // POST /orders/:id/invoice - admin generates invoice
+  fastify.post('/:id/invoice', {
+    preHandler: [authenticate, authorize('manage', 'order')],
+  }, async (request) => {
+    const { id } = request.params as { id: string }
+    return orderService.generateInvoice(id)
+  })
+
   // PATCH /orders/:id/status - admin updates order status
   fastify.patch('/:id/status', {
     preHandler: [authenticate, authorize('update', 'order')],

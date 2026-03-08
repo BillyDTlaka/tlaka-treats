@@ -17,6 +17,8 @@ import inventoryRoutes  from './modules/inventory/inventory.routes'
 import recipeRoutes     from './modules/recipes/recipes.routes'
 import productionRoutes from './modules/production/production.routes'
 import financeRoutes    from './modules/finance/finance.routes'
+import quoteRoutes       from './modules/quotes/quotes.routes'
+import discountRuleRoutes from './modules/discount-rules/discount-rules.routes'
 
 export async function buildApp() {
   const app = Fastify({
@@ -64,6 +66,8 @@ export async function buildApp() {
   await app.register(recipeRoutes,      { prefix: '/recipes' })
   await app.register(productionRoutes,  { prefix: '/production' })
   await app.register(financeRoutes,     { prefix: '/finance' })
+  await app.register(quoteRoutes,       { prefix: '/quotes' })
+  await app.register(discountRuleRoutes, { prefix: '/discount-rules' })
 
   // Health check
   app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }))

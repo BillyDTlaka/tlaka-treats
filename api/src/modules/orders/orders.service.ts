@@ -246,6 +246,18 @@ export class OrderService {
     return this.getById(orderId)
   }
 
+  async generateInvoice(orderId: string) {
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } })
+    if (!order) throw new NotFoundError('Order')
+    if (order.invoiceNumber) return this.getById(orderId) // already invoiced
+    const invoiceNumber = `INV-${orderId.slice(-8).toUpperCase()}`
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: { invoiceNumber, invoicedAt: new Date() },
+    })
+    return this.getById(orderId)
+  }
+
   async update(orderId: string, data: { notes?: string; deliveryFee?: number; ambassadorCode?: string | null }) {
     const order = await this.prisma.order.findUnique({ where: { id: orderId } })
     if (!order) throw new NotFoundError('Order')

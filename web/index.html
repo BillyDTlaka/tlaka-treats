@@ -152,6 +152,7 @@ const api = {
     update: (id, data) => req('PATCH', `/orders/${id}`, data),
     updateItems: (id, items) => req('PUT', `/orders/${id}/items`, { items }),
     updateStatus: (id, status, note) => req('PATCH', `/orders/${id}/status`, { status, ...(note ? { note } : {}) }),
+    invoice:      (id)               => req('POST',  `/orders/${id}/invoice`),
   },
   addresses: {
     getAll:  ()         => req('GET',   '/addresses'),
@@ -232,6 +233,23 @@ const api = {
     updateAccount:     (id, data)    => req('PATCH',  `/finance/accounts/${id}`, data),
     deleteAccount:     (id)          => req('DELETE', `/finance/accounts/${id}`),
     seedAccounts:      ()            => req('POST',   '/finance/accounts/seed-defaults', {}),
+  },
+  quotes: {
+    getAll:       ()         => req('GET',    '/quotes'),
+    getMy:        ()         => req('GET',    '/quotes/my'),
+    getById:      (id)       => req('GET',    `/quotes/${id}`),
+    create:       (data)     => req('POST',   '/quotes', data),
+    update:       (id, data) => req('PATCH',  `/quotes/${id}`, data),
+    updateStatus: (id, s)    => req('PATCH',  `/quotes/${id}/status`, { status: s }),
+    convert:      (id)       => req('POST',   `/quotes/${id}/convert`),
+    remove:       (id)       => req('DELETE', `/quotes/${id}`),
+  },
+  discountRules: {
+    getAll:    ()         => req('GET',    '/discount-rules'),
+    getActive: ()         => req('GET',    '/discount-rules/active'),
+    create:    (data)     => req('POST',   '/discount-rules', data),
+    update:    (id, data) => req('PATCH',  `/discount-rules/${id}`, data),
+    remove:    (id)       => req('DELETE', `/discount-rules/${id}`),
   },
 };
 
@@ -1929,7 +1947,8 @@ function AmbassadorDashboardPage() {
   // ── MY ORDERS VIEW ─────────────────────────────────────────────────────────
   const ambOrdersView = el('div', { className: 'hidden' });
 
-  let ordersTab = 'referred'; // 'referred' | 'own'
+  let ordersTab = 'referred'; // 'referred' | 'own' | 'quotes'
+  let ambMyQuotes = null;
 
   function loadAmbOrdersView() {
     ambOrdersView.innerHTML = '';
@@ -1949,7 +1968,7 @@ function AmbassadorDashboardPage() {
     const tabBar = el('div', { className: 'flex gap-1 bg-gray-100 p-1 rounded-xl mb-5' });
     const renderTabBar = () => {
       tabBar.innerHTML = '';
-      [['referred','🎟️ Referred Orders'], ['own','📦 My Own Orders']].forEach(([key, label]) => {
+      [['referred','🎟️ Referred'], ['own','📦 My Orders'], ['quotes','📋 Quotes']].forEach(([key, label]) => {
         tabBar.append(el('button', {
           className: `flex-1 py-2 text-sm font-bold rounded-lg transition ${ordersTab === key ? 'bg-white text-brand shadow-sm' : 'text-gray-500 hover:text-gray-700'}`,
           onClick: () => { ordersTab = key; renderBody(); renderTabBar(); }
@@ -2016,7 +2035,44 @@ function AmbassadorDashboardPage() {
           })
         ));
 
-      } else {
+      } else if (ordersTab === 'quotes') {
+        // ── My Quotes ──────────────────────────────────────────────────────
+        if (ambMyQuotes === null) {
+          bodyWrap.append(el('div', { className: 'flex justify-center py-16' },
+            el('div', { className: 'spinner', style: { borderColor: 'rgba(139,58,58,0.2)', borderTopColor: '#8B3A3A' } })
+          ));
+          api.quotes.getMy().then(q => { ambMyQuotes = q; renderBody(); }).catch(() => {
+            bodyWrap.innerHTML = '<p class="text-center text-red-400 text-sm py-10">Failed to load quotes.</p>';
+          });
+          return;
+        }
+        if (!ambMyQuotes.length) {
+          bodyWrap.append(el('div', { className: 'bg-white rounded-2xl p-12 text-center shadow-sm border border-gray-100' },
+            el('p', { className: 'text-5xl mb-4' }, '📋'),
+            el('p', { className: 'font-black text-gray-900 text-lg mb-1' }, 'No quotes yet'),
+            el('p', { className: 'text-sm text-gray-400' }, 'Quotes you create will appear here')
+          ));
+          return;
+        }
+        const QCOLORS2 = { DRAFT: '#6B7280', SENT: '#3B82F6', ACCEPTED: '#10B981', DECLINED: '#EF4444', EXPIRED: '#F59E0B' };
+        bodyWrap.append(el('div', { className: 'space-y-3' },
+          ...ambMyQuotes.map(q => {
+            const date = new Date(q.createdAt).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+            return el('div', { className: 'bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex justify-between items-center' },
+              el('div', {},
+                el('p', { className: 'font-bold text-gray-900 text-sm' }, `${q.customer?.firstName || ''} ${q.customer?.lastName || ''}`),
+                el('p', { className: 'text-xs text-gray-400 mt-0.5' }, `${q.number || ''} · ${date}`),
+                el('p', { className: 'text-xs text-gray-400' }, `${(q.items || []).length} item(s)`)
+              ),
+              el('div', { className: 'text-right' },
+                el('p', { className: 'font-black text-gray-900 text-sm' }, `R${Number(q.total || 0).toFixed(2)}`),
+                badge(q.status, QCOLORS2[q.status] || '#999')
+              )
+            );
+          })
+        ));
+
+    } else {
         // ── My Own Orders ──────────────────────────────────────────────────
         if (!ownOrders.length) {
           // Load own orders if not yet fetched
@@ -2814,15 +2870,17 @@ function AdminOverviewPage() {
     dataLoaded = false;
     renderContent();
     try {
-      const [orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns] = await Promise.all([
+      const [orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns, quotes, discountRules] = await Promise.all([
         api.orders.getAll(), api.ambassadors.getAll(), api.products.getAllAdmin(), api.customers.getAll(),
         api.inventory.getAll().catch(() => []),
         api.suppliers.getAll().catch(() => []),
         api.suppliers.getAllPOs().catch(() => []),
         api.recipes.getAll().catch(() => []),
         api.production.getAll().catch(() => []),
+        api.quotes.getAll().catch(() => []),
+        api.discountRules.getAll().catch(() => []),
       ]);
-      adminData = { orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns };
+      adminData = { orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns, quotes, discountRules };
       dataLoaded = true;
       renderContent();
     } catch {
@@ -3062,8 +3120,10 @@ const STATUS_NEXT_ACTION = {
 
 function renderAdminOrders(data, container, reload) {
   let allOrders = [...data.orders];
+  let allQuotes = [...(data.quotes || [])];
   let searchQ = '', statusFilter = '', sortDir = 'desc';
   let detailOrder = null;
+  let activeTab = 'orders'; // 'orders' | 'quotes'
 
   const page = el('div', {});
   container.append(page);
@@ -3080,8 +3140,18 @@ function renderAdminOrders(data, container, reload) {
 
   function renderPage() {
     page.innerHTML = '';
-    if (detailOrder) renderDetailView(detailOrder);
-    else renderListView();
+    if (detailOrder) { renderDetailView(detailOrder); return; }
+    // Tab bar
+    const tabBar = el('div', { className: 'flex gap-1 px-6 pt-5 pb-0 border-b border-gray-200 bg-gray-50' });
+    [['orders', `Orders (${allOrders.length})`], ['quotes', `Quotes (${allQuotes.length})`]].forEach(([tab, label]) => {
+      tabBar.append(el('button', {
+        className: `px-4 py-2 text-sm font-bold rounded-t-lg border border-b-0 transition -mb-px ${activeTab === tab ? 'bg-white border-gray-200 text-brand' : 'bg-transparent border-transparent text-gray-400 hover:text-gray-700'}`,
+        onClick: () => { activeTab = tab; renderPage(); },
+      }, label));
+    });
+    page.append(tabBar);
+    if (activeTab === 'orders') renderListView();
+    else renderQuoteListView();
   }
 
   // ── LIST VIEW ───────────────────────────────────────────────────────────
@@ -3132,7 +3202,13 @@ function renderAdminOrders(data, container, reload) {
       el('button', {
         className: 'bg-brand text-white text-sm font-bold px-4 py-2.5 rounded-xl hover:opacity-90 transition flex-shrink-0',
         onClick: () => showAdminPlaceOrderModal(data.customers, data.products, () => reload()),
-      }, '+ Place Order for Client'),
+      }, '+ Place Order'),
+      el('button', {
+        className: 'bg-white border border-brand text-brand text-sm font-bold px-4 py-2.5 rounded-xl hover:bg-brand-light transition flex-shrink-0',
+        onClick: () => showQuoteModal(data.customers, data.products, data.discountRules || [], null, () => {
+          api.quotes.getAll().then(q => { allQuotes = q; activeTab = 'quotes'; renderPage(); }).catch(() => {});
+        }),
+      }, '+ New Quote'),
       revSummary
     ));
 
@@ -3251,12 +3327,27 @@ function renderAdminOrders(data, container, reload) {
           el('span', { className: 'text-gray-300' }, '/'),
           el('span', { className: 'text-sm font-black text-gray-900' }, `Order #${order.id.slice(-8).toUpperCase()}`)
         ),
-        el('div', { className: 'flex items-center gap-2' },
+        el('div', { className: 'flex items-center gap-2 flex-wrap' },
           badge(order.status, STATUS_COLORS[order.status] || '#999'),
           !isTerminal && el('button', {
             className: 'px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-50 transition',
             onClick: () => showOrderEditModal(order, data.products, () => refreshDetail(order.id)),
-          }, '✏️ Edit Order')
+          }, '✏️ Edit Order'),
+          el('button', {
+            className: 'px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-50 transition',
+            onClick: async (e) => {
+              const btn = e.currentTarget;
+              btn.disabled = true; btn.textContent = '⏳ Generating…';
+              try {
+                const updated = await api.orders.invoice(order.id);
+                allOrders[allOrders.findIndex(o => o.id === order.id)] = updated;
+                detailOrder = updated;
+                renderPage();
+                printInvoice(updated);
+                toast('Invoice generated', 'success');
+              } catch (err) { toast(err.message || 'Failed'); btn.disabled = false; btn.textContent = '🧾 Invoice'; }
+            },
+          }, order.invoiceNumber ? `🧾 ${order.invoiceNumber}` : '🧾 Invoice')
         )
       )
     );
@@ -3434,6 +3525,89 @@ function renderAdminOrders(data, container, reload) {
       );
     }
 
+    page.append(wrap);
+  }
+
+  // ── QUOTES LIST VIEW ────────────────────────────────────────────────────
+  const QUOTE_STATUS_COLORS = { DRAFT: '#6B7280', SENT: '#3B82F6', ACCEPTED: '#10B981', DECLINED: '#EF4444', EXPIRED: '#F59E0B' };
+
+  function renderQuoteListView() {
+    const wrap = el('div', { className: 'p-6 max-w-6xl mx-auto' });
+
+    // Filter chips
+    let qStatusFilter = '';
+    const qChipsRow = el('div', { className: 'flex gap-2 flex-wrap mb-5' });
+    function renderQChips() {
+      qChipsRow.innerHTML = '';
+      qChipsRow.append(el('button', {
+        className: `px-3 py-2 rounded-lg text-sm font-semibold border-2 transition ${qStatusFilter === '' ? 'bg-gray-800 border-gray-800 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-400'}`,
+        onClick: () => { qStatusFilter = ''; renderQChips(); renderQTable(); },
+      }, `All (${allQuotes.length})`));
+      Object.keys(QUOTE_STATUS_COLORS).forEach(s => {
+        const count = allQuotes.filter(q => q.status === s).length;
+        const isActive = qStatusFilter === s;
+        qChipsRow.append(el('button', {
+          className: `flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold border-2 transition ${isActive ? 'text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'}`,
+          style: isActive ? { backgroundColor: QUOTE_STATUS_COLORS[s], borderColor: QUOTE_STATUS_COLORS[s] } : {},
+          onClick: () => { qStatusFilter = s; renderQChips(); renderQTable(); },
+        }, s, el('span', { className: `text-xs px-1.5 rounded-full ml-0.5 ${isActive ? 'bg-white bg-opacity-25 text-white' : 'bg-gray-100 text-gray-500'}` }, String(count))));
+      });
+    }
+    wrap.append(qChipsRow);
+
+    const qTableWrap = el('div', {});
+    wrap.append(qTableWrap);
+
+    function renderQTable() {
+      qTableWrap.innerHTML = '';
+      const filtered = allQuotes.filter(q => !qStatusFilter || q.status === qStatusFilter);
+      if (!filtered.length) {
+        qTableWrap.append(el('div', { className: 'bg-white rounded-xl p-14 text-center shadow-sm border border-gray-100' },
+          el('p', { className: 'text-4xl mb-3' }, '📋'),
+          el('p', { className: 'font-bold text-gray-700 mb-1' }, 'No quotes found'),
+          el('p', { className: 'text-sm text-gray-400' }, 'Click "+ New Quote" to create one')
+        )); return;
+      }
+      const table = el('div', { className: 'bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden' });
+      table.append(
+        el('div', { className: 'hidden md:grid grid-cols-12 bg-gray-50 border-b border-gray-100 px-5 py-3 text-xs font-black text-gray-400 uppercase tracking-wider' },
+          el('div', { className: 'col-span-1' }, '#'),
+          el('div', { className: 'col-span-3' }, 'Customer'),
+          el('div', { className: 'col-span-2' }, 'Date'),
+          el('div', { className: 'col-span-2' }, 'Total'),
+          el('div', { className: 'col-span-2' }, 'Ambassador'),
+          el('div', { className: 'col-span-2' }, 'Status'),
+        )
+      );
+      const tbody = el('div', { className: 'divide-y divide-gray-50' });
+      filtered.forEach(q => {
+        const dateStr = new Date(q.createdAt).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: '2-digit' });
+        const row = el('div', {
+          className: 'grid grid-cols-12 items-center px-5 py-3.5 cursor-pointer hover:bg-gray-50 transition',
+          onClick: () => showQuoteDetailModal(q, data.customers, data.products, data.discountRules || [], async () => {
+            allQuotes = await api.quotes.getAll().catch(() => allQuotes);
+            renderPage();
+          }),
+        });
+        row.append(el('div', { className: 'col-span-1 text-xs font-bold text-gray-400' }, q.number || '—'));
+        row.append(el('div', { className: 'col-span-3 min-w-0 pr-2' },
+          el('p', { className: 'font-semibold text-gray-900 text-sm truncate' }, `${q.customer?.firstName || ''} ${q.customer?.lastName || ''}`),
+          el('p', { className: 'text-xs text-gray-400 truncate' }, q.customer?.email || '—')
+        ));
+        row.append(el('div', { className: 'hidden md:block col-span-2 text-sm text-gray-600' }, dateStr));
+        row.append(el('div', { className: 'col-span-2 font-black text-sm text-gray-900' }, `R${Number(q.total || 0).toFixed(2)}`));
+        row.append(el('div', { className: 'hidden md:block col-span-2' },
+          q.ambassador ? el('span', { className: 'text-xs bg-brand-light text-brand-dark font-bold px-2 py-0.5 rounded-full' }, q.ambassador.code) : el('span', { className: 'text-xs text-gray-300' }, '—')
+        ));
+        row.append(el('div', { className: 'col-span-2' }, badge(q.status, QUOTE_STATUS_COLORS[q.status] || '#999')));
+        tbody.append(row);
+      });
+      table.append(tbody);
+      qTableWrap.append(table);
+    }
+
+    renderQChips();
+    renderQTable();
     page.append(wrap);
   }
 
@@ -3651,6 +3825,368 @@ function showOrderEditModal(order, products, onSaved) {
   );
 
   overlay.append(panel);
+  document.body.append(overlay);
+}
+
+// ── PRINT INVOICE ─────────────────────────────────────────────────────────
+function printInvoice(order) {
+  const items = (order.items || []).map(i => {
+    const name = (i.variant?.product?.name || 'Item') + (i.variant?.name ? ` — ${i.variant.name}` : '');
+    const qty = i.quantity;
+    const up = Number(i.unitPrice || 0);
+    return `<tr><td style="padding:6px 8px;border-bottom:1px solid #eee">${name}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:center">${qty}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">R${up.toFixed(2)}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">R${(up*qty).toFixed(2)}</td></tr>`;
+  }).join('');
+  const discountRow = Number(order.discountAmount) > 0
+    ? `<tr><td colspan="3" style="text-align:right;padding:4px 8px;color:#6b7280">Discount (${order.discountType === 'PERCENTAGE' ? order.discountValue + '%' : 'Flat'})</td><td style="text-align:right;padding:4px 8px;color:#ef4444">-R${Number(order.discountAmount).toFixed(2)}</td></tr>` : '';
+  const customerName = `${order.customer?.firstName || ''} ${order.customer?.lastName || ''}`.trim();
+  const win = window.open('', '_blank', 'width=800,height=700');
+  win.document.write(`<!DOCTYPE html><html><head><title>Invoice ${order.invoiceNumber || order.id}</title>
+  <style>body{font-family:Arial,sans-serif;padding:40px;color:#111;max-width:700px;margin:0 auto}h1{color:#8B3A3A}table{width:100%;border-collapse:collapse}th{background:#f9fafb;padding:8px;text-align:left;font-size:12px;text-transform:uppercase;color:#6b7280}@media print{button{display:none}}</style></head>
+  <body>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px">
+    <div><h1 style="margin:0">Tlaka Treats</h1><p style="color:#6b7280;margin:4px 0 0">Tax Invoice</p></div>
+    <div style="text-align:right">
+      <p style="font-size:20px;font-weight:bold;margin:0">${order.invoiceNumber || `#${order.id.slice(-8).toUpperCase()}`}</p>
+      <p style="color:#6b7280;margin:4px 0 0">Date: ${new Date(order.invoicedAt || order.createdAt).toLocaleDateString('en-ZA')}</p>
+    </div>
+  </div>
+  <div style="margin-bottom:24px"><p style="font-weight:bold;margin:0 0 4px">Bill To:</p><p style="margin:0">${customerName}</p>${order.customer?.email ? `<p style="margin:0;color:#6b7280">${order.customer.email}</p>` : ''}${order.customer?.phone ? `<p style="margin:0;color:#6b7280">${order.customer.phone}</p>` : ''}</div>
+  ${order.ambassador ? `<div style="margin-bottom:24px;background:#fdf2f2;padding:12px;border-radius:8px"><p style="margin:0;font-size:12px;color:#8B3A3A;font-weight:bold">AMBASSADOR CODE: ${order.ambassador.code}</p></div>` : ''}
+  <table><thead><tr><th>Description</th><th style="text-align:center">Qty</th><th style="text-align:right">Unit Price</th><th style="text-align:right">Total</th></tr></thead>
+  <tbody>${items}
+  <tr><td colspan="3" style="text-align:right;padding:4px 8px;color:#6b7280">Subtotal</td><td style="text-align:right;padding:4px 8px">R${Number(order.subtotal||0).toFixed(2)}</td></tr>
+  <tr><td colspan="3" style="text-align:right;padding:4px 8px;color:#6b7280">Delivery Fee</td><td style="text-align:right;padding:4px 8px">R${Number(order.deliveryFee||0).toFixed(2)}</td></tr>
+  ${discountRow}
+  <tr><td colspan="3" style="text-align:right;padding:8px;font-weight:bold;border-top:2px solid #111">TOTAL</td><td style="text-align:right;padding:8px;font-weight:bold;border-top:2px solid #111;font-size:18px">R${Number(order.total).toFixed(2)}</td></tr>
+  </tbody></table>
+  ${order.notes ? `<div style="margin-top:24px;padding:12px;background:#fffbeb;border-radius:8px"><p style="margin:0;font-size:12px;font-weight:bold;color:#92400e">Note:</p><p style="margin:4px 0 0">${order.notes}</p></div>` : ''}
+  <div style="margin-top:40px;text-align:center;color:#9ca3af;font-size:12px"><p>Thank you for your order! 🍰</p></div>
+  <button onclick="window.print()" style="position:fixed;bottom:20px;right:20px;background:#8B3A3A;color:white;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:bold">🖨 Print</button>
+  </body></html>`);
+  win.document.close();
+}
+
+// ── QUOTE MODAL ────────────────────────────────────────────────────────────
+function showQuoteModal(customers, products, discountRules, existingQuote, onSaved) {
+  let customerId = existingQuote?.customerId || '';
+  let ambassadorCode = existingQuote?.ambassador?.code || '';
+  let editItems = (existingQuote?.items || []).map(i => ({
+    variantId: i.variant?.id || i.variantId,
+    productName: i.variant?.product?.name || 'Unknown',
+    variantName: i.variant?.name || '',
+    unitPrice: Number(i.unitPrice || 0),
+    quantity: i.quantity || 1,
+  }));
+  let discountType = existingQuote?.discountType || '';
+  let discountValue = Number(existingQuote?.discountValue || 0);
+  let deliveryFee = Number(existingQuote?.deliveryFee || 0);
+  let notes = existingQuote?.notes || '';
+  let validUntil = existingQuote?.validUntil ? existingQuote.validUntil.slice(0, 10) : '';
+
+  const overlay = el('div', { className: 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4' });
+  const panel = el('div', { className: 'bg-white rounded-2xl w-full max-w-xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden' });
+  const close = () => document.body.removeChild(overlay);
+
+  panel.append(
+    el('div', { className: 'flex items-center justify-between px-5 py-4 border-b border-gray-100 flex-shrink-0' },
+      el('h2', { className: 'font-black text-gray-900 text-base' }, existingQuote ? `Edit Quote ${existingQuote.number}` : 'New Quote'),
+      el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×')
+    )
+  );
+
+  const body = el('div', { className: 'flex-1 overflow-y-auto p-5 space-y-4' });
+
+  function makeOpt(val, txt) { const o = document.createElement('option'); o.value = val; o.textContent = txt; return o; }
+
+  // Customer
+  const custSel = el('select', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand' });
+  custSel.append(makeOpt('', '— Select Customer —'));
+  (customers || []).forEach(c => custSel.append(makeOpt(c.id, `${c.firstName || ''} ${c.lastName || ''} (${c.email || c.phone || ''})`)));
+  if (customerId) custSel.value = customerId;
+  custSel.addEventListener('change', e => { customerId = e.target.value; });
+  body.append(el('div', {},
+    el('label', { className: 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5' }, 'Customer'),
+    custSel
+  ));
+
+  // Ambassador
+  const ambPicker = createAmbPicker({ value: ambassadorCode, onChange: v => { ambassadorCode = v; }, placeholder: 'No ambassador code…' });
+  body.append(el('div', {},
+    el('label', { className: 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5' }, 'Ambassador Code'),
+    ambPicker
+  ));
+
+  // Items
+  body.append(el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wide' }, 'Line Items'));
+  const itemsListEl = el('div', { className: 'border border-gray-100 rounded-xl overflow-hidden' });
+
+  function renderItemsList() {
+    itemsListEl.innerHTML = '';
+    if (!editItems.length) {
+      itemsListEl.append(el('p', { className: 'text-sm text-gray-400 text-center py-4' }, 'No items — add one below'));
+      return;
+    }
+    editItems.forEach((item, idx) => {
+      itemsListEl.append(
+        el('div', { className: 'flex items-center gap-2 px-3 py-2.5 border-b border-gray-50 last:border-b-0' },
+          el('div', { className: 'flex-1 min-w-0' },
+            el('p', { className: 'text-sm font-semibold text-gray-900 truncate' }, item.productName + (item.variantName ? ` — ${item.variantName}` : '')),
+            el('p', { className: 'text-xs text-gray-400' }, `R${item.unitPrice.toFixed(2)} each`)
+          ),
+          el('div', { className: 'flex items-center gap-1 flex-shrink-0' },
+            el('button', { className: 'w-6 h-6 rounded-full bg-gray-100 hover:bg-gray-200 text-sm flex items-center justify-center', onClick: () => { if (item.quantity > 1) { editItems[idx].quantity--; renderItemsList(); } } }, '−'),
+            el('span', { className: 'w-7 text-center text-sm font-bold' }, String(item.quantity)),
+            el('button', { className: 'w-6 h-6 rounded-full bg-gray-100 hover:bg-gray-200 text-sm flex items-center justify-center', onClick: () => { editItems[idx].quantity++; renderItemsList(); } }, '+'),
+          ),
+          el('button', { className: 'text-red-400 hover:text-red-600 font-bold text-lg leading-none ml-1', onClick: () => { editItems.splice(idx, 1); renderItemsList(); } }, '×')
+        )
+      );
+    });
+  }
+  renderItemsList();
+  body.append(itemsListEl);
+
+  // Add item row
+  const activeProducts = (products || []).filter(p => p.isActive && p.variants?.length > 0);
+  const variantPriceMap = new Map();
+  const prodSel = el('select', { className: 'flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand' });
+  const varSel = el('select', { className: 'flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand' });
+  const qtyInput = el('input', { type: 'number', min: '1', value: '1', className: 'w-14 border border-gray-200 rounded-xl px-2 py-2 text-sm text-center outline-none focus:ring-2 focus:ring-brand' });
+  prodSel.append(makeOpt('', '— Product —'));
+  activeProducts.forEach(p => prodSel.append(makeOpt(p.id, p.name)));
+  function updateVars() {
+    varSel.innerHTML = ''; variantPriceMap.clear();
+    varSel.append(makeOpt('', '— Variant —'));
+    const pid = prodSel.value; if (!pid) return;
+    const prod = activeProducts.find(p => p.id === pid);
+    (prod?.variants || []).forEach(v => {
+      const price = v.prices?.find(p => p.tier === (ambassadorCode ? 'AMBASSADOR' : 'RETAIL')) || v.prices?.find(p => p.tier === 'RETAIL');
+      const up = price ? Number(price.price) : 0;
+      variantPriceMap.set(v.id, { unitPrice: up, variantName: v.name });
+      varSel.append(makeOpt(v.id, `${v.name} — R${up.toFixed(2)}`));
+    });
+  }
+  prodSel.addEventListener('change', updateVars); updateVars();
+  const addItemBtn = el('button', { className: 'px-3 py-2 bg-brand text-white text-sm font-bold rounded-xl hover:opacity-90 flex-shrink-0' }, '+ Add');
+  addItemBtn.addEventListener('click', () => {
+    const vId = varSel.value; if (!vId) return;
+    const qty = Math.max(1, parseInt(qtyInput.value) || 1);
+    const { unitPrice, variantName } = variantPriceMap.get(vId) || {};
+    const prod = activeProducts.find(p => p.id === prodSel.value);
+    const existing = editItems.find(i => i.variantId === vId);
+    if (existing) { existing.quantity += qty; } else { editItems.push({ variantId: vId, productName: prod?.name || '', variantName: variantName || '', unitPrice: unitPrice || 0, quantity: qty }); }
+    prodSel.value = ''; updateVars(); qtyInput.value = '1'; renderItemsList();
+  });
+  body.append(el('div', { className: 'flex gap-2 items-center' }, prodSel, varSel, qtyInput, addItemBtn));
+
+  // Discount section
+  body.append(el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wide border-t border-gray-100 pt-3' }, 'Discount'));
+  const discTypeSel = el('select', { className: 'flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand' });
+  [['', 'No discount'], ['PERCENTAGE', 'Percentage (%)'], ['FLAT', 'Flat Amount (R)']].forEach(([v, l]) => discTypeSel.append(makeOpt(v, l)));
+  discTypeSel.value = discountType;
+  discTypeSel.addEventListener('change', e => { discountType = e.target.value; });
+  const discValInput = el('input', { type: 'number', min: '0', step: '0.01', placeholder: '0', className: 'w-28 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand' });
+  discValInput.value = discountValue || '';
+  discValInput.addEventListener('input', e => { discountValue = Number(e.target.value) || 0; });
+
+  // Apply from saved rule
+  const ruleSel = el('select', { className: 'flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand' });
+  ruleSel.append(makeOpt('', '— Apply saved rule —'));
+  (discountRules || []).filter(r => r.isActive).forEach(r => ruleSel.append(makeOpt(r.id, `${r.name} — ${r.type === 'PERCENTAGE' ? r.value + '%' : 'R' + r.value}`)));
+  ruleSel.addEventListener('change', () => {
+    const rule = (discountRules || []).find(r => r.id === ruleSel.value);
+    if (!rule) return;
+    discountType = rule.type; discountValue = Number(rule.value);
+    discTypeSel.value = discountType; discValInput.value = discountValue;
+  });
+  body.append(el('div', { className: 'flex gap-2 items-center flex-wrap' }, discTypeSel, discValInput, ruleSel));
+
+  // Delivery fee, notes, valid until
+  const feeInp = el('input', { type: 'number', min: '0', step: '0.01', placeholder: '0.00', className: 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand' });
+  feeInp.value = deliveryFee || '';
+  feeInp.addEventListener('input', e => { deliveryFee = Number(e.target.value) || 0; });
+  body.append(el('div', {}, el('label', { className: 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5' }, 'Delivery Fee (R)'), feeInp));
+
+  const notesInp = el('textarea', { rows: 2, placeholder: 'Notes…', className: 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand resize-none' });
+  notesInp.value = notes;
+  notesInp.addEventListener('input', e => { notes = e.target.value; });
+  body.append(el('div', {}, el('label', { className: 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5' }, 'Notes'), notesInp));
+
+  const validInp = el('input', { type: 'date', className: 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand' });
+  validInp.value = validUntil;
+  validInp.addEventListener('change', e => { validUntil = e.target.value; });
+  body.append(el('div', {}, el('label', { className: 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5' }, 'Valid Until'), validInp));
+
+  const errMsg = el('p', { className: 'text-red-500 text-sm hidden' });
+  body.append(errMsg);
+  panel.append(body);
+
+  const saveBtn = el('button', { className: 'flex-1 bg-brand text-white text-sm font-bold py-2.5 px-4 rounded-xl hover:opacity-90 transition' }, existingQuote ? 'Save Changes' : 'Create Quote');
+  saveBtn.addEventListener('click', async () => {
+    if (!customerId) { errMsg.textContent = 'Please select a customer'; errMsg.classList.remove('hidden'); return; }
+    if (!editItems.length) { errMsg.textContent = 'Add at least one item'; errMsg.classList.remove('hidden'); return; }
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; errMsg.classList.add('hidden');
+    const payload = {
+      customerId,
+      ambassadorCode: ambassadorCode || undefined,
+      items: editItems.map(i => ({ variantId: i.variantId, quantity: i.quantity })),
+      discountType: discountType || undefined,
+      discountValue: discountValue || undefined,
+      deliveryFee: deliveryFee || undefined,
+      notes: notes || undefined,
+      validUntil: validUntil || undefined,
+    };
+    try {
+      if (existingQuote) { await api.quotes.update(existingQuote.id, payload); }
+      else { await api.quotes.create(payload); }
+      toast(existingQuote ? 'Quote updated' : 'Quote created', 'success');
+      close(); onSaved();
+    } catch (err) {
+      errMsg.textContent = err.message || 'Failed'; errMsg.classList.remove('hidden');
+      saveBtn.disabled = false; saveBtn.textContent = existingQuote ? 'Save Changes' : 'Create Quote';
+    }
+  });
+  panel.append(el('div', { className: 'flex gap-2 px-5 py-4 border-t border-gray-100 flex-shrink-0' },
+    el('button', { className: 'flex-1 bg-white border border-gray-200 text-gray-600 text-sm font-semibold py-2.5 px-4 rounded-xl hover:bg-gray-50 transition', onClick: close }, 'Cancel'),
+    saveBtn
+  ));
+  overlay.append(panel);
+  document.body.append(overlay);
+}
+
+// ── QUOTE DETAIL MODAL ─────────────────────────────────────────────────────
+function showQuoteDetailModal(quote, customers, products, discountRules, onSaved) {
+  const QCOLORS = { DRAFT: '#6B7280', SENT: '#3B82F6', ACCEPTED: '#10B981', DECLINED: '#EF4444', EXPIRED: '#F59E0B' };
+  const overlay = el('div', { className: 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4' });
+  const panel = el('div', { className: 'bg-white rounded-2xl w-full max-w-xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden' });
+  const close = () => document.body.removeChild(overlay);
+
+  let currentQuote = quote;
+
+  function rebuild() {
+    panel.innerHTML = '';
+
+    // Header
+    panel.append(el('div', { className: 'flex items-center justify-between px-5 py-4 border-b border-gray-100 flex-shrink-0' },
+      el('div', { className: 'flex items-center gap-2' },
+        el('h2', { className: 'font-black text-gray-900 text-base' }, currentQuote.number || 'Quote'),
+        badge(currentQuote.status, QCOLORS[currentQuote.status] || '#999')
+      ),
+      el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×')
+    ));
+
+    const body = el('div', { className: 'flex-1 overflow-y-auto p-5 space-y-4' });
+
+    // Customer info
+    const cust = currentQuote.customer;
+    if (cust) {
+      body.append(el('div', { className: 'bg-gray-50 rounded-xl p-3' },
+        el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wide mb-1' }, 'Customer'),
+        el('p', { className: 'font-bold text-gray-900' }, `${cust.firstName || ''} ${cust.lastName || ''}`),
+        cust.email ? el('p', { className: 'text-xs text-gray-400' }, cust.email) : null,
+        cust.phone ? el('p', { className: 'text-xs text-gray-400' }, cust.phone) : null
+      ));
+    }
+
+    // Items
+    body.append(el('div', { className: 'border border-gray-100 rounded-xl overflow-hidden' },
+      el('div', { className: 'bg-gray-50 px-4 py-2 border-b border-gray-100' }, el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wide' }, `Items (${(currentQuote.items || []).length})`)),
+      el('div', { className: 'divide-y divide-gray-50' },
+        ...(currentQuote.items || []).map(i => {
+          const name = (i.variant?.product?.name || 'Item') + (i.variant?.name ? ` — ${i.variant.name}` : '');
+          const up = Number(i.unitPrice || 0);
+          return el('div', { className: 'px-4 py-3 flex justify-between items-center' },
+            el('div', {}, el('p', { className: 'text-sm font-semibold text-gray-900' }, name), el('p', { className: 'text-xs text-gray-400' }, `${i.quantity} × R${up.toFixed(2)}`)),
+            el('p', { className: 'font-bold text-sm text-gray-900' }, `R${(up * i.quantity).toFixed(2)}`)
+          );
+        }),
+        el('div', { className: 'px-4 py-3 bg-gray-50 space-y-1' },
+          el('div', { className: 'flex justify-between text-xs text-gray-500' }, el('span', {}, 'Subtotal'), el('span', {}, `R${Number(currentQuote.subtotal || 0).toFixed(2)}`)),
+          Number(currentQuote.discountAmount) > 0 ? el('div', { className: 'flex justify-between text-xs text-red-500' }, el('span', {}, `Discount (${currentQuote.discountType}${currentQuote.discountType === 'PERCENTAGE' ? ' ' + currentQuote.discountValue + '%' : ''})`), el('span', {}, `-R${Number(currentQuote.discountAmount).toFixed(2)}`)) : null,
+          el('div', { className: 'flex justify-between text-xs text-gray-500' }, el('span', {}, 'Delivery'), el('span', {}, `R${Number(currentQuote.deliveryFee || 0).toFixed(2)}`)),
+          el('div', { className: 'flex justify-between text-sm font-black text-gray-900 border-t border-gray-200 mt-1 pt-1.5' }, el('span', {}, 'Total'), el('span', {}, `R${Number(currentQuote.total || 0).toFixed(2)}`))
+        )
+      )
+    ));
+
+    if (currentQuote.notes) {
+      body.append(el('div', { className: 'bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-3' },
+        el('p', { className: 'text-xs font-black text-yellow-600 uppercase tracking-wide mb-1' }, 'Notes'),
+        el('p', { className: 'text-sm text-yellow-900' }, currentQuote.notes)
+      ));
+    }
+
+    // Actions based on status
+    const actions = el('div', { className: 'flex flex-wrap gap-2' });
+
+    if (currentQuote.status === 'DRAFT') {
+      const editBtn = el('button', { className: 'px-4 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-50 transition' }, '✏️ Edit');
+      editBtn.addEventListener('click', () => {
+        close();
+        showQuoteModal(customers, products, discountRules, currentQuote, async () => {
+          const updated = await api.quotes.getById(currentQuote.id);
+          currentQuote = updated;
+          onSaved();
+          showQuoteDetailModal(updated, customers, products, discountRules, onSaved);
+        });
+      });
+      const sendBtn = el('button', { className: 'px-4 py-2 bg-blue-500 text-white text-sm font-bold rounded-xl hover:bg-blue-600 transition' }, '📤 Mark as Sent');
+      sendBtn.addEventListener('click', async () => {
+        sendBtn.disabled = true; sendBtn.textContent = '…';
+        try {
+          currentQuote = await api.quotes.updateStatus(currentQuote.id, 'SENT');
+          rebuild(); onSaved();
+        } catch (err) { toast(err.message || 'Failed'); sendBtn.disabled = false; sendBtn.textContent = '📤 Mark as Sent'; }
+      });
+      const delBtn = el('button', { className: 'px-4 py-2 bg-white border border-red-200 text-red-500 text-sm font-semibold rounded-xl hover:bg-red-50 transition ml-auto' }, '🗑 Delete');
+      delBtn.addEventListener('click', async () => {
+        if (!confirm('Delete this draft quote?')) return;
+        try { await api.quotes.remove(currentQuote.id); toast('Quote deleted'); close(); onSaved(); }
+        catch (err) { toast(err.message || 'Failed'); }
+      });
+      actions.append(editBtn, sendBtn, delBtn);
+    } else if (currentQuote.status === 'SENT') {
+      const acceptBtn = el('button', { className: 'px-4 py-2 bg-green-500 text-white text-sm font-bold rounded-xl hover:bg-green-600 transition' }, '✅ Accept');
+      acceptBtn.addEventListener('click', async () => {
+        acceptBtn.disabled = true;
+        try { currentQuote = await api.quotes.updateStatus(currentQuote.id, 'ACCEPTED'); rebuild(); onSaved(); }
+        catch (err) { toast(err.message || 'Failed'); acceptBtn.disabled = false; }
+      });
+      const declineBtn = el('button', { className: 'px-4 py-2 bg-red-500 text-white text-sm font-bold rounded-xl hover:bg-red-600 transition' }, '✕ Decline');
+      declineBtn.addEventListener('click', async () => {
+        declineBtn.disabled = true;
+        try { currentQuote = await api.quotes.updateStatus(currentQuote.id, 'DECLINED'); rebuild(); onSaved(); }
+        catch (err) { toast(err.message || 'Failed'); declineBtn.disabled = false; }
+      });
+      const convertBtn = el('button', { className: 'px-4 py-2 bg-brand text-white text-sm font-bold rounded-xl hover:opacity-90 transition' }, '🔄 Convert to Order');
+      convertBtn.addEventListener('click', async () => {
+        convertBtn.disabled = true; convertBtn.textContent = 'Converting…';
+        try {
+          await api.quotes.convert(currentQuote.id);
+          toast('Order created from quote!', 'success');
+          close(); onSaved();
+        } catch (err) { toast(err.message || 'Failed'); convertBtn.disabled = false; convertBtn.textContent = '🔄 Convert to Order'; }
+      });
+      actions.append(acceptBtn, declineBtn, convertBtn);
+    } else if (currentQuote.status === 'ACCEPTED') {
+      const convertBtn = el('button', { className: 'px-4 py-2 bg-brand text-white text-sm font-bold rounded-xl hover:opacity-90 transition' }, '🔄 Convert to Order');
+      convertBtn.addEventListener('click', async () => {
+        convertBtn.disabled = true; convertBtn.textContent = 'Converting…';
+        try { await api.quotes.convert(currentQuote.id); toast('Order created!', 'success'); close(); onSaved(); }
+        catch (err) { toast(err.message || 'Failed'); convertBtn.disabled = false; convertBtn.textContent = '🔄 Convert to Order'; }
+      });
+      actions.append(convertBtn);
+    }
+
+    if (actions.children.length) {
+      body.append(el('div', { className: 'border-t border-gray-100 pt-3' }, actions));
+    }
+
+    panel.append(body);
+    overlay.append(panel);
+  }
+
+  rebuild();
   document.body.append(overlay);
 }
 
@@ -8567,6 +9103,82 @@ function renderAdminSettings(data, container, reload) {
   page.append(section('Notifications', 'Control which alerts you receive',
     ...notifRows,
     saveBtn('Save Notification Settings', () => toast('Notification preferences saved ✓', 'success'))
+  ));
+
+  // ── Discount Rules ─────────────────────────────────────────────
+  const discountRules = data.discountRules || [];
+  const drListWrap = el('div', {});
+
+  function renderDRList() {
+    drListWrap.innerHTML = '';
+    if (!discountRules.length) {
+      drListWrap.append(el('p', { className: 'text-sm text-gray-400 py-2' }, 'No discount rules yet.'));
+      return;
+    }
+    discountRules.forEach((rule, idx) => {
+      drListWrap.append(
+        el('div', { className: `flex items-center gap-3 py-3 ${idx < discountRules.length - 1 ? 'border-b border-gray-50' : ''}` },
+          el('div', { className: 'flex-1 min-w-0' },
+            el('p', { className: 'text-sm font-bold text-gray-900' }, rule.name),
+            el('p', { className: 'text-xs text-gray-400' }, `${rule.type === 'PERCENTAGE' ? rule.value + '% off' : 'R' + rule.value + ' flat'}${rule.code ? ` · Code: ${rule.code}` : ''}${rule.minOrder ? ` · Min: R${rule.minOrder}` : ''}`)
+          ),
+          el('label', { className: 'relative inline-flex items-center cursor-pointer flex-shrink-0' },
+            (() => {
+              const chk = el('input', { type: 'checkbox', className: 'sr-only peer' });
+              if (rule.isActive) chk.checked = true;
+              chk.addEventListener('change', async () => {
+                try { await api.discountRules.update(rule.id, { isActive: chk.checked }); rule.isActive = chk.checked; toast(`Rule ${chk.checked ? 'activated' : 'deactivated'}`, 'success'); }
+                catch (err) { toast(err.message || 'Failed'); chk.checked = !chk.checked; }
+              });
+              return chk;
+            })(),
+            el('div', { className: "w-9 h-5 bg-gray-200 rounded-full peer peer-checked:bg-brand peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all" })
+          ),
+          el('button', { className: 'text-red-400 hover:text-red-600 text-sm font-bold flex-shrink-0',
+            onClick: async () => {
+              if (!confirm(`Delete rule "${rule.name}"?`)) return;
+              try { await api.discountRules.remove(rule.id); discountRules.splice(idx, 1); renderDRList(); toast('Rule deleted'); }
+              catch (err) { toast(err.message || 'Failed'); }
+            }
+          }, '✕')
+        )
+      );
+    });
+  }
+
+  renderDRList();
+
+  // New rule form
+  let newRuleName = '', newRuleType = 'PERCENTAGE', newRuleValue = 0, newRuleCode = '', newRuleMinOrder = '';
+  function makeOpt2(v, t) { const o = document.createElement('option'); o.value = v; o.textContent = t; return o; }
+  const nrTypeSel = el('select', { className: 'border border-gray-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand' });
+  [['PERCENTAGE', '% Off'], ['FLAT', 'R Flat']].forEach(([v, l]) => nrTypeSel.append(makeOpt2(v, l)));
+  nrTypeSel.addEventListener('change', e => { newRuleType = e.target.value; });
+  const nrNameInp = el('input', { type: 'text', placeholder: 'Rule name', className: 'border border-gray-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand flex-1' });
+  nrNameInp.addEventListener('input', e => { newRuleName = e.target.value; });
+  const nrValInp = el('input', { type: 'number', min: '0', placeholder: 'Value', className: 'w-20 border border-gray-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand' });
+  nrValInp.addEventListener('input', e => { newRuleValue = Number(e.target.value) || 0; });
+  const nrCodeInp = el('input', { type: 'text', placeholder: 'Code (optional)', className: 'w-28 border border-gray-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand' });
+  nrCodeInp.addEventListener('input', e => { newRuleCode = e.target.value; });
+  const nrAddBtn = el('button', { className: 'bg-brand text-white text-sm font-bold px-4 py-2 rounded-lg hover:opacity-90 transition flex-shrink-0' }, '+ Add');
+  nrAddBtn.addEventListener('click', async () => {
+    if (!newRuleName || !newRuleValue) { toast('Name and value are required'); return; }
+    nrAddBtn.disabled = true; nrAddBtn.textContent = '…';
+    try {
+      const rule = await api.discountRules.create({ name: newRuleName, type: newRuleType, value: newRuleValue, code: newRuleCode || undefined });
+      discountRules.push(rule); renderDRList();
+      nrNameInp.value = ''; nrValInp.value = ''; nrCodeInp.value = '';
+      newRuleName = ''; newRuleValue = 0; newRuleCode = '';
+      toast('Rule created', 'success');
+    } catch (err) { toast(err.message || 'Failed'); }
+    nrAddBtn.disabled = false; nrAddBtn.textContent = '+ Add';
+  });
+
+  page.append(section('Discount Rules', 'Configure discount rules that can be applied to quotes and orders',
+    drListWrap,
+    el('div', { className: 'border-t border-gray-100 pt-4 flex gap-2 flex-wrap items-center' },
+      nrNameInp, nrTypeSel, nrValInp, nrCodeInp, nrAddBtn
+    )
   ));
 
   // ── About ──────────────────────────────────────────────────────
