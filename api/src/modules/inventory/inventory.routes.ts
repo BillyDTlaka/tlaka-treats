@@ -18,7 +18,7 @@ const inventoryRoutes: FastifyPluginAsync = async (fastify) => {
   // ── GET /inventory/sellable ─── Sellable (finished-goods) products with stock levels
   fastify.get('/sellable', { preHandler: [authenticate, authorize('manage', 'product')] }, async () => {
     return db.product.findMany({
-      where: { classification: 'SELLABLE', isActive: true },
+      where: { classification: 'SELLABLE' },
       include: {
         category: { select: { id: true, name: true } },
         stockItem: true,
