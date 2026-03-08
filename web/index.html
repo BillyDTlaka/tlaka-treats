@@ -235,14 +235,16 @@ const api = {
     seedAccounts:      ()            => req('POST',   '/finance/accounts/seed-defaults', {}),
   },
   quotes: {
-    getAll:       ()         => req('GET',    '/quotes'),
-    getMy:        ()         => req('GET',    '/quotes/my'),
-    getById:      (id)       => req('GET',    `/quotes/${id}`),
-    create:       (data)     => req('POST',   '/quotes', data),
-    update:       (id, data) => req('PATCH',  `/quotes/${id}`, data),
-    updateStatus: (id, s)    => req('PATCH',  `/quotes/${id}/status`, { status: s }),
-    convert:      (id)       => req('POST',   `/quotes/${id}/convert`),
-    remove:       (id)       => req('DELETE', `/quotes/${id}`),
+    getAll:       ()                  => req('GET',    '/quotes'),
+    getMy:        ()                  => req('GET',    '/quotes/my'),
+    getById:      (id)                => req('GET',    `/quotes/${id}`),
+    create:       (data)              => req('POST',   '/quotes', data),
+    update:       (id, data)          => req('PATCH',  `/quotes/${id}`, data),
+    updateStatus: (id, s)             => req('PATCH',  `/quotes/${id}/status`, { status: s }),
+    convert:      (id)                => req('POST',   `/quotes/${id}/convert`),
+    remove:       (id)                => req('DELETE', `/quotes/${id}`),
+    pdf:          (id)                => API_BASE + `/quotes/${id}/pdf`,
+    send:         (id, channel, to)   => req('POST',   `/quotes/${id}/send`, { channel, to }),
   },
   discountRules: {
     getAll:    ()         => req('GET',    '/discount-rules'),
@@ -4182,11 +4184,111 @@ function showQuoteDetailModal(quote, customers, products, discountRules, onSaved
       body.append(el('div', { className: 'border-t border-gray-100 pt-3' }, actions));
     }
 
+    // ── SEND / DOWNLOAD SECTION (always visible) ──────────────────────────
+    body.append(el('div', { className: 'border-t border-gray-100 pt-3 space-y-2' },
+      el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wide mb-2' }, 'Deliver Quote'),
+      el('div', { className: 'flex flex-wrap gap-2' },
+
+        // Download PDF
+        el('a', {
+          href: api.quotes.pdf(currentQuote.id),
+          target: '_blank',
+          className: 'px-4 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-50 transition inline-flex items-center gap-1.5',
+        }, '⬇️ Download PDF'),
+
+        // Send via Email
+        (() => {
+          const btn = el('button', { className: 'px-4 py-2 bg-blue-500 text-white text-sm font-semibold rounded-xl hover:bg-blue-600 transition' }, '📧 Send via Email');
+          btn.addEventListener('click', () => showSendModal(currentQuote, 'email', () => rebuild()));
+          return btn;
+        })(),
+
+        // Send via WhatsApp
+        (() => {
+          const btn = el('button', { className: 'px-4 py-2 text-white text-sm font-semibold rounded-xl hover:opacity-90 transition', style: { background: '#25D366' } }, '💬 Send via WhatsApp');
+          btn.addEventListener('click', () => showSendModal(currentQuote, 'whatsapp', () => rebuild()));
+          return btn;
+        })(),
+      )
+    ));
+
     panel.append(body);
     overlay.append(panel);
   }
 
   rebuild();
+  document.body.append(overlay);
+}
+
+// ── SEND QUOTE MODAL ───────────────────────────────────────────────────────
+function showSendModal(quote, channel, onSent) {
+  const isEmail = channel === 'email';
+  const defaultTo = isEmail ? (quote.customer?.email || '') : (quote.customer?.phone || '');
+  let recipient = defaultTo;
+
+  const overlay = el('div', { className: 'fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4' });
+  const panel = el('div', { className: 'bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden' });
+  const close = () => document.body.removeChild(overlay);
+
+  panel.append(
+    el('div', { className: 'flex items-center justify-between px-5 py-4 border-b border-gray-100' },
+      el('h2', { className: 'font-black text-gray-900 text-base' }, isEmail ? '📧 Send via Email' : '💬 Send via WhatsApp'),
+      el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×')
+    )
+  );
+
+  const body = el('div', { className: 'p-5 space-y-4' });
+
+  body.append(el('div', {},
+    el('label', { className: 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5' },
+      isEmail ? 'Recipient Email Address' : 'WhatsApp Number (with country code)'
+    ),
+    (() => {
+      const inp = el('input', {
+        type: isEmail ? 'email' : 'tel',
+        placeholder: isEmail ? 'customer@email.com' : '+27 81 234 5678',
+        className: 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand',
+        onInput: e => { recipient = e.target.value; },
+      });
+      inp.value = defaultTo;
+      return inp;
+    })()
+  ));
+
+  if (!isEmail) {
+    body.append(el('p', { className: 'text-xs text-gray-400 bg-gray-50 rounded-lg p-3' },
+      '💡 Include country code, e.g. +27 81 234 5678. The customer must have already joined your Twilio WhatsApp sandbox (for sandbox numbers).'
+    ));
+  }
+
+  const errMsg = el('p', { className: 'text-red-500 text-sm hidden' });
+  body.append(errMsg);
+  panel.append(body);
+
+  const sendBtn = el('button', { className: `w-full text-white text-sm font-bold py-3 rounded-xl hover:opacity-90 transition ${isEmail ? 'bg-blue-500' : ''}`, style: isEmail ? {} : { background: '#25D366' } }, `Send Quote`);
+  sendBtn.addEventListener('click', async () => {
+    if (!recipient.trim()) { errMsg.textContent = 'Please enter a recipient'; errMsg.classList.remove('hidden'); return; }
+    sendBtn.disabled = true; sendBtn.textContent = 'Sending…'; errMsg.classList.add('hidden');
+    try {
+      await api.quotes.send(quote.id, channel, recipient.trim());
+      toast(`Quote sent via ${isEmail ? 'email' : 'WhatsApp'} ✓`, 'success');
+      close();
+      onSent();
+    } catch (err) {
+      errMsg.textContent = err.message || 'Failed to send';
+      errMsg.classList.remove('hidden');
+      sendBtn.disabled = false; sendBtn.textContent = 'Send Quote';
+    }
+  });
+
+  panel.append(
+    el('div', { className: 'px-5 pb-5 flex gap-2' },
+      el('button', { className: 'flex-1 bg-white border border-gray-200 text-gray-600 text-sm font-semibold py-2.5 rounded-xl hover:bg-gray-50 transition', onClick: close }, 'Cancel'),
+      sendBtn
+    )
+  );
+
+  overlay.append(panel);
   document.body.append(overlay);
 }
 

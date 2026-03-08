@@ -1,6 +1,10 @@
 import { FastifyPluginAsync } from 'fastify'
 import { QuoteService } from './quotes.service'
 import { authenticate, authorize } from '../../shared/middleware/auth'
+import { generateQuotePdf } from '../../shared/services/pdf.service'
+import { sendQuoteEmail, sendQuoteWhatsApp } from '../../shared/services/notify.service'
+import { AppError } from '../../shared/errors'
+import { config } from '../../config'
 
 const quoteRoutes: FastifyPluginAsync = async (fastify) => {
   const svc = new QuoteService(fastify.prisma)
@@ -54,6 +58,55 @@ const quoteRoutes: FastifyPluginAsync = async (fastify) => {
     const { id } = request.params as { id: string }
     await svc.remove(id)
     return reply.code(204).send()
+  })
+
+  // GET /quotes/:id/pdf — download the quote as a PDF
+  fastify.get('/:id/pdf', { preHandler: [authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const quote  = await svc.getById(id)
+    const buffer = await generateQuotePdf(quote)
+    const name   = `${quote.number || 'quote'}.pdf`
+    return reply
+      .header('Content-Type', 'application/pdf')
+      .header('Content-Disposition', `attachment; filename="${name}"`)
+      .send(buffer)
+  })
+
+  // POST /quotes/:id/send — send the quote via email or whatsapp
+  fastify.post('/:id/send', { preHandler: [authenticate] }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const { channel, to } = request.body as { channel: 'email' | 'whatsapp'; to?: string }
+
+    if (!channel || !['email', 'whatsapp'].includes(channel)) {
+      throw new AppError('channel must be "email" or "whatsapp"', 400)
+    }
+
+    const quote = await svc.getById(id)
+
+    // Resolve recipient — fall back to customer's stored contact
+    const recipient =
+      to?.trim() ||
+      (channel === 'email'     ? quote.customer?.email : quote.customer?.phone) ||
+      ''
+
+    if (!recipient) {
+      throw new AppError(`No ${channel === 'email' ? 'email address' : 'phone number'} provided`, 400)
+    }
+
+    if (channel === 'email') {
+      await sendQuoteEmail(quote, recipient)
+    } else {
+      // Build a public URL for the PDF so Twilio can attach it
+      const pdfUrl = `${config.appUrl}/quotes/${id}/pdf`
+      await sendQuoteWhatsApp(quote, recipient, pdfUrl)
+    }
+
+    // Auto-advance DRAFT → SENT on first send
+    if (quote.status === 'DRAFT') {
+      await svc.updateStatus(id, 'SENT')
+    }
+
+    return reply.send({ ok: true, channel, to: recipient })
   })
 }
 
