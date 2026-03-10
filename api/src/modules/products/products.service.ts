@@ -45,6 +45,7 @@ export class ProductService {
     images?: { url: string; isPrimary: boolean }[]
     classification?: ProductClassification
     categoryId?: string
+    uomId?: string
     variants?: Array<{
       name: string
       prices: Array<{ tier: PricingTier; price: number }>
@@ -62,6 +63,7 @@ export class ProductService {
         images: data.images as any,
         classification: data.classification ?? 'SELLABLE',
         categoryId: data.categoryId,
+        uomId: data.uomId || undefined,
         variants: data.variants
           ? {
               create: data.variants.map(v => ({
@@ -81,7 +83,8 @@ export class ProductService {
         category: true,
         supplier: { select: { id: true, name: true } },
         variants: { include: { prices: true } },
-        stockItem: { select: { id: true, currentStock: true, unit: true } },
+        stockItem: { select: { id: true, currentStock: true, unit: true, uomId: true, uom: { select: { abbreviation: true, name: true } } } },
+        uom: { select: { id: true, name: true, abbreviation: true } },
       },
       orderBy: { createdAt: 'desc' },
     })
@@ -112,6 +115,7 @@ export class ProductService {
     images: { url: string; isPrimary: boolean }[]
     classification: ProductClassification
     isActive: boolean
+    uomId: string
   }>) {
     const product = await (this.prisma as any).product.findUnique({ where: { id } })
     if (!product) throw new NotFoundError('Product')

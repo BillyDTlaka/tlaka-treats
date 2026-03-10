@@ -84,63 +84,39 @@ export class OrderService {
     })
     if (!order) throw new NotFoundError('Order')
 
-    // ── Smart stock routing ───────────────────────────────────────────────────
-    // When advancing to BAKING, check if all sellable items already have
-    // finished-goods stock. If yes, skip BAKING and go straight to READY,
-    // deducting the stock as it is fulfilled.
-    let actualStatus: OrderStatus = status
-    let fulfilledFromStock = false
+    const db = this.prisma as any
 
-    if (status === 'BAKING') {
-      const db = this.prisma as any
-
-      // Collect SELLABLE items that have a stock item (finished-goods tracking)
-      const trackedItems = (order as any).items.filter(
+    // ── Stock deduction at CONFIRMED ──────────────────────────────────────────
+    if (status === 'CONFIRMED') {
+      const sellableItems = (order as any).items.filter(
         (item: any) =>
           item.variant?.product?.classification === 'SELLABLE' &&
           item.variant?.product?.stockItem != null,
       )
-
-      const allHaveStock =
-        trackedItems.length > 0 &&
-        trackedItems.every(
-          (item: any) =>
-            Number(item.variant.product.stockItem.currentStock) >= item.quantity,
-        )
-
-      if (allHaveStock) {
-        actualStatus = 'READY' as OrderStatus
-        fulfilledFromStock = true
-
-        // Deduct finished-goods stock for each item
-        for (const item of trackedItems) {
-          const stockItem = item.variant.product.stockItem
-          await db.stockMovement.create({
-            data: {
-              stockItemId: stockItem.id,
-              type: 'ADJUSTMENT_OUT',
-              quantity: -item.quantity,
-              reference: `ORDER-${orderId.slice(-8).toUpperCase()}`,
-              note: `Fulfilled for order — ${item.variant.product.name} × ${item.quantity}`,
-            },
-          })
-          await db.stockItem.update({
-            where: { id: stockItem.id },
-            data: { currentStock: { increment: -item.quantity } },
-          })
-        }
+      for (const item of sellableItems) {
+        const stockItem = item.variant.product.stockItem
+        const qty = Number(item.quantity)
+        await db.stockMovement.create({
+          data: {
+            stockItemId: stockItem.id,
+            type: 'ORDER_FULFILLMENT',
+            quantity: -qty,
+            reference: orderId,
+            note: `Order confirmed — ${item.variant.product.name} × ${qty}`,
+          },
+        })
+        await db.stockItem.update({
+          where: { id: stockItem.id },
+          data: { currentStock: { decrement: qty } },
+        })
       }
     }
-
-    const statusNote = fulfilledFromStock
-      ? `Fulfilled from finished-goods stock — baking step skipped${note ? '. ' + note : ''}`
-      : note
 
     const updated = await this.prisma.order.update({
       where: { id: orderId },
       data: {
-        status: actualStatus,
-        statusLogs: { create: { status: actualStatus, note: statusNote } },
+        status,
+        statusLogs: { create: { status, note } },
       },
     })
 
@@ -160,7 +136,7 @@ export class OrderService {
       }
     }
 
-    return { ...updated, fulfilledFromStock, actualStatus }
+    return updated
   }
 
   async getForCustomer(customerId: string) {

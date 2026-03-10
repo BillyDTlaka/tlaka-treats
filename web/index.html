@@ -253,6 +253,20 @@ const api = {
     update:    (id, data) => req('PATCH',  `/discount-rules/${id}`, data),
     remove:    (id)       => req('DELETE', `/discount-rules/${id}`),
   },
+  packaging: {
+    getAll:   ()      => req('GET',   '/packaging'),
+    getById:  (id)    => req('GET',   `/packaging/${id}`),
+    update:   (id, d) => req('PATCH', `/packaging/${id}`, d),
+    complete: (id)    => req('POST',  `/packaging/${id}/complete`),
+  },
+  uom: {
+    getAll:   ()         => req('GET',    '/uom'),
+    getAdmin: ()         => req('GET',    '/uom/all'),
+    create:   (data)     => req('POST',   '/uom', data),
+    update:   (id, data) => req('PATCH',  `/uom/${id}`, data),
+    remove:   (id)       => req('DELETE', `/uom/${id}`),
+    seed:     ()         => req('POST',   '/uom/seed', {}),
+  },
 };
 
 // ─── AUTH STORE ───────────────────────────────────────────────────
@@ -2872,7 +2886,7 @@ function AdminOverviewPage() {
     dataLoaded = false;
     renderContent();
     try {
-      const [orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns, quotes, discountRules] = await Promise.all([
+      const [orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns, quotes, discountRules, uoms] = await Promise.all([
         api.orders.getAll(), api.ambassadors.getAll(), api.products.getAllAdmin(), api.customers.getAll(),
         api.inventory.getAll().catch(() => []),
         api.suppliers.getAll().catch(() => []),
@@ -2881,8 +2895,9 @@ function AdminOverviewPage() {
         api.production.getAll().catch(() => []),
         api.quotes.getAll().catch(() => []),
         api.discountRules.getAll().catch(() => []),
+        api.uom.getAll().catch(() => []),
       ]);
-      adminData = { orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns, quotes, discountRules };
+      adminData = { orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns, quotes, discountRules, uoms };
       dataLoaded = true;
       renderContent();
     } catch {
@@ -3495,13 +3510,9 @@ function renderAdminOrders(data, container, reload) {
           advBtn.disabled = true; advBtn.textContent = 'Updating…';
           try {
             const result = await api.orders.updateStatus(order.id, nextAction.next);
-            if (result?.fulfilledFromStock) {
-              toast('✅ Stock available — baking skipped! Order is now Ready.', 'success');
-            } else {
-              const actual = result?.status || result?.actualStatus || nextAction.next;
-              const labels = { BAKING: '🍞 Sent to baking', READY: '✅ Marked Ready', DELIVERED: '🚚 Delivered', CONFIRMED: '✓ Confirmed' };
-              toast(labels[actual] || `Marked ${actual} ✓`, 'success');
-            }
+            const actual = result?.status || nextAction.next;
+            const labels = { BAKING: '🍞 Sent to baking', READY: '✅ Marked Ready', DELIVERED: '🚚 Delivered', CONFIRMED: '✓ Confirmed — stock deducted from inventory' };
+            toast(labels[actual] || `Marked ${actual} ✓`, 'success');
             await refreshDetail(order.id);
           } catch (err) { toast(err.message || 'Failed'); advBtn.disabled = false; advBtn.textContent = nextAction.label; }
         });
@@ -4754,7 +4765,7 @@ function ambStatusBadge(status) {
 
 // ── INVENTORY MANAGEMENT ──────────────────────────────────────────────────────
 function renderAdminInventory(data, container, reload) {
-  const { stockItems = [], suppliers = [], products = [] } = data;
+  const { stockItems = [], suppliers = [], products = [], uoms = [] } = data;
   let activeTab = 'items'; // items | movements | stocktake
   let expandedId = null, searchQ = '', movFilter = '';
   let recentMoves = [];
@@ -4818,7 +4829,7 @@ function renderAdminInventory(data, container, reload) {
     });
     const addBtn = el('button', {
       className: 'ml-auto bg-brand text-white text-sm font-bold px-4 py-2 rounded-xl hover:opacity-90',
-      onClick: () => showStockItemForm(null, () => reload()),
+      onClick: () => showStockItemForm(null, () => reload(), uoms),
     }, '+ New Item');
     toolbar.append(searchBox, addBtn);
 
@@ -4852,8 +4863,8 @@ function renderAdminInventory(data, container, reload) {
           item.sku ? el('p', { className: 'text-xs text-gray-400 font-mono' }, item.sku) : null,
           item.product?.supplier ? el('p', { className: 'text-xs text-gray-400' }, `via ${item.product.supplier.name}`) : null,
         ),
-        el('div', { className: 'col-span-2 text-center font-bold text-gray-800 text-sm' }, `${Number(item.currentStock).toFixed(2)} ${item.unit}`),
-        el('div', { className: 'col-span-2 text-center text-sm text-gray-500' }, `${Number(item.minStockLevel).toFixed(2)} ${item.unit}`),
+        el('div', { className: 'col-span-2 text-center font-bold text-gray-800 text-sm' }, `${Number(item.currentStock).toFixed(2)} ${item.uom?.abbreviation || item.unit || ''}`),
+        el('div', { className: 'col-span-2 text-center text-sm text-gray-500' }, `${Number(item.minStockLevel).toFixed(2)} ${item.uom?.abbreviation || item.unit || ''}`),
         el('div', { className: 'col-span-2 text-right text-sm text-gray-700' }, `R ${Number(item.costPerUnit).toFixed(4)}`),
         el('div', { className: 'col-span-1 text-center' },
           el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full', style: { backgroundColor: st.bg, color: st.color } }, st.label)
@@ -4866,7 +4877,7 @@ function renderAdminInventory(data, container, reload) {
         const panel = el('div', { className: 'px-4 pb-4 pt-1 bg-gray-50 border-t border-gray-100 flex flex-wrap gap-3' });
         const mkBtn = (label, cls, fn) => el('button', { className: `text-sm font-bold px-4 py-2 rounded-lg ${cls}`, onClick: fn }, label);
         panel.append(
-          mkBtn('✏️ Edit', 'bg-blue-100 text-blue-700 hover:bg-blue-200', () => showStockItemForm(item, () => reload())),
+          mkBtn('✏️ Edit', 'bg-blue-100 text-blue-700 hover:bg-blue-200', () => showStockItemForm(item, () => reload(), uoms)),
           mkBtn('📥 Record Purchase', 'bg-green-100 text-green-700 hover:bg-green-200', () => showMovementForm(item, 'PURCHASE', () => reload())),
           mkBtn('📤 Adjustment Out', 'bg-orange-100 text-orange-700 hover:bg-orange-200', () => showMovementForm(item, 'ADJUSTMENT_OUT', () => reload())),
           mkBtn('🗑️ Waste', 'bg-red-100 text-red-600 hover:bg-red-200', () => showMovementForm(item, 'WASTE', () => reload())),
@@ -4913,7 +4924,7 @@ function renderAdminInventory(data, container, reload) {
         el('div', { className: 'col-span-3 text-sm font-semibold text-gray-800' }, m.stockItem?.name || m.stockItemId),
         el('div', { className: 'col-span-2' }, el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full text-white', style: { backgroundColor: meta.color } }, meta.label)),
         el('div', { className: 'col-span-2 text-right font-bold text-sm', style: { color: qty >= 0 ? '#10B981' : '#EF4444' } },
-          `${qty >= 0 ? '+' : ''}${qty.toFixed(3)} ${m.stockItem?.unit || ''}`),
+          `${qty >= 0 ? '+' : ''}${qty.toFixed(3)} ${m.stockItem?.uom?.abbreviation || m.stockItem?.unit || ''}`),
         el('div', { className: 'col-span-3 text-xs text-gray-400 truncate' }, m.note || m.reference || '—'),
         el('div', { className: 'col-span-2 text-right text-xs text-gray-400' }, new Date(m.createdAt).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })),
       ));
@@ -5134,18 +5145,19 @@ function renderAdminInventory(data, container, reload) {
         ));
 
         // On Hand
+        const unitDisplay = si ? (si.uom?.abbreviation || si.unit || '') : '';
         row.append(el('div', { className: 'hidden md:block col-span-2 text-center' },
           si
             ? el('div', {},
                 el('span', { className: 'text-lg font-black', style: { color: barColor } }, qty.toFixed(qty % 1 === 0 ? 0 : 2)),
-                el('span', { className: 'text-xs text-gray-400 ml-1' }, si.unit)
+                el('span', { className: 'text-xs text-gray-400 ml-1' }, unitDisplay)
               )
             : el('span', { className: 'text-xs text-gray-300' }, '—')
         ));
 
         // Min Level
         row.append(el('div', { className: 'hidden md:block col-span-2 text-center text-xs text-gray-500' },
-          si ? `${min % 1 === 0 ? min : min.toFixed(2)} ${si.unit}` : '—'
+          si ? `${min % 1 === 0 ? min : min.toFixed(2)} ${unitDisplay}` : '—'
         ));
 
         // Progress bar
@@ -5172,7 +5184,7 @@ function renderAdminInventory(data, container, reload) {
           const editBtn = el('button', {
             className: 'p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition',
             title: 'Edit stock item',
-            onClick: (e) => { e.stopPropagation(); showStockItemEditModal(si, () => switchTab('available')); },
+            onClick: (e) => { e.stopPropagation(); showStockItemEditModal(si, () => switchTab('available'), uoms); },
           }, '✏️');
           const addBtn = el('button', {
             className: 'p-1.5 rounded-lg bg-green-50 text-green-700 hover:bg-green-100 transition font-bold text-sm',
@@ -5217,27 +5229,28 @@ function renderAdminInventory(data, container, reload) {
   }
 
   // ── Stock Item Edit Modal (from Available Stock tab) ──────────────────────
-  function showStockItemEditModal(si, onDone) {
+  function showStockItemEditModal(si, onDone, uomList = []) {
     const overlay = el('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4' });
     const close = () => document.body.removeChild(overlay);
 
     const fields = [
-      { label: 'Item Name',            key: 'name',          type: 'text',   required: true },
-      { label: 'SKU (optional)',        key: 'sku',           type: 'text' },
-      { label: 'Unit (kg / ml / pcs)', key: 'unit',          type: 'text',   required: true },
-      { label: 'Min Stock Level',       key: 'minStockLevel', type: 'number', step: '0.001' },
-      { label: 'Cost per Unit (R)',     key: 'costPerUnit',   type: 'number', step: '0.0001' },
-      { label: 'Notes',                 key: 'notes',         type: 'text' },
+      { label: 'Item Name',        key: 'name',          type: 'text',   required: true },
+      { label: 'SKU (optional)',    key: 'sku',           type: 'text' },
+      { label: 'Min Stock Level',  key: 'minStockLevel', type: 'number', step: '0.001' },
+      { label: 'Cost per Unit (R)',key: 'costPerUnit',   type: 'number', step: '0.0001' },
+      { label: 'Notes',            key: 'notes',         type: 'text' },
     ];
     const inputs = {};
+    let selectedUomId = si.uomId || '';
 
     const panel = el('div', { className: 'bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden' });
+    const displayUnit = si.uom?.abbreviation || si.unit || '';
 
     // Header
     panel.append(el('div', { className: 'flex items-center justify-between px-5 py-4 border-b border-gray-100' },
       el('div', {},
         el('h2', { className: 'font-black text-gray-900 text-base' }, `Edit: ${si.name}`),
-        el('p', { className: 'text-xs text-gray-400 mt-0.5' }, `Current stock: ${Number(si.currentStock).toFixed(2)} ${si.unit}`)
+        el('p', { className: 'text-xs text-gray-400 mt-0.5' }, `Current stock: ${Number(si.currentStock).toFixed(2)} ${displayUnit}`)
       ),
       el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×')
     ));
@@ -5257,6 +5270,30 @@ function renderAdminInventory(data, container, reload) {
         inp
       ));
     });
+
+    // UOM dropdown
+    if (uomList.length) {
+      const uomSel = el('select', {
+        className: 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand',
+        onChange: (e) => { selectedUomId = e.target.value; },
+      });
+      const noOpt = document.createElement('option'); noOpt.value = ''; noOpt.textContent = '— No unit —'; uomSel.append(noOpt);
+      const uomGrps = {};
+      uomList.forEach(u => { if (!uomGrps[u.type]) uomGrps[u.type] = []; uomGrps[u.type].push(u); });
+      Object.entries(uomGrps).forEach(([type, items]) => {
+        const og = document.createElement('optgroup'); og.label = type;
+        items.forEach(u => {
+          const o = document.createElement('option'); o.value = u.id; o.textContent = `${u.name} (${u.abbreviation})`;
+          if (selectedUomId === u.id) o.selected = true;
+          og.append(o);
+        });
+        uomSel.append(og);
+      });
+      body.append(el('div', {},
+        el('label', { className: 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1' }, 'Unit of Measure'),
+        uomSel
+      ));
+    }
 
     // Quick stock adjustment section
     body.append(el('div', { className: 'border-t border-gray-100 pt-3 mt-2' },
@@ -5279,6 +5316,7 @@ function renderAdminInventory(data, container, reload) {
       try {
         const payload = {};
         fields.forEach(f => { if (inputs[f.key].value !== '') payload[f.key] = inputs[f.key].value; });
+        payload.uomId = selectedUomId || null;
         await api.inventory.update(si.id, payload);
 
         // Record adjustment if qty entered
@@ -5312,7 +5350,7 @@ function renderAdminInventory(data, container, reload) {
   }
 
   // ── MODALS ────────────────────────────────────────────────────────────────
-  function showStockItemForm(item, onDone) {
+  function showStockItemForm(item, onDone, uomList = []) {
     const isEdit = !!item;
     const modal = el('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4' });
     const close = () => document.body.removeChild(modal);
@@ -5321,11 +5359,11 @@ function renderAdminInventory(data, container, reload) {
     const editFields = [
       { label: 'Name', key: 'name', type: 'text', required: true },
       { label: 'SKU (optional)', key: 'sku', type: 'text' },
-      { label: 'Unit (e.g. kg, ml, pcs)', key: 'unit', type: 'text', required: true },
       { label: 'Min Stock Level', key: 'minStockLevel', type: 'number', step: '0.001' },
       { label: 'Cost per Unit (R)', key: 'costPerUnit', type: 'number', step: '0.0001' },
       { label: 'Notes', key: 'notes', type: 'text' },
     ];
+    let selectedUomId = item?.uomId || '';
     const inputs = {};
     const form = el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-md shadow-xl max-h-[90vh] overflow-y-auto' },
       el('div', { className: 'flex items-center justify-between mb-5' },
@@ -5352,10 +5390,6 @@ function renderAdminInventory(data, container, reload) {
           const prod = eligibleProducts.find(p => p.id === selectedProductId);
           if (prod) {
             inputs['name'].value = prod.name;
-            // Auto-suggest unit based on classification
-            if (!inputs['unit'].value) {
-              inputs['unit'].value = prod.classification === 'PACKAGING' ? 'pcs' : prod.classification === 'SELLABLE' ? 'units' : 'kg';
-            }
             // Show supplier hint
             if (prod.supplier) {
               supplierHint.textContent = `Supplier: ${prod.supplier.name}`;
@@ -5408,13 +5442,34 @@ function renderAdminInventory(data, container, reload) {
       form.append(el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, f.label), inp);
     });
 
+    // UOM dropdown
+    if (uomList.length) {
+      const uomSelF = el('select', {
+        className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3',
+        onChange: (e) => { selectedUomId = e.target.value; },
+      });
+      const noUomF = document.createElement('option'); noUomF.value = ''; noUomF.textContent = '— No unit —'; uomSelF.append(noUomF);
+      const uomGrpsF = {};
+      uomList.forEach(u => { if (!uomGrpsF[u.type]) uomGrpsF[u.type] = []; uomGrpsF[u.type].push(u); });
+      Object.entries(uomGrpsF).forEach(([type, items]) => {
+        const og = document.createElement('optgroup'); og.label = type;
+        items.forEach(u => {
+          const o = document.createElement('option'); o.value = u.id; o.textContent = `${u.name} (${u.abbreviation})`;
+          if (selectedUomId === u.id) o.selected = true;
+          og.append(o);
+        });
+        uomSelF.append(og);
+      });
+      form.append(el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Unit of Measure'), uomSelF);
+    }
+
     const saveBtn = el('button', {
       className: 'w-full bg-brand text-white font-black py-2.5 rounded-xl hover:opacity-90 mt-2',
       onClick: async () => {
         if (!isEdit && !selectedProductId) { toast('Please select a product first', 'error'); return; }
-        if (!inputs['unit'].value) { toast('Unit is required', 'error'); return; }
         const payload = {};
         editFields.forEach(f => { if (inputs[f.key].value !== '') payload[f.key] = inputs[f.key].value; });
+        if (selectedUomId) payload['uomId'] = selectedUomId;
         if (!isEdit) payload['productId'] = selectedProductId;
         saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
         try {
@@ -5620,7 +5675,7 @@ function renderAdminSuppliers(data, container, reload) {
           po.items.forEach(item => {
             itemTable.append(el('div', { className: 'grid grid-cols-12 gap-2 px-3 py-2 border-t border-gray-50 items-center' },
               el('div', { className: 'col-span-5 font-semibold text-gray-800' }, item.stockItem?.name || item.stockItemId),
-              el('div', { className: 'col-span-2 text-right text-gray-600' }, `${Number(item.orderedQty).toFixed(3)} ${item.stockItem?.unit || ''}`),
+              el('div', { className: 'col-span-2 text-right text-gray-600' }, `${Number(item.orderedQty).toFixed(3)} ${item.stockItem?.uom?.abbreviation || item.stockItem?.unit || ''}`),
               el('div', { className: 'col-span-2 text-right text-gray-600' }, `${Number(item.receivedQty).toFixed(3)}`),
               el('div', { className: 'col-span-2 text-right text-gray-500' }, `R ${Number(item.unitCost).toFixed(4)}`),
               el('div', { className: 'col-span-1 text-right font-bold text-gray-800' }, `R ${Number(item.total).toFixed(2)}`),
@@ -5728,7 +5783,7 @@ function renderAdminSuppliers(data, container, reload) {
     function addLine() {
       const stockSel = el('select', { className: 'flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand' });
       const emOpt = document.createElement('option'); emOpt.value = ''; emOpt.textContent = '— Select Item —'; stockSel.append(emOpt);
-      stockItems.forEach(i => { const o = document.createElement('option'); o.value = i.id; o.textContent = `${i.name} (${i.unit})`; stockSel.append(o); });
+      stockItems.forEach(i => { const o = document.createElement('option'); o.value = i.id; o.textContent = `${i.name} (${i.uom?.abbreviation || i.unit || ''})`; stockSel.append(o); });
       const qtyInp  = el('input', { type: 'number', step: '0.001', placeholder: 'Qty', className: 'w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand', onInput: recalcTotal });
       const costInp = el('input', { type: 'number', step: '0.0001', placeholder: 'Unit R', className: 'w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand', onInput: recalcTotal });
       const lineObj = { sel: stockSel, qty: qtyInp, cost: costInp };
@@ -5860,7 +5915,7 @@ function renderAdminRecipes(data, container, reload) {
             ingTable.append(el('div', { className: 'grid grid-cols-12 px-3 py-2 border-t border-gray-50 items-center' },
               el('div', { className: 'col-span-5 font-semibold text-sm text-gray-800' }, ing.stockItem?.name || ing.stockItemId),
               el('div', { className: 'col-span-3 text-right text-sm text-gray-600' }, `${needed.toFixed(3)} ${ing.unit}`),
-              el('div', { className: 'col-span-2 text-right text-sm text-gray-500' }, `${inStock.toFixed(3)} ${ing.stockItem?.unit||''}`),
+              el('div', { className: 'col-span-2 text-right text-sm text-gray-500' }, `${inStock.toFixed(3)} ${ing.stockItem?.uom?.abbreviation || ing.stockItem?.unit||''}`),
               el('div', { className: 'col-span-2 text-right' },
                 el('span', { className: `text-xs font-bold px-1.5 py-0.5 rounded-full ${sufficient ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}` }, sufficient ? '✓ OK' : '✗ Low')
               ),
@@ -5890,6 +5945,19 @@ function renderAdminRecipes(data, container, reload) {
     const nameInp  = el('input', { type: 'text', placeholder: 'Recipe name *', value: recipe?.name ?? '', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
     const yieldQty = el('input', { type: 'number', step: '0.001', placeholder: 'Yield quantity', value: recipe?.yieldQty ?? '1', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
     const yieldUnt = el('input', { type: 'text', placeholder: 'Yield unit (e.g. loaves, pcs, batch)', value: recipe?.yieldUnit ?? 'batch', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
+
+    // Output product selector (SELLABLE products only)
+    const sellableProducts = products.filter(p => p.classification === 'SELLABLE' && p.isActive);
+    const outputProdSel = el('select', { className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
+    const emptyOpt = document.createElement('option'); emptyOpt.value = ''; emptyOpt.textContent = '— Output Product (optional) —'; outputProdSel.append(emptyOpt);
+    sellableProducts.forEach(p => {
+      const o = document.createElement('option'); o.value = p.id; o.textContent = p.name;
+      if (recipe?.outputProductId === p.id) o.selected = true;
+      outputProdSel.append(o);
+    });
+
+    const yieldPerBatch = el('input', { type: 'number', step: '0.001', min: '0', placeholder: 'Yield per batch (sellable units produced)', value: recipe?.yieldPerBatch ?? '0', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
+
     const notesInp = el('textarea', { placeholder: 'Notes', rows: 2, className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3 resize-none' });
     if (recipe?.notes) notesInp.value = recipe.notes;
     const saveBtn = el('button', {
@@ -5897,7 +5965,14 @@ function renderAdminRecipes(data, container, reload) {
       onClick: async () => {
         if (!nameInp.value.trim()) { toast('Name required', 'error'); return; }
         saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
-        const payload = { name: nameInp.value.trim(), yieldQty: parseFloat(yieldQty.value)||1, yieldUnit: yieldUnt.value.trim()||'batch', notes: notesInp.value.trim()||undefined };
+        const payload = {
+          name: nameInp.value.trim(),
+          yieldQty: parseFloat(yieldQty.value)||1,
+          yieldUnit: yieldUnt.value.trim()||'batch',
+          outputProductId: outputProdSel.value || undefined,
+          yieldPerBatch: parseFloat(yieldPerBatch.value)||0,
+          notes: notesInp.value.trim()||undefined,
+        };
         try {
           if (isEdit) await api.recipes.update(recipe.id, payload); else await api.recipes.create(payload);
           toast(isEdit ? 'Recipe updated' : 'Recipe created', 'success'); close(); onDone();
@@ -5906,7 +5981,10 @@ function renderAdminRecipes(data, container, reload) {
     }, 'Save');
     modal.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl' },
       el('div', { className: 'flex items-center justify-between mb-4' }, el('h3', { className: 'font-black text-gray-900 text-lg' }, isEdit ? 'Edit Recipe' : 'New Recipe'), el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×')),
-      nameInp, yieldQty, yieldUnt, notesInp, saveBtn,
+      nameInp, yieldQty, yieldUnt,
+      el('p', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide mb-1' }, 'Packaging Output'),
+      outputProdSel, yieldPerBatch,
+      notesInp, saveBtn,
     ));
     modal.addEventListener('click', e => { if (e.target === modal) close(); });
     document.body.appendChild(modal);
@@ -5922,7 +6000,7 @@ function renderAdminRecipes(data, container, reload) {
       linesDiv.innerHTML = '';
       lineItems.forEach((item, idx) => {
         const stockSel = el('select', { className: 'flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand' });
-        stockItems.forEach(s => { const o = document.createElement('option'); o.value = s.id; o.textContent = `${s.name} (${s.unit})`; if (s.id === item.stockItemId) o.selected = true; stockSel.append(o); });
+        stockItems.forEach(s => { const o = document.createElement('option'); o.value = s.id; o.textContent = `${s.name} (${s.uom?.abbreviation || s.unit || ''})`; if (s.id === item.stockItemId) o.selected = true; stockSel.append(o); });
         stockSel.addEventListener('change', () => { lineItems[idx].stockItemId = stockSel.value; });
         const qtyInp  = el('input', { type: 'number', step: '0.001', placeholder: 'Qty', value: item.quantity, className: 'w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand' });
         qtyInp.addEventListener('input', () => { lineItems[idx].quantity = qtyInp.value; });
@@ -5935,18 +6013,19 @@ function renderAdminRecipes(data, container, reload) {
     renderLines();
 
     const addLineBtn = el('button', { className: 'text-xs font-bold text-brand mb-4 hover:opacity-80', onClick: () => {
-      lineItems.push({ stockItemId: stockItems[0]?.id || '', quantity: '', unit: stockItems[0]?.unit || '', notes: '' });
+      const firstStock = stockItems[0];
+      lineItems.push({ stockItemId: firstStock?.id || '', quantity: '', unit: firstStock?.uom?.abbreviation || firstStock?.unit || '', notes: '' });
       renderLines();
     }}, '+ Add Ingredient');
 
     const saveBtn = el('button', {
       className: 'w-full bg-brand text-white font-black py-2.5 rounded-xl hover:opacity-90',
       onClick: async () => {
-        const valid = lineItems.filter(l => l.stockItemId && l.quantity && l.unit);
+        const valid = lineItems.filter(l => l.stockItemId && l.quantity);
         if (!valid.length) { toast('Add at least one ingredient', 'error'); return; }
         saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
         try {
-          await api.recipes.setIngredients(recipe.id, { ingredients: valid.map(l => ({ stockItemId: l.stockItemId, quantity: parseFloat(l.quantity), unit: l.unit })) });
+          await api.recipes.setIngredients(recipe.id, { ingredients: valid.map(l => ({ stockItemId: l.stockItemId, quantity: parseFloat(l.quantity), unit: l.unit || undefined })) });
           toast('Ingredients saved', 'success'); close(); onDone();
         } catch(err) { toast(err?.message||'Failed','error'); saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
       }
@@ -6048,8 +6127,8 @@ function renderAdminProduction(data, container, reload) {
           run.status === 'IN_PROGRESS' ? el('button', {
             className: 'text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-lg hover:bg-green-200',
             onClick: async () => {
-              if (!confirm(`Complete "${run.recipe?.name}"? This will deduct ingredients from stock.`)) return;
-              try { await api.production.complete(run.id); toast('Production completed — stock deducted ✅','success'); reload(); } catch(e) { toast(e?.message||'Failed','error'); }
+              if (!confirm(`Complete "${run.recipe?.name}"? This will deduct ingredients from stock and create a packaging run.`)) return;
+              try { await api.production.complete(run.id); toast('Production completed — packaging run created ✅','success'); reload(); } catch(e) { toast(e?.message||'Failed','error'); }
             }
           }, '✅ Done') : null,
           !['COMPLETED','CANCELLED'].includes(run.status) ? el('button', {
@@ -6090,6 +6169,60 @@ function renderAdminProduction(data, container, reload) {
           panel.append(ingTable);
         }
         if (run.notes) panel.append(el('p', { className: 'text-xs text-gray-400 italic' }, run.notes));
+
+        // PackagingRun sub-card
+        if (run.packagingRun) {
+          const pr = run.packagingRun;
+          const PKG_META = {
+            PENDING:     { label: 'Pending',     color: '#F59E0B', bg: '#FEF3C7' },
+            IN_PROGRESS: { label: 'In Progress', color: '#3B82F6', bg: '#DBEAFE' },
+            COMPLETED:   { label: 'Completed',   color: '#10B981', bg: '#D1FAE5' },
+            CANCELLED:   { label: 'Cancelled',   color: '#EF4444', bg: '#FEE2E2' },
+          };
+          const pm = PKG_META[pr.status] || { label: pr.status, color: '#9CA3AF', bg: '#F3F4F6' };
+          const pkgCard = el('div', { className: 'mt-3 border border-blue-100 rounded-xl bg-blue-50 p-3' });
+          const pkgHeader = el('div', { className: 'flex items-center justify-between mb-2' });
+          pkgHeader.append(
+            el('p', { className: 'text-xs font-bold text-blue-700 uppercase tracking-wide' }, '📦 Packaging Run'),
+            el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full', style: { backgroundColor: pm.bg, color: pm.color } }, pm.label),
+          );
+          pkgCard.append(pkgHeader);
+
+          if (pr.status !== 'COMPLETED' && pr.status !== 'CANCELLED') {
+            const btnRow = el('div', { className: 'flex gap-2 mt-2' });
+            if (pr.status === 'PENDING') {
+              const startBtn = el('button', {
+                className: 'text-xs font-bold bg-blue-500 text-white px-3 py-1 rounded-lg hover:bg-blue-600',
+                onClick: async () => {
+                  try { await api.packaging.update(pr.id, { status: 'IN_PROGRESS' }); toast('Packaging started', 'success'); reload(); }
+                  catch(e) { toast(e?.message || 'Failed', 'error'); }
+                }
+              }, '▶ Start Packaging');
+              btnRow.append(startBtn);
+            }
+            if (pr.status === 'IN_PROGRESS') {
+              const completeBtn = el('button', {
+                className: 'text-xs font-bold bg-green-500 text-white px-3 py-1 rounded-lg hover:bg-green-600',
+                onClick: async () => {
+                  if (!confirm('Complete packaging? This will add finished goods to inventory.')) return;
+                  try {
+                    const result = await api.packaging.complete(pr.id);
+                    const units = result?.unitsProduced;
+                    toast(units ? `Packaging done — ${units} unit(s) added to inventory ✅` : 'Packaging completed ✅', 'success');
+                    reload();
+                  } catch(e) { toast(e?.message || 'Failed', 'error'); }
+                }
+              }, '✅ Complete Packaging');
+              btnRow.append(completeBtn);
+            }
+            pkgCard.append(btnRow);
+          } else if (pr.status === 'COMPLETED') {
+            pkgCard.append(el('p', { className: 'text-xs text-green-700 mt-1' }, `✓ Completed${pr.completedAt ? ' on ' + new Date(pr.completedAt).toLocaleDateString('en-ZA') : ''}`));
+          }
+
+          panel.append(pkgCard);
+        }
+
         row.append(panel);
       }
       table.append(row);
@@ -6768,7 +6901,7 @@ const CLASSIFICATIONS = {
 
 // ── PRODUCTS MODULE ───────────────────────────────────────────────────────────
 function renderAdminProducts(data, container, reload) {
-  const { products, suppliers = [] } = data;
+  const { products, suppliers = [], uoms = [] } = data;
   const page = el('div', { className: 'p-6 max-w-6xl mx-auto' });
 
   // ── Toolbar ──────────────────────────────────────────────────────────────
@@ -6796,7 +6929,7 @@ function renderAdminProducts(data, container, reload) {
 
   const addBtn = el('button', {
     className: 'bg-brand text-white text-sm font-bold px-4 py-2 rounded-lg hover:opacity-90 transition flex-shrink-0',
-    onClick: () => showAddProductModal(reload, suppliers),
+    onClick: () => showAddProductModal(reload, suppliers, uoms),
   }, '+ Add Product');
 
   toolbar.append(searchInput, classFilter, statusFilter, addBtn);
@@ -6942,7 +7075,7 @@ function renderAdminProducts(data, container, reload) {
           el('div', { className: 'flex items-center justify-end gap-2' },
             el('button', {
               className: 'text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-700 transition',
-              onClick: () => showEditProductModal(product, reload, suppliers),
+              onClick: () => showEditProductModal(product, reload, suppliers, uoms),
             }, '✏️ Edit'),
             el('button', {
               className: `text-xs font-semibold px-3 py-1.5 rounded-lg transition ${product.isActive ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-green-50 text-green-600 hover:bg-green-100'}`,
@@ -7085,7 +7218,7 @@ function productField(label, key, form, type = 'text', placeholder = '', default
 }
 
 // ── ADD PRODUCT MODAL ─────────────────────────────────────────────────────────
-function showAddProductModal(onSave, suppliers = []) {
+function showAddProductModal(onSave, suppliers = [], uoms = []) {
   let classification = null;   // chosen in step 1
   let galleryWidget  = null;
 
@@ -7126,7 +7259,7 @@ function showAddProductModal(onSave, suppliers = []) {
   function renderStep2() {
     const isSellable = classification === 'SELLABLE';
     const meta       = CLASSIFICATIONS[classification];
-    const form       = { name: '', description: '', variantName: '1 Pack', retailPrice: '', ambassadorPrice: '' };
+    const form       = { name: '', description: '', variantName: '1 Pack', retailPrice: '', ambassadorPrice: '', uomId: '' };
     let   galleryImages = [];
 
     modal.innerHTML = '';
@@ -7179,6 +7312,28 @@ function showAddProductModal(onSave, suppliers = []) {
       )
     );
     modal.append(brandSupplierRow);
+
+    // ── Unit of Measure ──────────────────────────────────────────────────────
+    if (uoms.length) {
+      const uomDropdown = el('select', {
+        className: 'w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand transition mb-4',
+        onChange: (e) => { form.uomId = e.target.value; },
+      });
+      const noUomOpt = document.createElement('option'); noUomOpt.value = ''; noUomOpt.textContent = '— No unit —'; uomDropdown.append(noUomOpt);
+      const uomGroups = {};
+      uoms.forEach(u => { if (!uomGroups[u.type]) uomGroups[u.type] = []; uomGroups[u.type].push(u); });
+      Object.entries(uomGroups).forEach(([type, items]) => {
+        const og = document.createElement('optgroup'); og.label = type;
+        items.forEach(u => { const o = document.createElement('option'); o.value = u.id; o.textContent = `${u.name} (${u.abbreviation})`; og.append(o); });
+        uomDropdown.append(og);
+      });
+      modal.append(
+        el('div', { className: 'mb-4' },
+          el('label', { className: 'block text-sm font-semibold text-gray-700 mb-1' }, 'Unit of Measure'),
+          uomDropdown
+        )
+      );
+    }
 
     // ── Multi-variant builder (SELLABLE only) ────────────────────────────────
     // variants: [{ name, retailPrice, ambassadorPrice }]
@@ -7284,6 +7439,7 @@ function showAddProductModal(onSave, suppliers = []) {
             description: form.description || undefined,
             brand: form.brand || undefined,
             supplierId: form.supplierId || undefined,
+            uomId: form.uomId || undefined,
             classification,
             imageUrl: primaryImg,
             images: galleryImages.length ? galleryImages : undefined,
@@ -7307,10 +7463,10 @@ function showAddProductModal(onSave, suppliers = []) {
 }
 
 // ── EDIT PRODUCT MODAL ────────────────────────────────────────────────────────
-function showEditProductModal(product, onSave, suppliers = []) {
+function showEditProductModal(product, onSave, suppliers = [], uoms = []) {
   const isSellable = product.classification === 'SELLABLE' || !product.classification;
   const meta       = CLASSIFICATIONS[product.classification] || CLASSIFICATIONS.SELLABLE;
-  const form       = { name: product.name, description: product.description || '', brand: product.brand || '', supplierId: product.supplierId || product.supplier?.id || '' };
+  const form       = { name: product.name, description: product.description || '', brand: product.brand || '', supplierId: product.supplierId || product.supplier?.id || '', uomId: product.uomId || product.uom?.id || '' };
 
   // Parse existing images
   let galleryImages = [];
@@ -7387,6 +7543,32 @@ function showEditProductModal(product, onSave, suppliers = []) {
       )
     )
   );
+
+  // ── Unit of Measure (edit modal) ─────────────────────────────────────────
+  if (uoms.length) {
+    const uomSel = el('select', {
+      className: 'w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand transition',
+      onChange: (e) => { form.uomId = e.target.value; },
+    });
+    const noUomOpt2 = document.createElement('option'); noUomOpt2.value = ''; noUomOpt2.textContent = '— No unit —'; uomSel.append(noUomOpt2);
+    const uomGroups2 = {};
+    uoms.forEach(u => { if (!uomGroups2[u.type]) uomGroups2[u.type] = []; uomGroups2[u.type].push(u); });
+    Object.entries(uomGroups2).forEach(([type, items]) => {
+      const og = document.createElement('optgroup'); og.label = type;
+      items.forEach(u => {
+        const o = document.createElement('option'); o.value = u.id; o.textContent = `${u.name} (${u.abbreviation})`;
+        if (form.uomId === u.id) o.selected = true;
+        og.append(o);
+      });
+      uomSel.append(og);
+    });
+    modal.append(
+      el('div', { className: 'mb-5' },
+        el('label', { className: 'block text-sm font-semibold text-gray-700 mb-1' }, 'Unit of Measure'),
+        uomSel
+      )
+    );
+  }
 
   // ── Existing variants (SELLABLE) ─────────────────────────────────────────
   if (isSellable) {
@@ -7479,6 +7661,7 @@ function showEditProductModal(product, onSave, suppliers = []) {
           description: form.description || undefined,
           brand:       form.brand       || undefined,
           supplierId:  form.supplierId  || '',
+          uomId:       form.uomId       || undefined,
           imageUrl:    primaryImg,
           images:      galleryImages.length ? galleryImages : undefined,
         });
@@ -9439,6 +9622,111 @@ function renderAdminSettings(data, container, reload) {
     drListWrap,
     el('div', { className: 'border-t border-gray-100 pt-4 flex gap-2 flex-wrap items-center' },
       nrNameInp, nrTypeSel, nrValInp, nrCodeInp, nrAddBtn
+    )
+  ));
+
+  // ── Units of Measure ──────────────────────────────────────────
+  let uomList = [];
+  const uomListWrap = el('div', {});
+
+  async function loadAndRenderUomList() {
+    try { uomList = await api.uom.getAdmin(); } catch(_) { uomList = []; }
+    renderUomList();
+  }
+
+  const UOM_TYPE_COLORS = {
+    WEIGHT: { bg: '#EFF6FF', color: '#2563EB' },
+    VOLUME: { bg: '#F0FDF4', color: '#16A34A' },
+    COUNT:  { bg: '#FFF7ED', color: '#EA580C' },
+    LENGTH: { bg: '#FAF5FF', color: '#9333EA' },
+    OTHER:  { bg: '#F9FAFB', color: '#6B7280' },
+  };
+
+  function renderUomList() {
+    uomListWrap.innerHTML = '';
+    if (!uomList.length) {
+      uomListWrap.append(el('p', { className: 'text-sm text-gray-400 py-2' }, 'No units of measure yet. Click "Seed Defaults" to add common units.'));
+      return;
+    }
+    // Group by type
+    const grouped = {};
+    uomList.forEach(u => {
+      if (!grouped[u.type]) grouped[u.type] = [];
+      grouped[u.type].push(u);
+    });
+    Object.entries(grouped).forEach(([type, items]) => {
+      const tc = UOM_TYPE_COLORS[type] || UOM_TYPE_COLORS.OTHER;
+      uomListWrap.append(
+        el('p', { className: 'text-xs font-black uppercase tracking-wider mb-1 mt-3', style: { color: tc.color } }, type)
+      );
+      items.forEach((uom, idx) => {
+        uomListWrap.append(
+          el('div', { className: `flex items-center gap-3 py-2 ${idx < items.length - 1 ? 'border-b border-gray-50' : ''}` },
+            el('div', { className: 'flex-1 min-w-0' },
+              el('span', { className: 'text-sm font-bold text-gray-900' }, uom.name),
+              el('span', { className: 'text-xs text-gray-400 ml-2' }, uom.abbreviation),
+            ),
+            el('span', { className: 'text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0', style: { backgroundColor: tc.bg, color: tc.color } }, type),
+            el('label', { className: 'relative inline-flex items-center cursor-pointer flex-shrink-0' },
+              (() => {
+                const chk = el('input', { type: 'checkbox', className: 'sr-only peer' });
+                if (uom.isActive) chk.checked = true;
+                chk.addEventListener('change', async () => {
+                  try {
+                    await api.uom.update(uom.id, { isActive: chk.checked });
+                    uom.isActive = chk.checked;
+                    toast(`UOM ${chk.checked ? 'activated' : 'deactivated'}`, 'success');
+                  } catch (err) { toast(err.message || 'Failed'); chk.checked = !chk.checked; }
+                });
+                return chk;
+              })(),
+              el('div', { className: "w-9 h-5 bg-gray-200 rounded-full peer peer-checked:bg-brand peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all" })
+            )
+          )
+        );
+      });
+    });
+  }
+
+  loadAndRenderUomList();
+
+  // New UOM form
+  let newUomName = '', newUomAbbr = '', newUomType = 'COUNT';
+  function makeUomOpt(v, t) { const o = document.createElement('option'); o.value = v; o.textContent = t; return o; }
+  const uomTypeSel = el('select', { className: 'border border-gray-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand' });
+  [['WEIGHT','Weight'], ['VOLUME','Volume'], ['COUNT','Count'], ['LENGTH','Length'], ['OTHER','Other']].forEach(([v, l]) => uomTypeSel.append(makeUomOpt(v, l)));
+  uomTypeSel.addEventListener('change', e => { newUomType = e.target.value; });
+  const uomNameInp = el('input', { type: 'text', placeholder: 'Name (e.g. Kilogram)', className: 'border border-gray-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand flex-1' });
+  uomNameInp.addEventListener('input', e => { newUomName = e.target.value; });
+  const uomAbbrInp = el('input', { type: 'text', placeholder: 'Abbr (e.g. kg)', className: 'w-24 border border-gray-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand' });
+  uomAbbrInp.addEventListener('input', e => { newUomAbbr = e.target.value; });
+  const uomAddBtn = el('button', { className: 'bg-brand text-white text-sm font-bold px-4 py-2 rounded-lg hover:opacity-90 transition flex-shrink-0' }, '+ Add');
+  uomAddBtn.addEventListener('click', async () => {
+    if (!newUomName || !newUomAbbr) { toast('Name and abbreviation are required'); return; }
+    uomAddBtn.disabled = true; uomAddBtn.textContent = '…';
+    try {
+      await api.uom.create({ name: newUomName, abbreviation: newUomAbbr, type: newUomType });
+      uomNameInp.value = ''; uomAbbrInp.value = ''; newUomName = ''; newUomAbbr = '';
+      await loadAndRenderUomList();
+      toast('UOM created', 'success');
+    } catch (err) { toast(err.message || 'Failed'); }
+    uomAddBtn.disabled = false; uomAddBtn.textContent = '+ Add';
+  });
+  const uomSeedBtn = el('button', { className: 'bg-gray-100 text-gray-700 text-sm font-bold px-4 py-2 rounded-lg hover:bg-gray-200 transition flex-shrink-0' }, 'Seed Defaults');
+  uomSeedBtn.addEventListener('click', async () => {
+    uomSeedBtn.disabled = true; uomSeedBtn.textContent = '…';
+    try {
+      const res = await api.uom.seed();
+      await loadAndRenderUomList();
+      toast(`Seeded ${res.seeded} of ${res.total} UOMs`, 'success');
+    } catch (err) { toast(err.message || 'Failed'); }
+    uomSeedBtn.disabled = false; uomSeedBtn.textContent = 'Seed Defaults';
+  });
+
+  page.append(section('Units of Measure', 'Manage measurement units used across products, stock items and recipes',
+    uomListWrap,
+    el('div', { className: 'border-t border-gray-100 pt-4 flex gap-2 flex-wrap items-center' },
+      uomNameInp, uomAbbrInp, uomTypeSel, uomAddBtn, uomSeedBtn
     )
   ));
 

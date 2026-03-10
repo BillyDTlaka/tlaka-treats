@@ -35,13 +35,15 @@ const recipeRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ── POST /recipes ─── Create recipe
   fastify.post('/', { preHandler: [authenticate, authorize('manage', 'product')] }, async (req, reply) => {
-    const { name, productId, yieldQty, yieldUnit, notes, ingredients } = req.body as any
+    const { name, productId, outputProductId, yieldQty, yieldUnit, yieldPerBatch, notes, ingredients } = req.body as any
     const recipe = await db.recipe.create({
       data: {
         name,
         productId: productId || undefined,
+        outputProductId: outputProductId || undefined,
         yieldQty: yieldQty || 1,
         yieldUnit: yieldUnit || 'batch',
+        yieldPerBatch: yieldPerBatch || 0,
         notes,
         ingredients: ingredients?.length
           ? { create: ingredients.map((i: any) => ({ stockItemId: i.stockItemId, quantity: i.quantity, unit: i.unit, notes: i.notes })) }
@@ -55,11 +57,12 @@ const recipeRoutes: FastifyPluginAsync = async (fastify) => {
   // ── PATCH /recipes/:id ─── Update recipe header
   fastify.patch('/:id', { preHandler: [authenticate, authorize('manage', 'product')] }, async (req) => {
     const { id } = req.params as { id: string }
-    const { name, productId, yieldQty, yieldUnit, notes, isActive } = req.body as any
-    return db.recipe.update({
-      where: { id },
-      data: { name, productId: productId || undefined, yieldQty, yieldUnit, notes, isActive },
-    })
+    const { name, productId, outputProductId, yieldQty, yieldUnit, yieldPerBatch, notes, isActive } = req.body as any
+    const data: any = { name, yieldQty, yieldUnit, notes, isActive }
+    if (productId !== undefined) data.productId = productId || null
+    if (outputProductId !== undefined) data.outputProductId = outputProductId || null
+    if (yieldPerBatch !== undefined) data.yieldPerBatch = yieldPerBatch
+    return db.recipe.update({ where: { id }, data })
   })
 
   // ── POST /recipes/:id/ingredients ─── Add or replace all ingredients

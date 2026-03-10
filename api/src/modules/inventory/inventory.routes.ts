@@ -9,6 +9,7 @@ const inventoryRoutes: FastifyPluginAsync = async (fastify) => {
     return db.stockItem.findMany({
       include: {
         product: { select: { id: true, name: true, classification: true, supplier: { select: { id: true, name: true } } } },
+        uom: { select: { id: true, name: true, abbreviation: true } },
         _count: { select: { movements: true, recipeIngredients: true } },
       },
       orderBy: { name: 'asc' },
@@ -51,7 +52,7 @@ const inventoryRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ── POST /inventory ─── Create stock item (must reference a Product)
   fastify.post('/', { preHandler: [authenticate, authorize('manage', 'product')] }, async (req, reply) => {
-    const { productId, name, sku, unit, minStockLevel, costPerUnit, notes } = req.body as any
+    const { productId, name, sku, unit, uomId, minStockLevel, costPerUnit, notes } = req.body as any
     if (!productId) return reply.code(400).send({ message: 'productId is required — a stock item must be backed by a product' })
     // Verify product exists and doesn't already have a stock item
     const product = await db.product.findUnique({ where: { id: productId }, include: { stockItem: true } })
@@ -62,12 +63,13 @@ const inventoryRoutes: FastifyPluginAsync = async (fastify) => {
         productId,
         name: name || product.name,
         sku: sku || undefined,
-        unit,
+        unit: unit || undefined,
+        uomId: uomId || undefined,
         minStockLevel: minStockLevel || 0,
         costPerUnit: costPerUnit || 0,
         notes,
       },
-      include: { product: { select: { id: true, name: true, supplier: { select: { id: true, name: true } } } } },
+      include: { product: { select: { id: true, name: true, supplier: { select: { id: true, name: true } } } }, uom: { select: { id: true, name: true, abbreviation: true } } },
     })
     return reply.code(201).send(item)
   })
@@ -75,10 +77,13 @@ const inventoryRoutes: FastifyPluginAsync = async (fastify) => {
   // ── PATCH /inventory/:id ─── Update stock item
   fastify.patch('/:id', { preHandler: [authenticate, authorize('manage', 'product')] }, async (req) => {
     const { id } = req.params as { id: string }
-    const { name, sku, unit, minStockLevel, costPerUnit, notes, isActive } = req.body as any
+    const { name, sku, unit, uomId, minStockLevel, costPerUnit, notes, isActive } = req.body as any
+    const data: any = { name, sku: sku || undefined, unit: unit || undefined, minStockLevel, costPerUnit, notes, isActive }
+    if (uomId !== undefined) data.uomId = uomId || null
     return db.stockItem.update({
       where: { id },
-      data: { name, sku: sku || undefined, unit, minStockLevel, costPerUnit, notes, isActive },
+      data,
+      include: { uom: { select: { id: true, name: true, abbreviation: true } } },
     })
   })
 
@@ -129,7 +134,7 @@ const inventoryRoutes: FastifyPluginAsync = async (fastify) => {
   // ── GET /inventory/movements/recent ─── Last 50 movements across all items
   fastify.get('/movements/recent', { preHandler: [authenticate, authorize('manage', 'product')] }, async () => {
     return db.stockMovement.findMany({
-      include: { stockItem: { select: { id: true, name: true, unit: true } } },
+      include: { stockItem: { select: { id: true, name: true, unit: true, uom: { select: { abbreviation: true } } } } },
       orderBy: { createdAt: 'desc' },
       take: 50,
     })

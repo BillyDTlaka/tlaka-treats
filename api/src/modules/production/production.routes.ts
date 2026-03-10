@@ -8,7 +8,8 @@ const productionRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/', { preHandler: [authenticate, authorize('manage', 'product')] }, async () => {
     return db.productionRun.findMany({
       include: {
-        recipe: { select: { id: true, name: true, yieldQty: true, yieldUnit: true } },
+        recipe: { select: { id: true, name: true, yieldQty: true, yieldUnit: true, outputProductId: true, yieldPerBatch: true } },
+        packagingRun: true,
         _count: { select: { stockMovements: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -98,8 +99,18 @@ const productionRoutes: FastifyPluginAsync = async (fastify) => {
     const updated = await db.productionRun.update({
       where: { id },
       data:  { status: 'COMPLETED', completedAt: new Date() },
-      include: { recipe: true },
+      include: { recipe: true, packagingRun: true },
     })
+
+    // Auto-create a PackagingRun for this completed production run
+    await db.packagingRun.create({
+      data: {
+        productionRunId: run.id,
+        batchCount: Math.round(batches),
+        status: 'PENDING',
+      },
+    })
+
     return reply.code(200).send(updated)
   })
 }
