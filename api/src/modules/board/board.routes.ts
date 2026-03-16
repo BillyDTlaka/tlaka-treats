@@ -10,19 +10,25 @@ const boardRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/meeting', { preHandler: [authenticate, authorize('manage', 'product')] }, async (req, reply) => {
     const { periodDays = 30, includeDebate = false } = req.body as any
 
-    const snapshot = await buildSnapshot(db, Number(periodDays))
-    const report   = await runBoardMeeting(snapshot, { includeDebate: Boolean(includeDebate) })
+    try {
+      const snapshot = await buildSnapshot(db, Number(periodDays))
+      const report   = await runBoardMeeting(snapshot, { includeDebate: Boolean(includeDebate) })
 
-    const saved = await db.boardMeeting.create({
-      data: {
-        periodDays:    Number(periodDays),
-        debateEnabled: Boolean(includeDebate),
-        snapshotJson:  snapshot as any,
-        reportJson:    report as any,
-      },
-    })
+      const saved = await db.boardMeeting.create({
+        data: {
+          periodDays:    Number(periodDays),
+          debateEnabled: Boolean(includeDebate),
+          snapshotJson:  snapshot as any,
+          reportJson:    report as any,
+        },
+      })
 
-    return reply.code(201).send({ id: saved.id, ...report })
+      return reply.code(201).send({ id: saved.id, ...report })
+    } catch (err: any) {
+      fastify.log.error({ err }, 'Board meeting failed')
+      const message = err?.error?.message || err?.message || 'Board meeting failed'
+      return reply.code(500).send({ error: 'BOARD_ERROR', message })
+    }
   })
 
   // ── GET /board/meetings ─── History (last 20)
