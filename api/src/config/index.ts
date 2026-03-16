@@ -17,6 +17,9 @@ export const config = {
     from:    process.env.EMAIL_FROM    || 'Tlaka Treats <hello@tlakatreats.co.za>',
   },
 
+  // Admin email for internal alerts (low stock, etc.)
+  adminEmail: process.env.ADMIN_EMAIL || process.env.SMTP_USER || '',
+
   // WhatsApp via Twilio
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID  || '',

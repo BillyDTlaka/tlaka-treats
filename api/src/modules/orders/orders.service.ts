@@ -1,5 +1,6 @@
 import { PrismaClient, OrderStatus } from '@prisma/client'
 import { AppError, NotFoundError, ForbiddenError } from '../../shared/errors'
+import { sendOrderStatusEmail, sendOrderStatusWhatsApp } from '../../shared/services/notify.service'
 
 export class OrderService {
   constructor(private prisma: PrismaClient) {}
@@ -60,10 +61,26 @@ export class OrderService {
         items: { create: itemsWithPrices },
         statusLogs: { create: { status: 'PENDING' } },
       },
-      include: { items: true, ambassador: true },
+      include: {
+        items: { include: { variant: { include: { product: true } } } },
+        ambassador: true,
+        customer: { select: { email: true, phone: true, firstName: true, lastName: true } },
+      },
     })
 
+    // Notify customer — fire and forget
+    this.fireNotification(order, order.customer as any)
+
     return order
+  }
+
+  private fireNotification(orderWithCustomer: any, customer: { email?: string | null; phone?: string | null }) {
+    if (customer?.email) {
+      sendOrderStatusEmail(orderWithCustomer, customer.email).catch(() => {/* silent */})
+    }
+    if (customer?.phone) {
+      sendOrderStatusWhatsApp(orderWithCustomer, customer.phone).catch(() => {/* silent */})
+    }
   }
 
   async updateStatus(orderId: string, status: OrderStatus, note?: string) {
@@ -71,6 +88,7 @@ export class OrderService {
       where: { id: orderId },
       include: {
         ambassador: true,
+        customer: { select: { email: true, phone: true, firstName: true, lastName: true } },
         items: {
           include: {
             variant: {
@@ -135,6 +153,16 @@ export class OrderService {
         })
       }
     }
+
+    // Notify customer of status change — fire and forget
+    const notifyOrder = {
+      ...updated,
+      customer: order.customer,
+      items: order.items,
+      total: order.total,
+      notes: order.notes,
+    }
+    this.fireNotification(notifyOrder, order.customer as any)
 
     return updated
   }

@@ -1,5 +1,7 @@
 import { FastifyPluginAsync } from 'fastify'
 import { authenticate, authorize } from '../../shared/middleware/auth'
+import { sendLowStockAlertEmail } from '../../shared/services/notify.service'
+import { config } from '../../config'
 
 const inventoryRoutes: FastifyPluginAsync = async (fastify) => {
   const db = fastify.prisma as any
@@ -104,7 +106,19 @@ const inventoryRoutes: FastifyPluginAsync = async (fastify) => {
     const updated = await db.stockItem.update({
       where: { id: stockItemId },
       data: { currentStock: { increment: signedQty } },
+      include: { uom: { select: { abbreviation: true } } },
     })
+
+    // Fire low-stock alert if admin email configured and stock now below minimum
+    if (config.adminEmail && Number(updated.minStockLevel) > 0 && Number(updated.currentStock) < Number(updated.minStockLevel)) {
+      sendLowStockAlertEmail([{
+        name: updated.name,
+        currentStock: Number(updated.currentStock),
+        minStockLevel: Number(updated.minStockLevel),
+        uom: (updated as any).uom?.abbreviation || updated.unit || '',
+      }], config.adminEmail).catch(() => {/* silent */})
+    }
+
     return reply.code(201).send(updated)
   })
 
@@ -125,7 +139,11 @@ const inventoryRoutes: FastifyPluginAsync = async (fastify) => {
       await db.stockMovement.create({
         data: { stockItemId, type: movType, quantity: variance, note: note || 'Stock take adjustment', reference: 'STOCK-TAKE' },
       })
-      await db.stockItem.update({ where: { id: stockItemId }, data: { currentStock: Number(countedQty) } })
+      const siUpdated = await db.stockItem.update({ where: { id: stockItemId }, data: { currentStock: Number(countedQty) }, include: { uom: { select: { abbreviation: true } } } })
+      // Fire low-stock alert if now below minimum
+      if (config.adminEmail && Number(siUpdated.minStockLevel) > 0 && Number(siUpdated.currentStock) < Number(siUpdated.minStockLevel)) {
+        sendLowStockAlertEmail([{ name: siUpdated.name, currentStock: Number(siUpdated.currentStock), minStockLevel: Number(siUpdated.minStockLevel), uom: siUpdated.uom?.abbreviation || siUpdated.unit || '' }], config.adminEmail).catch(() => {})
+      }
       results.push({ stockItemId, variance, adjusted: true })
     }
     return reply.code(200).send({ message: 'Stock take applied', results })
