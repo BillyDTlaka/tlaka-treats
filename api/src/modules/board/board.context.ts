@@ -144,15 +144,28 @@ export async function buildSnapshot(db: any, periodDays: number): Promise<Busine
     ? prodRuns.reduce((s: number, r: any) => s + Number(r.batchCount || 1), 0) / prodRuns.length
     : 0
 
-  // ── Customers ────────────────────────────────────────────────────────────
-  const [allCusts, newCusts] = await Promise.all([
-    db.customer.count({ where: { orders: { some: { createdAt: { gte: from } } } } }),
-    db.customer.count({ where: { createdAt: { gte: from } } }),
-  ])
-  const repeatCusts = await db.customer.count({
-    where: { orders: { some: { createdAt: { gte: from } } }, createdAt: { lt: from } },
+  // ── Customers (customers are Users linked via order.customerId) ──────────
+  // Unique customers who ordered in this period
+  const ordersWithCust = await db.order.findMany({
+    where: { createdAt: { gte: from }, status: { notIn: ['CANCELLED'] } },
+    select: { customerId: true },
   })
-  const returningRate = allCusts > 0 ? (repeatCusts / allCusts) * 100 : 0
+  const allCustIds    = [...new Set(ordersWithCust.map((o: any) => o.customerId))]
+  const allCusts      = allCustIds.length
+
+  // New users created in this period who also placed an order
+  const newUserIds = await db.user.findMany({
+    where: { id: { in: allCustIds }, createdAt: { gte: from } },
+    select: { id: true },
+  })
+  const newCusts = newUserIds.length
+
+  // Returning = had an order before this period AND ordered again in this period
+  const returningUsers = await db.user.findMany({
+    where: { id: { in: allCustIds }, createdAt: { lt: from } },
+    select: { id: true },
+  })
+  const returningRate = allCusts > 0 ? (returningUsers.length / allCusts) * 100 : 0
 
   const ambassadorCount = await db.ambassador.count({ where: { status: 'ACTIVE' } })
 
