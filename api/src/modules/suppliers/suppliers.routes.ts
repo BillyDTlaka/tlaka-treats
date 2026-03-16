@@ -130,7 +130,7 @@ const supplierRoutes: FastifyPluginAsync = async (fastify) => {
       })
     }
 
-    return db.purchaseOrder.update({
+    const received = await db.purchaseOrder.update({
       where: { id },
       data: { status: 'RECEIVED' },
       include: {
@@ -138,6 +138,25 @@ const supplierRoutes: FastifyPluginAsync = async (fastify) => {
         items: { include: { stockItem: { select: { id: true, name: true, unit: true, uom: { select: { abbreviation: true } } } } } },
       },
     })
+
+    // Auto-record expense finance transaction for PO cost (idempotent — check by reference)
+    const poRef = `PO-${id.slice(-8).toUpperCase()}`
+    const existingTxn = await db.financeTransaction.findFirst({ where: { reference: id } })
+    if (!existingTxn) {
+      const ingredientsAccount = await db.financeAccount.findFirst({ where: { code: '5001' } })
+      await db.financeTransaction.create({
+        data: {
+          type: 'EXPENSE',
+          category: 'Ingredients',
+          amount: Number(po.total),
+          description: `Purchase — ${poRef}${received.supplier?.name ? ` from ${received.supplier.name}` : ''}`,
+          reference: id,
+          accountId: ingredientsAccount?.id || undefined,
+        },
+      })
+    }
+
+    return received
   })
 }
 

@@ -138,6 +138,27 @@ export class OrderService {
       },
     })
 
+    // Auto-record income finance transaction when confirmed (idempotent — skips if already exists)
+    if (status === 'CONFIRMED') {
+      const existing = await db.financeTransaction.findUnique({ where: { orderId } })
+      if (!existing) {
+        const salesAccount = await db.financeAccount.findFirst({ where: { code: '4001' } })
+        const orderRef = `#${orderId.slice(-8).toUpperCase()}`
+        const custName = `${order.customer?.firstName || ''} ${order.customer?.lastName || ''}`.trim()
+        await db.financeTransaction.create({
+          data: {
+            type: 'INCOME',
+            category: 'Product Sales',
+            amount: Number(order.total),
+            description: `Sale — Order ${orderRef}${custName ? ` (${custName})` : ''}`,
+            reference: orderId,
+            orderId,
+            accountId: salesAccount?.id || undefined,
+          },
+        })
+      }
+    }
+
     // Auto-create commission when order is confirmed and has ambassador
     if (status === 'CONFIRMED' && order.ambassadorId && order.ambassador) {
       const existing = await this.prisma.commission.findUnique({ where: { orderId } })
