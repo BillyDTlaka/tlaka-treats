@@ -48,6 +48,17 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
     const { id } = request.user as { id: string }
     return authService.getProfile(id)
   })
+
+  // PATCH /auth/me — update own profile
+  fastify.patch('/me', { preHandler: [authenticate] }, async (request) => {
+    const { id } = request.user as { id: string }
+    const { firstName, lastName, phone } = request.body as any
+    const data: any = {}
+    if (firstName !== undefined) data.firstName = firstName
+    if (lastName  !== undefined) data.lastName  = lastName
+    if (phone     !== undefined) data.phone      = phone || null
+    return (fastify.prisma as any).user.update({ where: { id }, data, select: { id: true, email: true, firstName: true, lastName: true, phone: true } })
+  })
 }
 
 export default authRoutes

@@ -15,6 +15,7 @@ export class ProductService {
             prices: { where: { tier } },
           },
         },
+        stockItem: { select: { currentStock: true, minStockLevel: true } },
       },
       orderBy: { createdAt: 'desc' },
     })

@@ -155,9 +155,10 @@ const api = {
     invoice:      (id)               => req('POST',  `/orders/${id}/invoice`),
   },
   addresses: {
-    getAll:  ()         => req('GET',   '/addresses'),
-    create:  (data)     => req('POST',  '/addresses', data),
-    update:  (id, data) => req('PATCH', `/addresses/${id}`, data),
+    getAll:  ()         => req('GET',    '/addresses'),
+    create:  (data)     => req('POST',   '/addresses', data),
+    update:  (id, data) => req('PATCH',  `/addresses/${id}`, data),
+    remove:  (id)       => req('DELETE', `/addresses/${id}`),
   },
   ambassadors: {
     apply:       (bio)                    => req('POST',  '/ambassadors/apply',             { bio }),
@@ -802,13 +803,18 @@ function CustomerHomePage() {
         return (pr !== undefined && (min === null || Number(pr) < min)) ? Number(pr) : min;
       }, null);
 
+      const stock = p.stockItem ? Number(p.stockItem.currentStock) : null;
+      const minStock = p.stockItem ? Number(p.stockItem.minStockLevel) : 0;
+      const outOfStock = stock !== null && stock <= 0;
+      const lowStock   = !outOfStock && stock !== null && minStock > 0 && stock <= minStock;
+
       const card = el('div', {
-        className: 'bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer flex flex-col',
-        onClick: () => showProductModal(p, { onAddToCart: addToCart, priceTier: 'RETAIL' }),
+        className: `bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 ${outOfStock ? 'opacity-70' : 'hover:shadow-md hover:-translate-y-0.5'} transition-all duration-200 cursor-pointer flex flex-col`,
+        onClick: () => !outOfStock && showProductModal(p, { onAddToCart: addToCart, priceTier: 'RETAIL' }),
       });
 
       // Image
-      const imgBox = el('div', { className: 'aspect-square bg-orange-50 overflow-hidden' });
+      const imgBox = el('div', { className: 'aspect-square bg-orange-50 overflow-hidden relative' });
       if (primaryImg) {
         const img = el('img', { className: 'w-full h-full object-cover hover:scale-105 transition-transform duration-300', alt: p.name });
         img.src = primaryImg;
@@ -816,21 +822,27 @@ function CustomerHomePage() {
       } else {
         imgBox.append(el('div', { className: 'w-full h-full flex items-center justify-center' }, makeLogo(52, 'rounded-xl opacity-50')));
       }
+      if (outOfStock) imgBox.append(el('div', { className: 'absolute inset-0 bg-black bg-opacity-40 flex items-center justify-center' }, el('span', { className: 'bg-white text-gray-800 text-xs font-black px-3 py-1.5 rounded-full shadow' }, 'Out of Stock')));
       card.append(imgBox);
 
       // Info
       const info = el('div', { className: 'p-3 flex flex-col flex-1' },
         el('p', { className: 'font-bold text-gray-900 text-sm leading-snug mb-0.5' }, p.name),
-        p.category ? el('p', { className: 'text-xs text-gray-400 mb-1' }, p.category.name) : el('div', { className: 'mb-1' }),
+        el('div', { className: 'flex items-center gap-2 mb-1' },
+          p.category ? el('p', { className: 'text-xs text-gray-400' }, p.category.name) : null,
+          lowStock ? el('span', { className: 'text-xs font-bold text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded-full' }, 'Low Stock') : null,
+        ),
         p.description ? el('p', { className: 'text-xs text-gray-500 mb-2 line-clamp-2 leading-snug' }, p.description) : el('div', { className: 'mb-2' }),
         el('div', { className: 'flex items-center justify-between mt-auto' },
           lowestPrice !== null
             ? el('p', { className: 'text-brand font-black' }, `R${lowestPrice.toFixed(2)}`)
             : el('p', { className: 'text-xs text-gray-400' }, 'Price on request'),
-          el('button', {
-            className: 'bg-brand text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:opacity-90 transition',
-            onClick: e => { e.stopPropagation(); showProductModal(p, { onAddToCart: addToCart, priceTier: 'RETAIL' }); },
-          }, 'Add to Cart')
+          outOfStock
+            ? el('span', { className: 'text-xs text-gray-400 font-semibold' }, 'Unavailable')
+            : el('button', {
+                className: 'bg-brand text-white text-xs font-bold px-3 py-1.5 rounded-lg hover:opacity-90 transition',
+                onClick: e => { e.stopPropagation(); showProductModal(p, { onAddToCart: addToCart, priceTier: 'RETAIL' }); },
+              }, 'Add to Cart')
         )
       );
       card.append(info);
@@ -864,6 +876,33 @@ function CustomerHomePage() {
           el('button', { className: 'bg-brand text-white font-bold px-6 py-2.5 rounded-xl hover:opacity-90', onClick: () => { currentView = 'browse'; updateView(); } }, '🍪 Browse Products')
         )); return;
       }
+
+      const ORDER_STEPS = ['PENDING','CONFIRMED','BAKING','READY','DELIVERED'];
+      const ORDER_STEP_LABELS = { PENDING:'Received', CONFIRMED:'Confirmed', BAKING:'Baking', READY:'Ready', DELIVERED:'Delivered' };
+      const ORDER_STEP_ICONS  = { PENDING:'📋', CONFIRMED:'✅', BAKING:'🔥', READY:'🎁', DELIVERED:'🚀' };
+
+      function orderTimeline(status) {
+        if (status === 'CANCELLED') return el('div', { className: 'flex items-center gap-2 mt-3 pt-3 border-t border-gray-50' }, el('span', { className: 'text-xs font-bold text-red-400 bg-red-50 px-2 py-1 rounded-full' }, '✕ Cancelled'));
+        const currentIdx = ORDER_STEPS.indexOf(status);
+        const tl = el('div', { className: 'flex items-center mt-3 pt-3 border-t border-gray-50 overflow-x-auto' });
+        ORDER_STEPS.forEach((step, i) => {
+          const done   = i <= currentIdx;
+          const active = i === currentIdx;
+          tl.append(
+            el('div', { className: 'flex flex-col items-center flex-shrink-0' },
+              el('div', { className: `w-7 h-7 rounded-full flex items-center justify-center text-sm flex-shrink-0 ${done ? (active ? 'bg-brand' : 'bg-green-500') : 'bg-gray-100'}` },
+                done ? (active ? ORDER_STEP_ICONS[step] : '✓') : el('span', { className: 'text-gray-300 text-xs' }, String(i+1))
+              ),
+              el('span', { className: `text-xs mt-1 font-semibold whitespace-nowrap ${active ? 'text-brand' : done ? 'text-green-600' : 'text-gray-300'}` }, ORDER_STEP_LABELS[step])
+            ),
+            i < ORDER_STEPS.length - 1
+              ? el('div', { className: `flex-1 h-0.5 mx-1 ${i < currentIdx ? 'bg-green-400' : 'bg-gray-100'}`, style: { minWidth: '16px' } })
+              : null
+          );
+        });
+        return tl;
+      }
+
       ordersView.append(el('div', { className: 'space-y-3' },
         ...orders.map(order => {
           const date = new Date(order.createdAt).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -880,11 +919,12 @@ function CustomerHomePage() {
               badge(order.status, STATUS_COLORS[order.status] || '#999')
             ),
             order.items?.length
-              ? el('div', { className: 'space-y-1 text-sm text-gray-600 border-t border-gray-50 pt-3' },
+              ? el('div', { className: 'space-y-1 text-sm text-gray-600' },
                   ...order.items.map(item => el('p', {}, `${item.quantity}× ${item.variant?.product?.name || 'Item'}${item.variant?.name ? ' — ' + item.variant.name : ''}`))
                 )
               : null,
-            order.ambassador ? el('p', { className: 'text-xs text-brand font-semibold mt-2' }, `🎟️ Via: ${order.ambassador.code}`) : null
+            order.ambassador ? el('p', { className: 'text-xs text-brand font-semibold mt-2' }, `🎟️ Via: ${order.ambassador.code}`) : null,
+            orderTimeline(order.status)
           );
         })
       ));
@@ -1268,17 +1308,114 @@ function CustomerHomePage() {
     // Ambassador card placeholder — filled in after async check
     const ambCardSlot = el('div', {});
 
+    // Profile card with inline edit
+    let editingProfile = false;
+    const profileCard = el('div', { className: 'bg-white rounded-xl p-5 shadow-sm border border-gray-100' });
+
+    function renderProfileCard() {
+      profileCard.innerHTML = '';
+      profileCard.append(
+        el('div', { className: 'flex items-center gap-2 mb-4 pb-3 border-b border-gray-100' },
+          el('span', { className: 'text-2xl' }, '👤'),
+          el('p', { className: 'font-black text-gray-900 flex-1' }, 'My Profile'),
+          el('button', {
+            className: 'text-xs text-brand font-bold hover:opacity-80',
+            onClick: () => { editingProfile = !editingProfile; renderProfileCard(); }
+          }, editingProfile ? 'Cancel' : 'Edit')
+        )
+      );
+      if (!editingProfile) {
+        profileCard.append(
+          el('p', { className: 'font-bold text-gray-900 text-base' }, `${u?.firstName || ''} ${u?.lastName || ''}`),
+          el('p', { className: 'text-sm text-gray-500 mt-0.5' }, u?.email || ''),
+          u?.phone ? el('p', { className: 'text-sm text-gray-500 mt-0.5' }, u.phone) : null,
+        );
+      } else {
+        const fnInp = el('input', { type:'text', value: u?.firstName||'', placeholder:'First name', className:'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-2' });
+        const lnInp = el('input', { type:'text', value: u?.lastName||'',  placeholder:'Last name',  className:'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-2' });
+        const phInp = el('input', { type:'tel',  value: u?.phone||'',     placeholder:'Phone',       className:'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
+        const saveBtn = el('button', {
+          className: 'w-full bg-brand text-white font-bold text-sm py-2 rounded-lg hover:opacity-90 transition',
+          onClick: async () => {
+            saveBtn.textContent = 'Saving…'; saveBtn.disabled = true;
+            try {
+              await req('PATCH', '/auth/me', { firstName: fnInp.value.trim(), lastName: lnInp.value.trim(), phone: phInp.value.trim() || undefined });
+              const updated = await api.auth.me();
+              store.setAuth(localStorage.getItem('_token'), updated);
+              u.firstName = updated.firstName; u.lastName = updated.lastName; u.phone = updated.phone;
+              editingProfile = false; renderProfileCard();
+              toast('Profile updated', 'success');
+            } catch { toast('Failed to update profile', 'error'); saveBtn.textContent = 'Save'; saveBtn.disabled = false; }
+          }
+        }, 'Save Changes');
+        profileCard.append(fnInp, lnInp, phInp, saveBtn);
+      }
+    }
+    renderProfileCard();
+
+    // Addresses card
+    const addrCard = el('div', { className: 'bg-white rounded-xl p-5 shadow-sm border border-gray-100' });
+    async function renderAddressCard() {
+      addrCard.innerHTML = '';
+      addrCard.append(el('div', { className: 'flex items-center gap-2 mb-4 pb-3 border-b border-gray-100' },
+        el('span', { className: 'text-2xl' }, '📍'),
+        el('p', { className: 'font-black text-gray-900' }, 'My Addresses')
+      ));
+      let addrs = [];
+      try { addrs = await api.addresses.getAll(); } catch(_) {}
+      if (!addrs.length) {
+        addrCard.append(el('p', { className: 'text-sm text-gray-400 mb-3' }, 'No saved addresses yet.'));
+      } else {
+        addrs.forEach(addr => {
+          const row = el('div', { className: 'flex items-start gap-2 py-2.5 border-b border-gray-50 last:border-0' },
+            el('div', { className: 'flex-1 min-w-0' },
+              addr.label ? el('p', { className: 'text-xs font-bold text-gray-500 mb-0.5' }, addr.label) : null,
+              el('p', { className: 'text-sm text-gray-700 leading-snug' }, `${addr.street}${addr.suburb ? ', ' + addr.suburb : ''}`),
+              el('p', { className: 'text-xs text-gray-400' }, `${addr.city}, ${addr.province} ${addr.postalCode}`),
+              addr.isDefault ? el('span', { className: 'text-xs text-brand font-bold' }, 'Default') : null,
+            ),
+            el('button', {
+              className: 'text-xs text-red-400 hover:text-red-600 flex-shrink-0 mt-1',
+              onClick: async () => {
+                try { await api.addresses.remove(addr.id); renderAddressCard(); } catch(_) { toast('Could not delete address', 'error'); }
+              }
+            }, 'Remove')
+          );
+          addrCard.append(row);
+        });
+      }
+      // Add new address inline form
+      let showForm = false;
+      const addBtn = el('button', { className: 'text-sm text-brand font-bold hover:opacity-80 mt-2', onClick: () => { showForm = !showForm; renderInlineForm(); } }, '+ Add Address');
+      const formSlot = el('div', {});
+      addrCard.append(addBtn, formSlot);
+      function renderInlineForm() {
+        formSlot.innerHTML = '';
+        addBtn.textContent = showForm ? '− Cancel' : '+ Add Address';
+        if (!showForm) return;
+        const f = (ph, key, tp='text') => el('input', { type: tp, placeholder: ph, className:'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-2' });
+        const streetF = f('Street *'); const suburbF = f('Suburb'); const cityF = f('City *'); const provF = f('Province *'); const postF = f('Postal code *'); const labelF = f('Label (e.g. Home)');
+        const sv = el('button', { className:'w-full bg-brand text-white font-bold text-sm py-2 rounded-lg hover:opacity-90 mt-1', onClick: async () => {
+          if (!streetF.value||!cityF.value||!provF.value||!postF.value) { toast('Fill in required fields','error'); return; }
+          sv.disabled=true; sv.textContent='Saving…';
+          try {
+            await api.addresses.create({ street:streetF.value.trim(), suburb:suburbF.value.trim()||undefined, city:cityF.value.trim(), province:provF.value.trim(), postalCode:postF.value.trim(), label:labelF.value.trim()||undefined });
+            toast('Address saved','success'); showForm=false; renderAddressCard();
+          } catch(_) { toast('Could not save address','error'); sv.disabled=false; sv.textContent='Save Address'; }
+        } }, 'Save Address');
+        formSlot.append(el('div', { className:'mt-3 space-y-0' }, labelF, streetF, el('div',{className:'grid grid-cols-2 gap-2'},suburbF,cityF), el('div',{className:'grid grid-cols-2 gap-2'},provF,postF), sv));
+      }
+    }
+    renderAddressCard();
+
     accountView.append(
       el('div', { className: 'flex items-center gap-3 mb-6' },
         el('button', { className: 'text-brand font-semibold text-sm flex items-center gap-1 hover:opacity-80', onClick: () => { currentView = 'browse'; updateView(); } }, '← Back'),
         el('h2', { className: 'text-xl font-black text-gray-900' }, 'My Account')
       ),
       el('div', { className: 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4' },
-        acctCard('My Profile', '👤', [
-          el('p', { className: 'font-bold text-gray-900 text-base' }, `${u?.firstName || ''} ${u?.lastName || ''}`),
-          el('p', { className: 'text-sm text-gray-500 mt-0.5' }, u?.email || ''),
-          u?.phone ? el('p', { className: 'text-sm text-gray-500 mt-0.5' }, u.phone) : null,
-        ]),
+        profileCard,
+        addrCard,
         acctCard('Orders', '📦', [
           el('p', { className: 'text-sm text-gray-500 mb-3' }, 'View and track your orders.'),
           el('button', { className: 'text-brand font-bold text-sm hover:opacity-80 flex items-center gap-1', onClick: () => { currentView = 'orders'; updateView(); } }, 'View my orders →'),
