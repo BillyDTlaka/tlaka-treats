@@ -233,14 +233,28 @@ export interface BoardMeetingReport {
   agentAnalyses: { role: string; analysis: AgentAnalysis }[]
 }
 
-function parseJson(text: string): any {
+function parseJson(text: string, label = ''): any {
+  // Try 1: direct parse
+  try { return JSON.parse(text.trim()) } catch {}
+
+  // Try 2: strip markdown fences
   try {
-    // Strip markdown fences if model wraps them
-    const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-    return JSON.parse(cleaned)
-  } catch {
-    return {}
-  }
+    const stripped = text.replace(/^```(?:json)?\s*/im, '').replace(/\s*```\s*$/m, '').trim()
+    return JSON.parse(stripped)
+  } catch {}
+
+  // Try 3: extract first {...} block (handles prose before/after JSON)
+  try {
+    const start = text.indexOf('{')
+    const end   = text.lastIndexOf('}')
+    if (start !== -1 && end !== -1 && end > start) {
+      return JSON.parse(text.slice(start, end + 1))
+    }
+  } catch {}
+
+  // All attempts failed — log raw text so we can debug
+  console.error(`[board] parseJson failed${label ? ` (${label})` : ''}. Raw text (500 chars):\n${text.slice(0, 500)}`)
+  return {}
 }
 
 export async function runBoardMeeting(
@@ -261,7 +275,7 @@ export async function runBoardMeeting(
         messages:   [{ role: 'user', content: phase1Prompt }],
       }).then(r => ({
         role:     agent.role,
-        analysis: parseJson(r.content[0].type === 'text' ? r.content[0].text : '{}') as AgentAnalysis,
+        analysis: parseJson(r.content[0].type === 'text' ? r.content[0].text : '{}', agent.role) as AgentAnalysis,
       }))
     )
   )
@@ -294,7 +308,7 @@ Output the same JSON schema with your refined positions.`.trim()
           ],
         }).then(r => ({
           role:     agent.role,
-          analysis: parseJson(r.content[0].type === 'text' ? r.content[0].text : '{}') as AgentAnalysis,
+          analysis: parseJson(r.content[0].type === 'text' ? r.content[0].text : '{}', agent.role) as AgentAnalysis,
         }))
       )
     )
@@ -305,7 +319,7 @@ Output the same JSON schema with your refined positions.`.trim()
 
   const synthResponse = await client.messages.create({
     model:      SYNTH_MODEL,
-    max_tokens: 1800,
+    max_tokens: 4000,
     system:     SYNTHESIZER_SYSTEM,
     messages:   [{
       role:    'user',
@@ -313,7 +327,8 @@ Output the same JSON schema with your refined positions.`.trim()
     }],
   })
 
-  const synthJson = parseJson(synthResponse.content[0].type === 'text' ? synthResponse.content[0].text : '{}')
+  const synthRaw  = synthResponse.content[0].type === 'text' ? synthResponse.content[0].text : '{}'
+  const synthJson = parseJson(synthRaw, 'SYNTHESISER')
 
   const totalCalls = opts.includeDebate ? AGENTS.length * 2 + 1 : AGENTS.length + 1
 
