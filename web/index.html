@@ -6046,37 +6046,67 @@ function renderAdminRecipes(data, container, reload) {
       row.append(mainRow);
 
       if (isExp) {
-        const panel = el('div', { className: 'px-5 pb-4 pt-1 bg-gray-50 border-t border-gray-100' });
-        if (recipe.notes) panel.append(el('p', { className: 'text-xs text-gray-500 italic mb-3' }, recipe.notes));
+        const panel = el('div', { className: 'px-5 pb-5 pt-2 bg-gray-50 border-t border-gray-100' });
+        if (recipe.notes) panel.append(el('p', { className: 'text-xs text-gray-500 italic mb-3 bg-yellow-50 border border-yellow-100 rounded-lg px-3 py-2' }, recipe.notes));
 
-        // Ingredient list
+        // ── Ingredient list with cost ──────────────────────────────────────────
+        let costPerBatch = 0;
         if (recipe.ingredients?.length) {
-          const ingTable = el('div', { className: 'bg-white rounded-xl overflow-hidden border border-gray-100 mb-4' });
-          ingTable.append(el('div', { className: 'grid grid-cols-12 px-3 py-2 bg-gray-50 text-xs font-bold text-gray-500 uppercase' },
-            el('div', { className: 'col-span-5' }, 'Ingredient'),
-            el('div', { className: 'col-span-3 text-right' }, 'Quantity Needed'),
+          const ingTable = el('div', { className: 'bg-white rounded-xl overflow-hidden border border-gray-100 mb-3' });
+          ingTable.append(el('div', { className: 'grid grid-cols-12 px-3 py-2 bg-gray-50 text-xs font-bold text-gray-400 uppercase tracking-wide' },
+            el('div', { className: 'col-span-4' }, 'Ingredient'),
+            el('div', { className: 'col-span-2 text-right' }, 'Qty / batch'),
             el('div', { className: 'col-span-2 text-right' }, 'In Stock'),
+            el('div', { className: 'col-span-2 text-right' }, 'Cost'),
             el('div', { className: 'col-span-2 text-right' }, 'Status'),
           ));
           recipe.ingredients.forEach(ing => {
-            const needed = Number(ing.quantity) * 1;
+            const needed  = Number(ing.quantity);
             const inStock = Number(ing.stockItem?.currentStock ?? 0);
+            const cost    = needed * Number(ing.stockItem?.costPerUnit ?? 0);
+            costPerBatch += cost;
             const sufficient = inStock >= needed;
-            ingTable.append(el('div', { className: 'grid grid-cols-12 px-3 py-2 border-t border-gray-50 items-center' },
-              el('div', { className: 'col-span-5 font-semibold text-sm text-gray-800' }, ing.stockItem?.name || ing.stockItemId),
-              el('div', { className: 'col-span-3 text-right text-sm text-gray-600' }, `${needed.toFixed(3)} ${ing.unit}`),
-              el('div', { className: 'col-span-2 text-right text-sm text-gray-500' }, `${inStock.toFixed(3)} ${ing.stockItem?.uom?.abbreviation || ing.stockItem?.unit||''}`),
+            const uom = ing.stockItem?.uom?.abbreviation || ing.stockItem?.unit || ing.unit || '';
+            ingTable.append(el('div', { className: 'grid grid-cols-12 px-3 py-2.5 border-t border-gray-50 items-center' },
+              el('div', { className: 'col-span-4 font-semibold text-sm text-gray-800 truncate' }, ing.stockItem?.name || ing.stockItemId),
+              el('div', { className: 'col-span-2 text-right text-sm text-gray-600' }, `${needed % 1 === 0 ? needed : needed.toFixed(3)} ${uom}`),
+              el('div', { className: 'col-span-2 text-right text-sm text-gray-400' }, `${Number(inStock).toFixed(2)} ${uom}`),
+              el('div', { className: 'col-span-2 text-right text-xs font-semibold text-gray-600' }, cost > 0 ? `R${cost.toFixed(2)}` : '—'),
               el('div', { className: 'col-span-2 text-right' },
                 el('span', { className: `text-xs font-bold px-1.5 py-0.5 rounded-full ${sufficient ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}` }, sufficient ? '✓ OK' : '✗ Low')
               ),
             ));
           });
+          // Cost summary row
+          const yieldQty = Number(recipe.yieldQty) || 1;
+          const costPerUnit = costPerBatch / yieldQty;
+          ingTable.append(el('div', { className: 'grid grid-cols-12 px-3 py-2.5 border-t-2 border-gray-200 bg-gray-50 items-center' },
+            el('div', { className: 'col-span-6 text-xs font-black text-gray-500 uppercase tracking-wide' }, `Cost per batch (${yieldQty} ${recipe.yieldUnit})`),
+            el('div', { className: 'col-span-4 text-right' }),
+            el('div', { className: 'col-span-2 text-right font-black text-brand' }, `R${costPerBatch.toFixed(2)}`),
+          ));
+          if (yieldQty > 1) {
+            ingTable.append(el('div', { className: 'grid grid-cols-12 px-3 py-1.5 bg-gray-50 items-center border-t border-gray-100' },
+              el('div', { className: 'col-span-8 text-xs text-gray-400' }, `Cost per ${recipe.yieldUnit}`),
+              el('div', { className: 'col-span-4 text-right text-xs font-bold text-gray-600' }, `R${costPerUnit.toFixed(2)}`),
+            ));
+          }
           panel.append(ingTable);
         } else {
-          panel.append(el('p', { className: 'text-xs text-gray-400 italic mb-3' }, 'No ingredients defined yet.'));
+          panel.append(el('p', { className: 'text-xs text-gray-400 italic mb-3 bg-white border border-gray-100 rounded-lg px-3 py-3 text-center' }, 'No ingredients defined yet — click Edit Ingredients to add.'));
         }
 
-        panel.append(el('div', { className: 'flex gap-2' },
+        // ── Instructions ──────────────────────────────────────────────────────
+        if (recipe.instructions) {
+          panel.append(
+            el('div', { className: 'bg-white rounded-xl border border-gray-100 p-4 mb-3' },
+              el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wide mb-2' }, '📋 Instructions'),
+              el('pre', { className: 'text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed' }, recipe.instructions)
+            )
+          );
+        }
+
+        panel.append(el('div', { className: 'flex gap-2 flex-wrap' },
           el('button', { className: 'text-sm font-bold bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg hover:bg-blue-200', onClick: () => showRecipeForm(recipe, () => reload()) }, '✏️ Edit Recipe'),
           el('button', { className: 'text-sm font-bold bg-purple-100 text-purple-700 px-3 py-1.5 rounded-lg hover:bg-purple-200', onClick: () => showIngredientsForm(recipe, () => reload()) }, '🧪 Edit Ingredients'),
           el('button', { className: `text-sm font-bold px-3 py-1.5 rounded-lg ${recipe.isActive ? 'bg-gray-100 text-gray-600 hover:bg-gray-200' : 'bg-green-100 text-green-700 hover:bg-green-200'}`, onClick: async () => { try { await api.recipes.update(recipe.id, { isActive: !recipe.isActive }); reload(); } catch(e) { toast(e?.message||'Failed','error'); } } }, recipe.isActive ? 'Archive' : 'Restore'),
@@ -6092,24 +6122,30 @@ function renderAdminRecipes(data, container, reload) {
     const isEdit = !!recipe;
     const modal = el('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4' });
     const close = () => document.body.removeChild(modal);
-    const nameInp  = el('input', { type: 'text', placeholder: 'Recipe name *', value: recipe?.name ?? '', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
-    const yieldQty = el('input', { type: 'number', step: '0.001', placeholder: 'Yield quantity', value: recipe?.yieldQty ?? '1', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
-    const yieldUnt = el('input', { type: 'text', placeholder: 'Yield unit (e.g. loaves, pcs, batch)', value: recipe?.yieldUnit ?? 'batch', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
 
-    // Output product selector (SELLABLE products only)
+    const inp = (type, ph, val, extra='') => el('input', { type, placeholder: ph, value: val??'', className: `w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3 ${extra}` });
+    const lbl = txt => el('p', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide mb-1' }, txt);
+
+    const nameInp      = inp('text',   'Recipe name *',                    recipe?.name);
+    const yieldQty     = inp('number', 'Yield quantity per batch',         recipe?.yieldQty ?? '1');
+    yieldQty.step = '0.001';
+    const yieldUnt     = inp('text',   'Yield unit (e.g. loaves, pcs)',    recipe?.yieldUnit ?? 'batch');
+    const notesInp     = el('textarea', { placeholder: 'Internal notes (allergens, tips, storage…)', rows: 2, className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3 resize-none' });
+    if (recipe?.notes) notesInp.value = recipe.notes;
+    const instrInp     = el('textarea', { placeholder: 'Step-by-step preparation instructions…\n\n1. Preheat oven to 180°C\n2. Mix dry ingredients…', rows: 6, className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3 resize-none font-mono text-xs' });
+    if (recipe?.instructions) instrInp.value = recipe.instructions;
+
+    // Output product selector
     const sellableProducts = products.filter(p => p.classification === 'SELLABLE' && p.isActive);
     const outputProdSel = el('select', { className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
-    const emptyOpt = document.createElement('option'); emptyOpt.value = ''; emptyOpt.textContent = '— Output Product (optional) —'; outputProdSel.append(emptyOpt);
-    sellableProducts.forEach(p => {
+    [{ id: '', name: '— Output Product (optional) —' }, ...sellableProducts].forEach(p => {
       const o = document.createElement('option'); o.value = p.id; o.textContent = p.name;
       if (recipe?.outputProductId === p.id) o.selected = true;
       outputProdSel.append(o);
     });
+    const yieldPerBatch = inp('number', 'Sellable units produced per batch', recipe?.yieldPerBatch ?? '0');
+    yieldPerBatch.step = '0.001'; yieldPerBatch.min = '0';
 
-    const yieldPerBatch = el('input', { type: 'number', step: '0.001', min: '0', placeholder: 'Yield per batch (sellable units produced)', value: recipe?.yieldPerBatch ?? '0', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
-
-    const notesInp = el('textarea', { placeholder: 'Notes', rows: 2, className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3 resize-none' });
-    if (recipe?.notes) notesInp.value = recipe.notes;
     const saveBtn = el('button', {
       className: 'w-full bg-brand text-white font-black py-2.5 rounded-xl hover:opacity-90',
       onClick: async () => {
@@ -6122,19 +6158,29 @@ function renderAdminRecipes(data, container, reload) {
           outputProductId: outputProdSel.value || undefined,
           yieldPerBatch: parseFloat(yieldPerBatch.value)||0,
           notes: notesInp.value.trim()||undefined,
+          instructions: instrInp.value.trim()||undefined,
         };
         try {
           if (isEdit) await api.recipes.update(recipe.id, payload); else await api.recipes.create(payload);
           toast(isEdit ? 'Recipe updated' : 'Recipe created', 'success'); close(); onDone();
         } catch(err) { toast(err?.message||'Failed','error'); saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
       }
-    }, 'Save');
-    modal.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl' },
-      el('div', { className: 'flex items-center justify-between mb-4' }, el('h3', { className: 'font-black text-gray-900 text-lg' }, isEdit ? 'Edit Recipe' : 'New Recipe'), el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×')),
-      nameInp, yieldQty, yieldUnt,
-      el('p', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide mb-1' }, 'Packaging Output'),
+    }, 'Save Recipe');
+
+    modal.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto' },
+      el('div', { className: 'flex items-center justify-between mb-4' },
+        el('h3', { className: 'font-black text-gray-900 text-lg' }, isEdit ? 'Edit Recipe' : 'New Recipe'),
+        el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×')
+      ),
+      lbl('Recipe Details'),
+      nameInp,
+      el('div', { className: 'grid grid-cols-2 gap-3' }, yieldQty, yieldUnt),
+      notesInp,
+      lbl('Instructions / Method'),
+      instrInp,
+      lbl('Packaging Output (links recipe to inventory)'),
       outputProdSel, yieldPerBatch,
-      notesInp, saveBtn,
+      saveBtn,
     ));
     modal.addEventListener('click', e => { if (e.target === modal) close(); });
     document.body.appendChild(modal);
@@ -6151,11 +6197,16 @@ function renderAdminRecipes(data, container, reload) {
       lineItems.forEach((item, idx) => {
         const stockSel = el('select', { className: 'flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand' });
         stockItems.forEach(s => { const o = document.createElement('option'); o.value = s.id; o.textContent = `${s.name} (${s.uom?.abbreviation || s.unit || ''})`; if (s.id === item.stockItemId) o.selected = true; stockSel.append(o); });
-        stockSel.addEventListener('change', () => { lineItems[idx].stockItemId = stockSel.value; });
         const qtyInp  = el('input', { type: 'number', step: '0.001', placeholder: 'Qty', value: item.quantity, className: 'w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand' });
         qtyInp.addEventListener('input', () => { lineItems[idx].quantity = qtyInp.value; });
-        const unitInp = el('input', { type: 'text', placeholder: 'Unit', value: item.unit, className: 'w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand' });
-        unitInp.addEventListener('input', () => { lineItems[idx].unit = unitInp.value; });
+        const unitInp = el('input', { type: 'text', placeholder: 'Unit', readOnly: true, value: item.unit, className: 'w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-gray-50 text-gray-500 cursor-default' });
+        stockSel.addEventListener('change', () => {
+          lineItems[idx].stockItemId = stockSel.value;
+          const found = stockItems.find(s => s.id === stockSel.value);
+          const uom = found?.uom?.abbreviation || found?.unit || '';
+          unitInp.value = uom;
+          lineItems[idx].unit = uom;
+        });
         const delBtn  = el('button', { className: 'text-red-400 hover:text-red-600 font-bold', onClick: () => { lineItems.splice(idx, 1); renderLines(); } }, '×');
         linesDiv.append(el('div', { className: 'flex gap-2 items-center' }, stockSel, qtyInp, unitInp, delBtn));
       });

@@ -9,7 +9,7 @@ const recipeRoutes: FastifyPluginAsync = async (fastify) => {
     return db.recipe.findMany({
       include: {
         ingredients: {
-          include: { stockItem: { select: { id: true, name: true, unit: true, currentStock: true } } },
+          include: { stockItem: { select: { id: true, name: true, unit: true, currentStock: true, costPerUnit: true, uom: { select: { abbreviation: true } } } } },
         },
         _count: { select: { productionRuns: true } },
       },
@@ -35,7 +35,7 @@ const recipeRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ── POST /recipes ─── Create recipe
   fastify.post('/', { preHandler: [authenticate, authorize('manage', 'product')] }, async (req, reply) => {
-    const { name, productId, outputProductId, yieldQty, yieldUnit, yieldPerBatch, notes, ingredients } = req.body as any
+    const { name, productId, outputProductId, yieldQty, yieldUnit, yieldPerBatch, notes, instructions, ingredients } = req.body as any
     const recipe = await db.recipe.create({
       data: {
         name,
@@ -45,6 +45,7 @@ const recipeRoutes: FastifyPluginAsync = async (fastify) => {
         yieldUnit: yieldUnit || 'batch',
         yieldPerBatch: yieldPerBatch || 0,
         notes,
+        instructions: instructions || undefined,
         ingredients: ingredients?.length
           ? { create: ingredients.map((i: any) => ({ stockItemId: i.stockItemId, quantity: i.quantity, unit: i.unit, notes: i.notes })) }
           : undefined,
@@ -57,8 +58,9 @@ const recipeRoutes: FastifyPluginAsync = async (fastify) => {
   // ── PATCH /recipes/:id ─── Update recipe header
   fastify.patch('/:id', { preHandler: [authenticate, authorize('manage', 'product')] }, async (req) => {
     const { id } = req.params as { id: string }
-    const { name, productId, outputProductId, yieldQty, yieldUnit, yieldPerBatch, notes, isActive } = req.body as any
+    const { name, productId, outputProductId, yieldQty, yieldUnit, yieldPerBatch, notes, instructions, isActive } = req.body as any
     const data: any = { name, yieldQty, yieldUnit, notes, isActive }
+    if (instructions !== undefined) data.instructions = instructions || null
     if (productId !== undefined) data.productId = productId || null
     if (outputProductId !== undefined) data.outputProductId = outputProductId || null
     if (yieldPerBatch !== undefined) data.yieldPerBatch = yieldPerBatch
