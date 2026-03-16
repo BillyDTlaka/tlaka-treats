@@ -275,6 +275,11 @@ const api = {
     pnl:        (from, to)   => req('GET', `/finance/reports/pnl${from ? `?from=${from}${to ? `&to=${to}` : ''}` : ''}`),
     cashflow:   (months)     => req('GET', `/finance/reports/cashflow${months ? `?months=${months}` : ''}`),
   },
+  board: {
+    run:      (periodDays, includeDebate) => req('POST', '/board/meeting', { periodDays, includeDebate }),
+    history:  ()    => req('GET', '/board/meetings'),
+    getById:  (id)  => req('GET', `/board/meetings/${id}`),
+  },
 };
 
 // ─── AUTH STORE ───────────────────────────────────────────────────
@@ -2893,6 +2898,7 @@ const ADMIN_NAV = [
   { id: 'production',   label: 'Production',    icon: 'M12 2a10 10 0 100 20 10 10 0 000-20z|M12 6v6l4 2',                                                                                                               soon: false },
   { id: 'finance',      label: 'Finance',       icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z|M12 6v2|M12 16v2|M8.5 9.5A3.5 3.5 0 0112 8h1a2 2 0 110 4h-2a2 2 0 100 4h1a3.5 3.5 0 003.5-3.5', soon: false },
   { id: 'reports',      label: 'Reports',       icon: 'M18 20V10|M12 20V4|M6 20v-6',                                                                                                                                      soon: false },
+  { id: 'board',        label: 'AI Board',      icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z', soon: false },
   { id: 'marketing',    label: 'Marketing',     icon: 'M22 12h-4l-3 9L9 3l-3 9H2',                                                                                                                                        soon: true  },
   { id: 'settings',     label: 'Settings',      icon: 'M12 15a3 3 0 100-6 3 3 0 000 6z|M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z', soon: false },
 ];
@@ -2909,6 +2915,7 @@ const MODULE_META = {
   production:   { title: 'Production',    subtitle: 'Production runs & batch tracking' },
   finance:      { title: 'Finance',       subtitle: 'Money in, money out, commissions & bank' },
   reports:      { title: 'Reports',       subtitle: 'Analytics and reporting' },
+  board:        { title: 'AI Advisory Board', subtitle: 'AI-powered board meeting for your business' },
   marketing:    { title: 'Marketing',     subtitle: 'Campaigns and promotions' },
   inventory:    { title: 'Inventory',     subtitle: 'Stock management' },
   settings:     { title: 'Settings',      subtitle: 'Configure your store' },
@@ -3077,6 +3084,7 @@ function renderAdminModule(module, data, container, reload, navigate) {
     case 'production':  renderAdminProduction(data, container, reload); break;
     case 'finance':     renderAdminFinance(container);                   break;
     case 'reports':     renderAdminReports(data, container);             break;
+    case 'board':       renderAdminBoard(container);                     break;
     case 'settings':    renderAdminSettings(data, container, reload);    break;
     default:            renderAdminSoon(module, container);              break;
   }
@@ -9919,6 +9927,284 @@ function renderAdminReports(data, container) {
   renderTabNav();
   renderActiveTab();
   container.append(shell);
+}
+
+// ── AI ADVISORY BOARD ─────────────────────────────────────────────────────────
+function renderAdminBoard(container) {
+  container.innerHTML = '';
+  const page = el('div', { className: 'p-6 max-w-4xl mx-auto' });
+
+  const HEALTH_META = {
+    STRONG:   { color: '#10B981', bg: '#ECFDF5', label: 'Strong' },
+    STABLE:   { color: '#3B82F6', bg: '#EFF6FF', label: 'Stable' },
+    AT_RISK:  { color: '#F59E0B', bg: '#FFFBEB', label: 'At Risk' },
+    CRITICAL: { color: '#EF4444', bg: '#FEF2F2', label: 'Critical' },
+  };
+  const PRIORITY_COLOR = { HIGH: '#EF4444', MEDIUM: '#F59E0B', LOW: '#10B981' };
+  const SEV_COLOR = { CRITICAL: '#EF4444', HIGH: '#F97316', MEDIUM: '#F59E0B', LOW: '#6B7280' };
+  const SENTIMENT_ICON = { POSITIVE: '😊', CAUTIOUS: '🤔', CONCERNED: '😟', CRITICAL: '🚨' };
+
+  // ── Run controls ────────────────────────────────────────────────────────────
+  let periodDays = 30;
+  let includeDebate = false;
+  let running = false;
+
+  const periodSel = el('select', { className: 'border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand' });
+  [['7 days', 7], ['30 days', 30], ['60 days', 60], ['90 days', 90]].forEach(([label, val]) => {
+    const o = document.createElement('option');
+    o.value = String(val); o.textContent = label; if (val === 30) o.selected = true;
+    periodSel.append(o);
+  });
+  periodSel.addEventListener('change', () => { periodDays = Number(periodSel.value); });
+
+  const debateToggle = el('label', { className: 'flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none' },
+    (() => { const cb = el('input', { type: 'checkbox', className: 'w-4 h-4 accent-brand' }); cb.addEventListener('change', () => { includeDebate = cb.checked; }); return cb; })(),
+    'Include debate round (higher quality, ~2× cost)'
+  );
+
+  const runBtn = el('button', { className: 'bg-brand text-white font-black px-5 py-2.5 rounded-xl hover:opacity-90 flex items-center gap-2' },
+    el('span', {}, '🤖'), el('span', {}, 'Run Board Meeting')
+  );
+
+  const reportArea = el('div', { className: 'mt-6' });
+
+  function badge(text, color) {
+    return el('span', { className: 'text-xs font-bold px-2.5 py-1 rounded-full', style: { backgroundColor: color + '20', color } }, text);
+  }
+
+  function renderReport(report) {
+    reportArea.innerHTML = '';
+    const v = report.verdict || {};
+    const hm = HEALTH_META[v.overallHealth] || HEALTH_META.STABLE;
+
+    // ── Header verdict card ──────────────────────────────────────────────────
+    reportArea.append(
+      el('div', { className: 'rounded-2xl p-5 mb-4 border', style: { backgroundColor: hm.bg, borderColor: hm.color + '40' } },
+        el('div', { className: 'flex items-center gap-3 mb-2' },
+          el('div', { className: 'text-2xl font-black', style: { color: hm.color } }, hm.label),
+          el('div', { className: 'text-xs font-bold px-2.5 py-1 rounded-full text-white', style: { backgroundColor: hm.color } }, v.overallHealth || ''),
+        ),
+        el('p', { className: 'text-gray-700 font-medium text-sm leading-relaxed' }, v.headline || ''),
+        el('div', { className: 'flex gap-4 mt-3 flex-wrap' },
+          ...Object.entries(v.boardSentiment || {}).map(([key, count]) =>
+            el('span', { className: 'text-xs text-gray-500' }, `${SENTIMENT_ICON[key.toUpperCase()] || '•'} ${count} ${key}`)
+          )
+        ),
+        el('div', { className: 'mt-3 text-xs text-gray-400' },
+          `Generated ${new Date(report.meta?.generatedAt || Date.now()).toLocaleString('en-ZA')} · ${report.meta?.periodDays || 30}-day window · ${report.meta?.totalAgentCalls || 7} AI calls · Debate: ${report.meta?.debateEnabled ? 'Yes' : 'No'}`
+        )
+      )
+    );
+
+    // ── Key Insights ──────────────────────────────────────────────────────────
+    if (report.keyInsights?.length) {
+      const section = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-5 mb-4' },
+        el('h3', { className: 'font-black text-gray-900 mb-3' }, '💡 Key Insights')
+      );
+      report.keyInsights.forEach((ins, i) => {
+        section.append(
+          el('div', { className: 'flex gap-3 py-3 border-b border-gray-50 last:border-0' },
+            el('div', { className: 'w-6 h-6 rounded-full bg-brand/10 text-brand text-xs font-black flex items-center justify-center flex-shrink-0 mt-0.5' }, String(i + 1)),
+            el('div', {},
+              el('p', { className: 'text-sm text-gray-800 leading-snug' }, ins.insight),
+              el('div', { className: 'flex gap-2 mt-1.5' },
+                el('span', { className: 'text-xs text-gray-400' }, ins.source?.replace(/_/g, ' ')),
+                ins.dataRef ? el('span', { className: 'text-xs font-mono bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded' }, ins.dataRef) : null,
+              )
+            )
+          )
+        );
+      });
+      reportArea.append(section);
+    }
+
+    // ── Recommended Actions ───────────────────────────────────────────────────
+    if (report.recommendedActions?.length) {
+      const section = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-5 mb-4' },
+        el('h3', { className: 'font-black text-gray-900 mb-3' }, '✅ Recommended Actions')
+      );
+      report.recommendedActions.forEach((act, i) => {
+        const pc = PRIORITY_COLOR[act.priority] || '#6B7280';
+        section.append(
+          el('div', { className: 'flex gap-3 py-3 border-b border-gray-50 last:border-0' },
+            el('div', { className: 'text-lg font-black flex-shrink-0 mt-0.5 w-7 text-center' },
+              act.priority === 'HIGH' ? '🔴' : act.priority === 'MEDIUM' ? '🟡' : '🟢'
+            ),
+            el('div', { className: 'flex-1 min-w-0' },
+              el('p', { className: 'text-sm font-semibold text-gray-900 leading-snug' }, act.action),
+              el('p', { className: 'text-xs text-gray-500 mt-1' }, act.expectedImpact),
+              el('div', { className: 'flex gap-2 mt-2 flex-wrap' },
+                badge(act.priority, pc),
+                badge(act.timeframe?.replace(/_/g, ' '), '#6366F1'),
+                el('span', { className: 'text-xs text-gray-400' }, `Owner: ${act.owner}`),
+                act.advisorConsensus === 'agreed'
+                  ? el('span', { className: 'text-xs text-emerald-600 font-bold' }, '✓ Board agreed')
+                  : el('span', { className: 'text-xs text-amber-600 font-bold' }, '~ Mixed views'),
+              )
+            )
+          )
+        );
+      });
+      reportArea.append(section);
+    }
+
+    // ── Risk Warnings + Growth Opportunities side by side ────────────────────
+    const twoCol = el('div', { className: 'grid grid-cols-1 md:grid-cols-2 gap-4 mb-4' });
+
+    if (report.riskWarnings?.length) {
+      const section = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-5' },
+        el('h3', { className: 'font-black text-gray-900 mb-3' }, '⚠️ Risk Warnings')
+      );
+      report.riskWarnings.forEach(r => {
+        const sc = SEV_COLOR[r.severity] || '#6B7280';
+        section.append(
+          el('div', { className: 'py-3 border-b border-gray-50 last:border-0' },
+            el('div', { className: 'flex items-start gap-2 mb-1' },
+              badge(r.severity, sc),
+              el('p', { className: 'text-sm font-semibold text-gray-800 leading-snug' }, r.risk)
+            ),
+            el('p', { className: 'text-xs text-gray-500 mt-1' }, '→ ' + r.mitigation)
+          )
+        );
+      });
+      twoCol.append(section);
+    }
+
+    if (report.growthOpportunities?.length) {
+      const section = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-5' },
+        el('h3', { className: 'font-black text-gray-900 mb-3' }, '🚀 Growth Opportunities')
+      );
+      report.growthOpportunities.forEach(o => {
+        section.append(
+          el('div', { className: 'py-3 border-b border-gray-50 last:border-0' },
+            el('p', { className: 'text-sm font-semibold text-gray-800 leading-snug mb-1' }, o.opportunity),
+            el('p', { className: 'text-xs text-emerald-600 font-bold' }, o.potentialValue),
+            el('div', { className: 'flex gap-2 mt-1.5' },
+              badge(o.effort + ' effort', '#6366F1'),
+              el('span', { className: 'text-xs text-gray-400' }, o.timeframe)
+            )
+          )
+        );
+      });
+      twoCol.append(section);
+    }
+    if (twoCol.children.length) reportArea.append(twoCol);
+
+    // ── Advisor Highlights ────────────────────────────────────────────────────
+    if (report.advisorHighlights?.length) {
+      const section = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-5 mb-4' },
+        el('h3', { className: 'font-black text-gray-900 mb-3' }, '🧠 Advisor Highlights')
+      );
+      const grid = el('div', { className: 'grid grid-cols-1 sm:grid-cols-2 gap-3' });
+      report.advisorHighlights.forEach(adv => {
+        const icon = SENTIMENT_ICON[adv.sentiment?.toUpperCase()] || '💬';
+        grid.append(
+          el('div', { className: 'bg-gray-50 rounded-xl p-3' },
+            el('div', { className: 'flex items-center gap-2 mb-1' },
+              el('span', { className: 'text-base' }, icon),
+              el('span', { className: 'text-xs font-black text-gray-500 uppercase tracking-wide' }, adv.role?.replace(/_/g, ' '))
+            ),
+            el('p', { className: 'text-sm text-gray-700 leading-snug' }, adv.headline)
+          )
+        );
+      });
+      section.append(grid);
+      reportArea.append(section);
+    }
+
+    // ── Next meeting focus ────────────────────────────────────────────────────
+    if (report.nextMeetingFocus?.length) {
+      reportArea.append(
+        el('div', { className: 'bg-indigo-50 rounded-2xl border border-indigo-100 p-5' },
+          el('h3', { className: 'font-black text-indigo-900 mb-2' }, '📅 Next Meeting Focus'),
+          el('ul', { className: 'space-y-1.5' },
+            ...report.nextMeetingFocus.map(item =>
+              el('li', { className: 'flex items-start gap-2 text-sm text-indigo-800' },
+                el('span', { className: 'text-indigo-400 mt-0.5 flex-shrink-0' }, '→'),
+                el('span', {}, item)
+              )
+            )
+          )
+        )
+      );
+    }
+  }
+
+  function renderHistory(meetings) {
+    reportArea.innerHTML = '';
+    if (!meetings.length) {
+      reportArea.append(el('p', { className: 'text-sm text-gray-400 text-center py-8' }, 'No board meetings yet. Run your first one above.'));
+      return;
+    }
+    meetings.forEach(m => {
+      const r = m.reportJson || {};
+      const v = r.verdict || {};
+      const hm = HEALTH_META[v.overallHealth] || HEALTH_META.STABLE;
+      const card = el('div', { className: 'bg-white rounded-xl border border-gray-100 p-4 mb-3 cursor-pointer hover:shadow-md transition-shadow' });
+      card.append(
+        el('div', { className: 'flex items-center gap-3' },
+          el('div', { className: 'text-xs font-black px-2.5 py-1 rounded-full', style: { backgroundColor: hm.bg, color: hm.color } }, hm.label),
+          el('div', { className: 'flex-1 min-w-0' },
+            el('p', { className: 'text-sm font-semibold text-gray-900 truncate' }, v.headline || 'Board Meeting'),
+            el('p', { className: 'text-xs text-gray-400' }, `${new Date(m.createdAt).toLocaleString('en-ZA')} · ${m.periodDays}-day window`)
+          )
+        )
+      );
+      card.addEventListener('click', () => renderReport(r));
+      reportArea.append(card);
+    });
+  }
+
+  runBtn.addEventListener('click', async () => {
+    if (running) return;
+    running = true;
+    runBtn.disabled = true;
+    runBtn.innerHTML = '<span class="animate-spin inline-block">⚙️</span> <span>Convening board… this takes ~20s</span>';
+    reportArea.innerHTML = '';
+    reportArea.append(
+      el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-8 text-center' },
+        el('div', { className: 'text-4xl mb-3 animate-bounce' }, '🤖'),
+        el('p', { className: 'font-bold text-gray-700 mb-1' }, 'AI board meeting in progress'),
+        el('p', { className: 'text-sm text-gray-400' }, '6 advisors are analysing your business data in parallel…')
+      )
+    );
+    try {
+      const report = await api.board.run(periodDays, includeDebate);
+      renderReport(report);
+    } catch(err) {
+      reportArea.innerHTML = '';
+      reportArea.append(el('div', { className: 'bg-red-50 rounded-xl p-4 text-red-600 text-sm' }, err?.message || 'Board meeting failed. Check that ANTHROPIC_API_KEY is set.'));
+    } finally {
+      running = false;
+      runBtn.disabled = false;
+      runBtn.innerHTML = '🤖 Run Board Meeting';
+    }
+  });
+
+  // Load history on mount
+  api.board.history().then(meetings => renderHistory(meetings)).catch(() => {});
+
+  page.append(
+    el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-5 mb-5' },
+      el('div', { className: 'flex items-start gap-4 flex-wrap' },
+        el('div', { className: 'flex-1 min-w-0' },
+          el('p', { className: 'text-sm text-gray-600 leading-relaxed' },
+            'Run a virtual board meeting powered by 6 AI advisors (CEO, CFO, Marketing, Operations, Risk, Customer). Each advisor independently analyses your business data, then a synthesiser produces a unified report with actionable recommendations.'
+          )
+        )
+      ),
+      el('div', { className: 'flex items-center gap-3 mt-4 flex-wrap' },
+        el('div', { className: 'flex items-center gap-2' },
+          el('label', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide' }, 'Analysis period'),
+          periodSel
+        ),
+        debateToggle,
+        runBtn,
+      )
+    ),
+    reportArea
+  );
+  container.append(page);
 }
 
 // ── SETTINGS MODULE ───────────────────────────────────────────────────────────

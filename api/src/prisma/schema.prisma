@@ -670,3 +670,14 @@ model DiscountRule {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+
+// ─── AI Advisory Board ────────────────────────────────────────────────────────
+
+model BoardMeeting {
+  id            String   @id @default(cuid())
+  periodDays    Int      @default(30)
+  debateEnabled Boolean  @default(false)
+  snapshotJson  Json
+  reportJson    Json
+  createdAt     DateTime @default(now())
+}

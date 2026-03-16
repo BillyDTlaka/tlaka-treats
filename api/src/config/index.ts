@@ -20,6 +20,9 @@ export const config = {
   // Admin email for internal alerts (low stock, etc.)
   adminEmail: process.env.ADMIN_EMAIL || process.env.SMTP_USER || '',
 
+  // AI Advisory Board (Anthropic)
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
+
   // WhatsApp via Twilio
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID  || '',
