@@ -21,6 +21,7 @@ import quoteRoutes       from './modules/quotes/quotes.routes'
 import discountRuleRoutes from './modules/discount-rules/discount-rules.routes'
 import packagingRoutes   from './modules/packaging/packaging.routes'
 import uomRoutes         from './modules/uom/uom.routes'
+import reportsRoutes     from './modules/reports/reports.routes'
 
 export async function buildApp() {
   const app = Fastify({
@@ -72,6 +73,7 @@ export async function buildApp() {
   await app.register(discountRuleRoutes, { prefix: '/discount-rules' })
   await app.register(packagingRoutes,    { prefix: '/packaging' })
   await app.register(uomRoutes,          { prefix: '/uom' })
+  await app.register(reportsRoutes,      { prefix: '/reports' })
 
   // Health check
   app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }))

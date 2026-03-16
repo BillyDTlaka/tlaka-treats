@@ -267,6 +267,13 @@ const api = {
     remove:   (id)       => req('DELETE', `/uom/${id}`),
     seed:     ()         => req('POST',   '/uom/seed', {}),
   },
+  reports: {
+    inventory:  ()           => req('GET', '/reports/inventory'),
+    production: (from, to)   => req('GET', `/reports/production${from ? `?from=${from}${to ? `&to=${to}` : ''}` : ''}`),
+    sales:      (from, to)   => req('GET', `/reports/sales${from ? `?from=${from}${to ? `&to=${to}` : ''}` : ''}`),
+    pnl:        (from, to)   => req('GET', `/finance/reports/pnl${from ? `?from=${from}${to ? `&to=${to}` : ''}` : ''}`),
+    cashflow:   (months)     => req('GET', `/finance/reports/cashflow${months ? `?months=${months}` : ''}`),
+  },
 };
 
 // ─── AUTH STORE ───────────────────────────────────────────────────
@@ -9253,8 +9260,7 @@ async function renderAccountStatement(container, range) {
 
 // ── REPORTS MODULE ────────────────────────────────────────────────────────────
 function renderAdminReports(data, container) {
-  const { orders, ambassadors, products, customers } = data;
-  const page = el('div', { className: 'p-6 max-w-6xl mx-auto' });
+  const { orders, customers } = data;
 
   const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   function monthKey(d) { const dt = new Date(d); return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`; }
@@ -9262,33 +9268,8 @@ function renderAdminReports(data, container) {
     const now = new Date();
     return Array.from({length:6},(_,i)=>{ const d=new Date(now.getFullYear(),now.getMonth()-(5-i),1); return {key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`,label:MONTHS[d.getMonth()]}; });
   }
-
-  // ── KPI row ─────────────────────────────────────────────────────
-  const delivered   = orders.filter(o=>o.status==='DELIVERED');
-  const revenue     = delivered.reduce((s,o)=>s+Number(o.total||0),0);
-  const totalOrders = orders.length;
-  const avgOrder    = delivered.length ? revenue/delivered.length : 0;
-  const totalCommission = delivered.reduce((s,o)=>s+Number(o.total||0)*Number(o.ambassador?.commissionRate||0),0);
-
-  page.append(el('div', { className: 'grid grid-cols-2 md:grid-cols-4 gap-4 mb-6' },
-    kpiCard('Total Revenue',       `R${revenue.toFixed(2)}`,       '#10B981', 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z'),
-    kpiCard('Orders (Delivered)',  String(delivered.length),        '#3B82F6', 'M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z|M3 6h18'),
-    kpiCard('Avg Order Value',     `R${avgOrder.toFixed(2)}`,       '#8B3A3A', 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 000 4h6a2 2 0 000-4M9 5a2 2 0 012-2h2a2 2 0 012 2'),
-    kpiCard('Commission Paid',     `R${totalCommission.toFixed(2)}`, '#8B5CF6', 'M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z')
-  ));
-
-  // ── Monthly revenue bar chart ───────────────────────────────────
-  const months = last6Months();
-  const monthlyRevenue = months.map(m=>({
-    label: m.label,
-    value: orders.filter(o=>o.status==='DELIVERED'&&monthKey(o.createdAt)===m.key).reduce((s,o)=>s+Number(o.total||0),0)
-  }));
-  const monthlyOrders = months.map(m=>({
-    label: m.label,
-    value: orders.filter(o=>monthKey(o.createdAt)===m.key).length
-  }));
-  const maxRev = Math.max(...monthlyRevenue.map(m=>m.value), 1);
-  const maxOrd = Math.max(...monthlyOrders.map(m=>m.value), 1);
+  function fmt(n) { return `R${Number(n||0).toFixed(2)}`; }
+  function fmtNum(n) { return Number(n||0).toLocaleString(); }
 
   function barChart(items, max, prefix='') {
     const wrap = el('div', { className: 'flex items-end gap-2 h-32 mt-2' });
@@ -9305,117 +9286,451 @@ function renderAdminReports(data, container) {
     return wrap;
   }
 
-  page.append(el('div', { className: 'grid grid-cols-1 md:grid-cols-2 gap-4 mb-6' },
-    el('div', { className: 'bg-white rounded-xl p-5 shadow-sm border border-gray-100' },
-      el('p', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide mb-1' }, 'Monthly Revenue (Delivered)'),
-      barChart(monthlyRevenue, maxRev, 'R')
-    ),
-    el('div', { className: 'bg-white rounded-xl p-5 shadow-sm border border-gray-100' },
-      el('p', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide mb-1' }, 'Monthly Orders'),
-      barChart(monthlyOrders, maxOrd)
-    )
-  ));
+  function sectionTitle(text) {
+    return el('p', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide mb-3' }, text);
+  }
 
-  // ── Orders by status ────────────────────────────────────────────
-  const STATUS_COLORS_HEX = { PENDING:'#F59E0B', CONFIRMED:'#3B82F6', BAKING:'#8B5CF6', READY:'#10B981', DELIVERED:'#6B7280', CANCELLED:'#EF4444' };
-  const statusCounts = ['PENDING','CONFIRMED','BAKING','READY','DELIVERED','CANCELLED'].map(s=>({ label:s, value:orders.filter(o=>o.status===s).length, color:STATUS_COLORS_HEX[s] })).filter(s=>s.value>0);
+  function card(...children) {
+    return el('div', { className: 'bg-white rounded-xl p-5 shadow-sm border border-gray-100 mb-4' }, ...children);
+  }
 
-  const statusCard = el('div', { className: 'bg-white rounded-xl p-5 shadow-sm border border-gray-100 mb-6' });
-  statusCard.append(el('p', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide mb-3' }, 'Orders by Status'));
-  statusCounts.forEach(s => {
-    const pct = totalOrders ? ((s.value/totalOrders)*100).toFixed(0) : 0;
-    statusCard.append(el('div', { className: 'flex items-center gap-3 mb-2' },
-      el('span', { className: 'text-xs font-semibold w-24 text-gray-600 truncate' }, s.label),
-      el('div', { className: 'flex-1 bg-gray-100 rounded-full h-2 overflow-hidden' },
-        el('div', { className: 'h-2 rounded-full transition-all', style: { width: `${pct}%`, backgroundColor: s.color } })
-      ),
-      el('span', { className: 'text-xs font-bold text-gray-700 w-8 text-right' }, String(s.value))
+  function kpiGrid(...items) {
+    return el('div', { className: 'grid grid-cols-2 md:grid-cols-4 gap-3 mb-4' }, ...items);
+  }
+
+  function kpi(label, value, color='#8B3A3A') {
+    return el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100 shadow-sm' },
+      el('p', { className: 'text-xs text-gray-400 mb-1' }, label),
+      el('p', { className: 'text-lg font-black', style: { color } }, value)
+    );
+  }
+
+  function loadingSpinner() {
+    return el('div', { className: 'flex items-center justify-center py-12' },
+      el('div', { className: 'w-8 h-8 border-4 border-brand border-t-transparent rounded-full animate-spin' })
+    );
+  }
+
+  function progressBar(value, max, color='#8B3A3A') {
+    const pct = max > 0 ? Math.min((value/max)*100, 100) : 0;
+    return el('div', { className: 'flex-1 bg-gray-100 rounded-full h-2 overflow-hidden' },
+      el('div', { className: 'h-2 rounded-full transition-all', style: { width: `${pct}%`, backgroundColor: color } })
+    );
+  }
+
+  // ─── TABS ─────────────────────────────────────────────────────────
+  const TABS = [
+    { id: 'sales',      label: 'Sales' },
+    { id: 'finance',    label: 'Finance' },
+    { id: 'inventory',  label: 'Inventory' },
+    { id: 'production', label: 'Production' },
+  ];
+  let activeTab = 'sales';
+
+  const shell = el('div', { className: 'flex flex-col h-full' });
+  const tabNav = el('div', { className: 'flex gap-1 px-6 pt-4 border-b border-gray-100 bg-white flex-shrink-0 overflow-x-auto' });
+  const tabContent = el('div', { className: 'flex-1 overflow-y-auto p-6' });
+  shell.append(tabNav, tabContent);
+
+  function renderTabNav() {
+    tabNav.innerHTML = '';
+    TABS.forEach(t => {
+      const btn = el('button', {
+        className: `px-4 py-2 text-sm font-semibold rounded-t-lg border-b-2 transition-colors whitespace-nowrap ${activeTab===t.id ? 'border-brand text-brand bg-rose-50' : 'border-transparent text-gray-500 hover:text-gray-700'}`,
+        onClick: () => { activeTab = t.id; renderTabNav(); renderActiveTab(); }
+      }, t.label);
+      tabNav.append(btn);
+    });
+  }
+
+  // ── SALES TAB ─────────────────────────────────────────────────────────
+  function renderSalesTab() {
+    tabContent.innerHTML = '';
+    const page = el('div', { className: 'max-w-5xl mx-auto' });
+    tabContent.append(page);
+
+    const delivered = orders.filter(o=>o.status==='DELIVERED');
+    const revenue   = delivered.reduce((s,o)=>s+Number(o.total||0),0);
+    const avgOrder  = delivered.length ? revenue/delivered.length : 0;
+    const totalCommission = delivered.reduce((s,o)=>s+Number(o.total||0)*Number(o.ambassador?.commissionRate||0),0);
+
+    page.append(kpiGrid(
+      kpi('Total Revenue',      fmt(revenue),              '#10B981'),
+      kpi('Delivered Orders',   String(delivered.length),  '#3B82F6'),
+      kpi('Avg Order Value',    fmt(avgOrder),             '#8B3A3A'),
+      kpi('Commission Owed',    fmt(totalCommission),      '#8B5CF6'),
     ));
-  });
-  page.append(statusCard);
 
-  // ── Top products ────────────────────────────────────────────────
-  const prodMap = {};
-  orders.forEach(o => (o.items||[]).forEach(item => {
-    const name = item.variant?.product?.name || 'Unknown';
-    if (!prodMap[name]) prodMap[name] = { name, qty:0, revenue:0 };
-    prodMap[name].qty += item.quantity;
-    prodMap[name].revenue += Number(item.subtotal||0);
-  }));
-  const topProducts = Object.values(prodMap).sort((a,b)=>b.revenue-a.revenue).slice(0,8);
-  const maxProdRev = Math.max(...topProducts.map(p=>p.revenue), 1);
+    // Monthly charts
+    const months = last6Months();
+    const monthlyRevenue = months.map(m=>({ label:m.label, value:orders.filter(o=>o.status==='DELIVERED'&&monthKey(o.createdAt)===m.key).reduce((s,o)=>s+Number(o.total||0),0) }));
+    const monthlyOrders  = months.map(m=>({ label:m.label, value:orders.filter(o=>monthKey(o.createdAt)===m.key).length }));
+    const maxRev = Math.max(...monthlyRevenue.map(m=>m.value), 1);
+    const maxOrd = Math.max(...monthlyOrders.map(m=>m.value), 1);
 
-  const prodCard = el('div', { className: 'bg-white rounded-xl p-5 shadow-sm border border-gray-100 mb-6' });
-  prodCard.append(
-    el('div', { className: 'flex justify-between items-center mb-3' },
-      el('p', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide' }, 'Top Products by Revenue'),
-      el('span', { className: 'text-xs text-gray-400' }, `${topProducts.length} products`)
-    ),
-    topProducts.length === 0
-      ? el('p', { className: 'text-center text-gray-400 py-6 text-sm' }, 'No order data yet')
-      : el('div', { className: 'divide-y divide-gray-50' },
-          ...topProducts.map((p,i) => el('div', { className: 'flex items-center gap-3 py-2.5' },
+    page.append(el('div', { className: 'grid grid-cols-1 md:grid-cols-2 gap-4 mb-4' },
+      card(sectionTitle('Monthly Revenue (Delivered)'), barChart(monthlyRevenue, maxRev, 'R')),
+      card(sectionTitle('Monthly Orders'), barChart(monthlyOrders, maxOrd))
+    ));
+
+    // Orders by status
+    const STATUS_COLORS_HEX = { PENDING:'#F59E0B', CONFIRMED:'#3B82F6', BAKING:'#8B5CF6', READY:'#10B981', DELIVERED:'#6B7280', CANCELLED:'#EF4444' };
+    const statusCounts = ['PENDING','CONFIRMED','BAKING','READY','DELIVERED','CANCELLED']
+      .map(s=>({ label:s, value:orders.filter(o=>o.status===s).length, color:STATUS_COLORS_HEX[s] }))
+      .filter(s=>s.value>0);
+    const statusCard = card(sectionTitle('Orders by Status'));
+    statusCounts.forEach(s => {
+      const pct = orders.length ? ((s.value/orders.length)*100).toFixed(0) : 0;
+      statusCard.append(el('div', { className: 'flex items-center gap-3 mb-2' },
+        el('span', { className: 'text-xs font-semibold w-24 text-gray-600 truncate' }, s.label),
+        progressBar(s.value, orders.length, s.color),
+        el('span', { className: 'text-xs font-bold text-gray-700 w-8 text-right' }, String(s.value))
+      ));
+    });
+    page.append(statusCard);
+
+    // Top products
+    const prodMap = {};
+    orders.forEach(o=>(o.items||[]).forEach(item=>{
+      const name = item.variant?.product?.name || 'Unknown';
+      if (!prodMap[name]) prodMap[name] = { name, qty:0, revenue:0 };
+      prodMap[name].qty += item.quantity;
+      prodMap[name].revenue += Number(item.subtotal||0);
+    }));
+    const topProducts = Object.values(prodMap).sort((a,b)=>b.revenue-a.revenue).slice(0,8);
+    const maxProdRev = Math.max(...topProducts.map(p=>p.revenue), 1);
+    const topProdCard = card(
+      el('div', { className: 'flex justify-between items-center mb-3' },
+        sectionTitle('Top Products by Revenue'),
+        el('span', { className: 'text-xs text-gray-400' }, `${topProducts.length} products`)
+      ),
+      topProducts.length === 0
+        ? el('p', { className: 'text-center text-gray-400 py-6 text-sm' }, 'No order data yet')
+        : el('div', { className: 'divide-y divide-gray-50' },
+            ...topProducts.map((p,i) => el('div', { className: 'flex items-center gap-3 py-2.5' },
+              el('span', { className: 'text-xs font-black text-gray-300 w-5' }, String(i+1)),
+              el('div', { className: 'flex-1 min-w-0' },
+                el('p', { className: 'text-sm font-semibold text-gray-800 truncate' }, p.name),
+                el('div', { className: 'w-full bg-gray-100 rounded-full h-1.5 mt-1 overflow-hidden' },
+                  el('div', { className: 'h-1.5 rounded-full bg-brand', style: { width: `${(p.revenue/maxProdRev)*100}%` } })
+                )
+              ),
+              el('div', { className: 'text-right flex-shrink-0' },
+                el('p', { className: 'text-sm font-bold text-gray-900' }, fmt(p.revenue)),
+                el('p', { className: 'text-xs text-gray-400' }, `${p.qty} sold`)
+              )
+            ))
+          )
+    );
+    page.append(topProdCard);
+
+    // Top ambassadors
+    const ambMap = {};
+    orders.filter(o=>o.ambassador).forEach(o=>{
+      const id = o.ambassador.id;
+      if (!ambMap[id]) ambMap[id] = { code:o.ambassador.code, orders:0, revenue:0, commission:0, rate:Number(o.ambassador.commissionRate||0) };
+      ambMap[id].orders++;
+      ambMap[id].revenue += Number(o.total||0);
+      if (o.status==='DELIVERED') ambMap[id].commission += Number(o.total||0)*ambMap[id].rate;
+    });
+    const topAmb = Object.values(ambMap).sort((a,b)=>b.revenue-a.revenue).slice(0,6);
+    if (topAmb.length > 0) {
+      const ambCard = card(
+        sectionTitle('Top Ambassadors by Revenue Generated'),
+        el('div', { className: 'grid grid-cols-6 text-xs font-bold text-gray-400 pb-2 border-b border-gray-100 mb-1' },
+          el('span', { className: 'col-span-2' }, 'Ambassador'),
+          el('span', { className: 'text-right' }, 'Orders'),
+          el('span', { className: 'col-span-2 text-right' }, 'Revenue'),
+          el('span', { className: 'text-right' }, 'Commission')
+        ),
+        ...topAmb.map(a => el('div', { className: 'grid grid-cols-6 items-center text-sm py-2 border-b border-gray-50 last:border-0' },
+          el('span', { className: 'col-span-2 font-bold text-gray-800' }, a.code),
+          el('span', { className: 'text-right text-gray-600' }, String(a.orders)),
+          el('span', { className: 'col-span-2 text-right font-semibold text-gray-900' }, fmt(a.revenue)),
+          el('span', { className: 'text-right text-brand font-bold' }, fmt(a.commission))
+        ))
+      );
+      page.append(ambCard);
+    }
+
+    // Customer acquisition
+    const custMonths = last6Months();
+    const newCustPerMonth = custMonths.map(m=>({ label:m.label, value:customers.filter(c=>monthKey(c.createdAt)===m.key).length }));
+    const maxCust = Math.max(...newCustPerMonth.map(m=>m.value), 1);
+    page.append(card(sectionTitle('New Customers per Month'), barChart(newCustPerMonth, maxCust)));
+  }
+
+  // ── FINANCE TAB ───────────────────────────────────────────────────────
+  function renderFinanceTab() {
+    tabContent.innerHTML = '';
+    const page = el('div', { className: 'max-w-5xl mx-auto' });
+    const spinner = loadingSpinner();
+    page.append(spinner);
+    tabContent.append(page);
+
+    Promise.all([api.reports.pnl(), api.reports.cashflow(6)]).then(([pnl, cashflow]) => {
+      spinner.remove();
+
+      page.append(kpiGrid(
+        kpi('Total Revenue',    fmt(pnl.totalSales),    '#10B981'),
+        kpi('Total Expenses',   fmt(pnl.totalExpenses), '#EF4444'),
+        kpi('Gross Profit',     fmt(pnl.grossProfit),   pnl.grossProfit >= 0 ? '#10B981' : '#EF4444'),
+        kpi('Profit Margin',    pnl.totalSales > 0 ? `${((pnl.grossProfit/pnl.totalSales)*100).toFixed(1)}%` : '—', '#8B5CF6'),
+      ));
+
+      // Expenses by category
+      if (pnl.expensesByCategory?.length > 0) {
+        const maxExp = Math.max(...pnl.expensesByCategory.map(e=>e.amount), 1);
+        const expCard = card(sectionTitle('Expenses by Category'));
+        pnl.expensesByCategory.forEach(e => {
+          expCard.append(el('div', { className: 'flex items-center gap-3 mb-2' },
+            el('span', { className: 'text-xs font-semibold w-36 text-gray-600 truncate' }, e.category),
+            progressBar(e.amount, maxExp, '#EF4444'),
+            el('span', { className: 'text-xs font-bold text-gray-700 w-20 text-right' }, fmt(e.amount))
+          ));
+        });
+        page.append(expCard);
+      }
+
+      // Cashflow chart
+      const maxCF = Math.max(...cashflow.map(m=>Math.max(m.income, m.expenses)), 1);
+      const cfCard = card(sectionTitle('Monthly Cashflow (6 months)'));
+      const cfWrap = el('div', { className: 'flex items-end gap-2 h-40 mt-2' });
+      cashflow.forEach(m => {
+        const incPct = Math.max((m.income/maxCF)*100, m.income>0?3:0);
+        const expPct = Math.max((m.expenses/maxCF)*100, m.expenses>0?3:0);
+        cfWrap.append(el('div', { className: 'flex-1 flex flex-col items-center gap-1' },
+          el('div', { className: 'w-full flex gap-0.5 items-end', style: { height: '120px' } },
+            el('div', { className: 'flex-1 rounded-t-sm bg-green-400 transition-all', style: { height: `${incPct}%`, minHeight: m.income>0?'3px':'0' } }),
+            el('div', { className: 'flex-1 rounded-t-sm bg-red-400 transition-all', style: { height: `${expPct}%`, minHeight: m.expenses>0?'3px':'0' } })
+          ),
+          el('span', { className: 'text-xs text-gray-400 mt-1' }, m.label)
+        ));
+      });
+      cfCard.append(cfWrap,
+        el('div', { className: 'flex gap-4 mt-2' },
+          el('span', { className: 'text-xs text-gray-500 flex items-center gap-1' },
+            el('span', { className: 'inline-block w-3 h-3 rounded-sm bg-green-400' }), 'Income'),
+          el('span', { className: 'text-xs text-gray-500 flex items-center gap-1' },
+            el('span', { className: 'inline-block w-3 h-3 rounded-sm bg-red-400' }), 'Expenses')
+        )
+      );
+      page.append(cfCard);
+
+      // Cashflow table
+      const tableCard = card(sectionTitle('Monthly Detail'));
+      const thead = el('div', { className: 'grid grid-cols-4 text-xs font-bold text-gray-400 pb-2 border-b border-gray-100 mb-1' },
+        el('span', {}, 'Month'),
+        el('span', { className: 'text-right' }, 'Income'),
+        el('span', { className: 'text-right' }, 'Expenses'),
+        el('span', { className: 'text-right' }, 'Net')
+      );
+      tableCard.append(thead);
+      cashflow.forEach(m => {
+        tableCard.append(el('div', { className: 'grid grid-cols-4 items-center text-sm py-2 border-b border-gray-50 last:border-0' },
+          el('span', { className: 'font-semibold text-gray-700' }, m.label),
+          el('span', { className: 'text-right text-green-600 font-semibold' }, fmt(m.income)),
+          el('span', { className: 'text-right text-red-500' }, fmt(m.expenses)),
+          el('span', { className: `text-right font-bold ${m.net>=0?'text-green-700':'text-red-600'}` }, fmt(m.net))
+        ));
+      });
+      page.append(tableCard);
+    }).catch(() => {
+      spinner.remove();
+      page.append(el('p', { className: 'text-center text-red-400 py-8' }, 'Failed to load finance data'));
+    });
+  }
+
+  // ── INVENTORY TAB ─────────────────────────────────────────────────────
+  function renderInventoryTab() {
+    tabContent.innerHTML = '';
+    const page = el('div', { className: 'max-w-5xl mx-auto' });
+    const spinner = loadingSpinner();
+    page.append(spinner);
+    tabContent.append(page);
+
+    api.reports.inventory().then(report => {
+      spinner.remove();
+      const { summary, lowStock, topByValue, movementSummary } = report;
+
+      page.append(kpiGrid(
+        kpi('Total Stock Items',  String(summary.totalItems),                    '#3B82F6'),
+        kpi('Low Stock Items',    String(summary.lowStockCount),                 summary.lowStockCount>0 ? '#EF4444' : '#10B981'),
+        kpi('Zero Stock Items',   String(summary.zeroStockCount),                summary.zeroStockCount>0 ? '#F59E0B' : '#10B981'),
+        kpi('Total Stock Value',  fmt(summary.totalStockValue),                  '#8B3A3A'),
+      ));
+
+      // Low stock alerts
+      if (lowStock.length > 0) {
+        const alertCard = card(
+          el('div', { className: 'flex items-center gap-2 mb-3' },
+            el('span', { className: 'w-2 h-2 rounded-full bg-red-500 inline-block' }),
+            sectionTitle('Low Stock Alerts')
+          )
+        );
+        lowStock.forEach(item => {
+          const pct = item.minStockLevel > 0 ? Math.min((item.currentStock/item.minStockLevel)*100, 100) : 0;
+          alertCard.append(el('div', { className: 'flex items-center gap-3 mb-3' },
+            el('div', { className: 'flex-1 min-w-0' },
+              el('p', { className: 'text-sm font-semibold text-gray-800 truncate' }, item.name),
+              el('div', { className: 'flex items-center gap-2 mt-1' },
+                el('div', { className: 'flex-1 bg-gray-100 rounded-full h-2 overflow-hidden' },
+                  el('div', { className: 'h-2 rounded-full bg-red-400 transition-all', style: { width: `${pct}%` } })
+                ),
+                el('span', { className: 'text-xs text-gray-400 whitespace-nowrap' }, `${fmtNum(item.currentStock)} / ${fmtNum(item.minStockLevel)} ${item.uom}`)
+              )
+            )
+          ));
+        });
+        page.append(alertCard);
+      }
+
+      // Top stock by value
+      if (topByValue.length > 0) {
+        const maxVal = Math.max(...topByValue.map(i=>i.stockValue), 1);
+        const valCard = card(sectionTitle('Top Items by Stock Value'));
+        topByValue.forEach((item, i) => {
+          valCard.append(el('div', { className: 'flex items-center gap-3 py-2 border-b border-gray-50 last:border-0' },
             el('span', { className: 'text-xs font-black text-gray-300 w-5' }, String(i+1)),
             el('div', { className: 'flex-1 min-w-0' },
-              el('p', { className: 'text-sm font-semibold text-gray-800 truncate' }, p.name),
-              el('div', { className: 'w-full bg-gray-100 rounded-full h-1.5 mt-1 overflow-hidden' },
-                el('div', { className: 'h-1.5 rounded-full bg-brand', style: { width: `${(p.revenue/maxProdRev)*100}%` } })
+              el('p', { className: 'text-sm font-semibold text-gray-800 truncate' }, item.name),
+              el('div', { className: 'flex items-center gap-2 mt-1' },
+                progressBar(item.stockValue, maxVal),
+                el('span', { className: 'text-xs text-gray-400 whitespace-nowrap' }, `${fmtNum(item.currentStock)} ${item.uom}`)
               )
             ),
             el('div', { className: 'text-right flex-shrink-0' },
-              el('p', { className: 'text-sm font-bold text-gray-900' }, `R${p.revenue.toFixed(2)}`),
-              el('p', { className: 'text-xs text-gray-400' }, `${p.qty} sold`)
+              el('p', { className: 'text-sm font-bold text-gray-900' }, fmt(item.stockValue)),
+              el('p', { className: 'text-xs text-gray-400' }, `@ ${fmt(item.costPerUnit)} each`)
             )
-          ))
-        )
-  );
-  page.append(prodCard);
+          ));
+        });
+        page.append(valCard);
+      }
 
-  // ── Top ambassadors ─────────────────────────────────────────────
-  const ambMap = {};
-  orders.filter(o=>o.ambassador).forEach(o=>{
-    const id = o.ambassador.id;
-    if (!ambMap[id]) ambMap[id] = { code:o.ambassador.code, orders:0, revenue:0, commission:0, rate:Number(o.ambassador.commissionRate||0) };
-    ambMap[id].orders++;
-    ambMap[id].revenue += Number(o.total||0);
-    if (o.status==='DELIVERED') ambMap[id].commission += Number(o.total||0)*ambMap[id].rate;
-  });
-  const topAmb = Object.values(ambMap).sort((a,b)=>b.revenue-a.revenue).slice(0,6);
-
-  if (topAmb.length > 0) {
-    const ambCard = el('div', { className: 'bg-white rounded-xl p-5 shadow-sm border border-gray-100 mb-6' });
-    ambCard.append(
-      el('p', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide mb-3' }, 'Top Ambassadors by Revenue Generated'),
-      el('div', { className: 'grid grid-cols-6 text-xs font-bold text-gray-400 pb-2 border-b border-gray-100 mb-1' },
-        el('span', { className: 'col-span-2' }, 'Ambassador'),
-        el('span', { className: 'text-right' }, 'Orders'),
-        el('span', { className: 'col-span-2 text-right' }, 'Revenue Generated'),
-        el('span', { className: 'text-right' }, 'Commission')
-      ),
-      ...topAmb.map(a => el('div', { className: 'grid grid-cols-6 items-center text-sm py-2 border-b border-gray-50 last:border-0' },
-        el('span', { className: 'col-span-2 font-bold text-gray-800' }, a.code),
-        el('span', { className: 'text-right text-gray-600' }, String(a.orders)),
-        el('span', { className: 'col-span-2 text-right font-semibold text-gray-900' }, `R${a.revenue.toFixed(2)}`),
-        el('span', { className: 'text-right text-brand font-bold' }, `R${a.commission.toFixed(2)}`)
-      ))
-    );
-    page.append(ambCard);
+      // Movement summary (last 30 days)
+      if (movementSummary.length > 0) {
+        const TYPE_COLORS = { PURCHASE:'#10B981', PRODUCTION_USE:'#F59E0B', PRODUCTION_OUTPUT:'#3B82F6', ORDER_FULFILLMENT:'#8B5CF6', ADJUSTMENT_IN:'#6B7280', ADJUSTMENT_OUT:'#EF4444', WASTE:'#EF4444', RETURN:'#10B981' };
+        const mvCard = card(sectionTitle('Stock Movements (Last 30 Days)'));
+        mvCard.append(el('div', { className: 'grid grid-cols-3 text-xs font-bold text-gray-400 pb-2 border-b border-gray-100 mb-1' },
+          el('span', {}, 'Type'),
+          el('span', { className: 'text-right' }, 'Count'),
+          el('span', { className: 'text-right' }, 'Net Quantity')
+        ));
+        movementSummary.sort((a,b)=>Math.abs(b.totalQuantity)-Math.abs(a.totalQuantity)).forEach(m => {
+          mvCard.append(el('div', { className: 'grid grid-cols-3 items-center text-sm py-2 border-b border-gray-50 last:border-0' },
+            el('span', { className: 'flex items-center gap-2' },
+              el('span', { className: 'w-2 h-2 rounded-full inline-block', style: { backgroundColor: TYPE_COLORS[m.type] || '#9CA3AF' } }),
+              el('span', { className: 'font-medium text-gray-700 text-xs' }, m.type.replace(/_/g,' '))
+            ),
+            el('span', { className: 'text-right text-gray-600' }, String(m.count)),
+            el('span', { className: `text-right font-bold ${m.totalQuantity>=0?'text-green-700':'text-red-600'}` }, `${m.totalQuantity>=0?'+':''}${fmtNum(m.totalQuantity)}`)
+          ));
+        });
+        page.append(mvCard);
+      }
+    }).catch(() => {
+      spinner.remove();
+      page.append(el('p', { className: 'text-center text-red-400 py-8' }, 'Failed to load inventory data'));
+    });
   }
 
-  // ── Customer acquisition ────────────────────────────────────────
-  const custMonths = last6Months();
-  const newCustPerMonth = custMonths.map(m=>({
-    label: m.label,
-    value: customers.filter(c=>monthKey(c.createdAt)===m.key).length
-  }));
-  const maxCust = Math.max(...newCustPerMonth.map(m=>m.value), 1);
+  // ── PRODUCTION TAB ────────────────────────────────────────────────────
+  function renderProductionTab() {
+    tabContent.innerHTML = '';
+    const page = el('div', { className: 'max-w-5xl mx-auto' });
+    const spinner = loadingSpinner();
+    page.append(spinner);
+    tabContent.append(page);
 
-  page.append(el('div', { className: 'bg-white rounded-xl p-5 shadow-sm border border-gray-100' },
-    el('p', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide mb-1' }, 'New Customers per Month'),
-    barChart(newCustPerMonth, maxCust)
-  ));
+    api.reports.production().then(report => {
+      spinner.remove();
+      const { summary, byRecipe, recentRuns } = report;
 
-  container.append(page);
+      const statusColors = { PLANNED:'#9CA3AF', IN_PROGRESS:'#F59E0B', COMPLETED:'#10B981', CANCELLED:'#EF4444' };
+      const PKG_COLORS   = { PENDING:'#9CA3AF', IN_PROGRESS:'#F59E0B', COMPLETED:'#10B981', CANCELLED:'#EF4444' };
+
+      page.append(kpiGrid(
+        kpi('Total Runs',          String(summary.totalRuns),                   '#3B82F6'),
+        kpi('Completed',           String(summary.byStatus?.COMPLETED || 0),    '#10B981'),
+        kpi('Packaging Completed', String(summary.completedPackagingRuns || 0), '#8B5CF6'),
+        kpi('Units Produced',      fmtNum(summary.totalUnitsProduced),          '#8B3A3A'),
+      ));
+
+      // By status breakdown
+      const statusEntries = Object.entries(summary.byStatus || {}).filter(([,v])=>v>0);
+      if (statusEntries.length > 0) {
+        const stCard = card(sectionTitle('Runs by Status'));
+        statusEntries.forEach(([status, count]) => {
+          stCard.append(el('div', { className: 'flex items-center gap-3 mb-2' },
+            el('span', { className: 'w-2 h-2 rounded-full inline-block flex-shrink-0', style: { backgroundColor: statusColors[status] || '#9CA3AF' } }),
+            el('span', { className: 'text-xs font-semibold w-28 text-gray-600' }, status),
+            progressBar(count, summary.totalRuns, statusColors[status] || '#9CA3AF'),
+            el('span', { className: 'text-xs font-bold text-gray-700 w-8 text-right' }, String(count))
+          ));
+        });
+        page.append(stCard);
+      }
+
+      // By recipe
+      if (byRecipe.length > 0) {
+        const recCard = card(sectionTitle('By Recipe'));
+        recCard.append(el('div', { className: 'grid grid-cols-5 text-xs font-bold text-gray-400 pb-2 border-b border-gray-100 mb-1' },
+          el('span', { className: 'col-span-2' }, 'Recipe'),
+          el('span', { className: 'text-right' }, 'Runs'),
+          el('span', { className: 'text-right' }, 'Batches'),
+          el('span', { className: 'text-right' }, 'Units Out')
+        ));
+        byRecipe.forEach(r => {
+          recCard.append(el('div', { className: 'grid grid-cols-5 items-center text-sm py-2.5 border-b border-gray-50 last:border-0' },
+            el('span', { className: 'col-span-2 font-semibold text-gray-800 truncate' }, r.recipeName),
+            el('span', { className: 'text-right text-gray-600' }, String(r.runs)),
+            el('span', { className: 'text-right text-gray-600' }, fmtNum(r.totalBatches)),
+            el('span', { className: 'text-right font-bold text-brand' }, fmtNum(r.unitsProduced) || '—')
+          ));
+        });
+        page.append(recCard);
+      }
+
+      // Recent runs
+      if (recentRuns.length > 0) {
+        const runCard = card(sectionTitle('Recent Production Runs'));
+        runCard.append(el('div', { className: 'grid grid-cols-5 text-xs font-bold text-gray-400 pb-2 border-b border-gray-100 mb-1' },
+          el('span', { className: 'col-span-2' }, 'Recipe'),
+          el('span', { className: 'text-right' }, 'Batches'),
+          el('span', { className: 'text-right' }, 'Status'),
+          el('span', { className: 'text-right' }, 'Packaging')
+        ));
+        recentRuns.forEach(r => {
+          const statusBadge = el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full', style: { backgroundColor: (statusColors[r.status]||'#9CA3AF')+'22', color: statusColors[r.status]||'#9CA3AF' } }, r.status);
+          const pkgBadge = r.packagingStatus
+            ? el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full', style: { backgroundColor: (PKG_COLORS[r.packagingStatus]||'#9CA3AF')+'22', color: PKG_COLORS[r.packagingStatus]||'#9CA3AF' } }, r.packagingStatus)
+            : el('span', { className: 'text-xs text-gray-300' }, '—');
+          runCard.append(el('div', { className: 'grid grid-cols-5 items-center text-sm py-2.5 border-b border-gray-50 last:border-0' },
+            el('span', { className: 'col-span-2 font-medium text-gray-700 truncate' }, r.recipe),
+            el('span', { className: 'text-right text-gray-600' }, String(r.batches)),
+            el('div', { className: 'flex justify-end' }, statusBadge),
+            el('div', { className: 'flex justify-end' }, pkgBadge)
+          ));
+        });
+        page.append(runCard);
+      }
+    }).catch(() => {
+      spinner.remove();
+      page.append(el('p', { className: 'text-center text-red-400 py-8' }, 'Failed to load production data'));
+    });
+  }
+
+  function renderActiveTab() {
+    if (activeTab === 'sales')      renderSalesTab();
+    else if (activeTab === 'finance')    renderFinanceTab();
+    else if (activeTab === 'inventory')  renderInventoryTab();
+    else if (activeTab === 'production') renderProductionTab();
+  }
+
+  renderTabNav();
+  renderActiveTab();
+  container.append(shell);
 }
 
 // ── SETTINGS MODULE ───────────────────────────────────────────────────────────
