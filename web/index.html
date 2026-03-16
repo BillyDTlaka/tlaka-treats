@@ -10169,15 +10169,49 @@ function renderAdminBoard(container) {
       )
     );
     try {
-      const report = await api.board.run(periodDays, includeDebate);
-      renderReport(report);
+      // Start the meeting — returns immediately with an ID
+      const { id } = await api.board.run(periodDays, includeDebate);
+
+      // Poll every 4 seconds until COMPLETED or FAILED
+      let dots = 0;
+      const messages = [
+        '6 advisors are analysing your business data…',
+        'CEO & CFO advisors processing…',
+        'Marketing & Operations advisors processing…',
+        'Risk & Customer advisors processing…',
+        'Synthesising board report…',
+        'Almost done…',
+      ];
+      const statusEl = reportArea.querySelector('p:last-child');
+      const pollInterval = setInterval(async () => {
+        dots++;
+        if (statusEl) statusEl.textContent = messages[Math.min(dots - 1, messages.length - 1)];
+        try {
+          const meeting = await api.board.getById(id);
+          if (meeting.status === 'COMPLETED') {
+            clearInterval(pollInterval);
+            running = false;
+            runBtn.disabled = false;
+            runBtn.innerHTML = '🤖 Run Board Meeting';
+            renderReport(meeting.reportJson);
+          } else if (meeting.status === 'FAILED') {
+            clearInterval(pollInterval);
+            running = false;
+            runBtn.disabled = false;
+            runBtn.innerHTML = '🤖 Run Board Meeting';
+            reportArea.innerHTML = '';
+            reportArea.append(el('div', { className: 'bg-red-50 rounded-xl p-4 text-red-600 text-sm font-medium' },
+              '⚠️ Board meeting failed: ' + (meeting.errorMessage || 'Unknown error. Check that ANTHROPIC_API_KEY is set correctly.')
+            ));
+          }
+        } catch(e) { /* keep polling */ }
+      }, 4000);
     } catch(err) {
-      reportArea.innerHTML = '';
-      reportArea.append(el('div', { className: 'bg-red-50 rounded-xl p-4 text-red-600 text-sm' }, err?.message || 'Board meeting failed. Check that ANTHROPIC_API_KEY is set.'));
-    } finally {
       running = false;
       runBtn.disabled = false;
       runBtn.innerHTML = '🤖 Run Board Meeting';
+      reportArea.innerHTML = '';
+      reportArea.append(el('div', { className: 'bg-red-50 rounded-xl p-4 text-red-600 text-sm' }, err?.message || 'Failed to start board meeting.'));
     }
   });
 

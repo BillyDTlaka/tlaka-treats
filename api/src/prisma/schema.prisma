@@ -677,7 +677,9 @@ model BoardMeeting {
   id            String   @id @default(cuid())
   periodDays    Int      @default(30)
   debateEnabled Boolean  @default(false)
-  snapshotJson  Json
-  reportJson    Json
+  status        String   @default("RUNNING")   // RUNNING | COMPLETED | FAILED
+  errorMessage  String?
+  snapshotJson  Json     @default("{}")
+  reportJson    Json     @default("{}")
   createdAt     DateTime @default(now())
 }
