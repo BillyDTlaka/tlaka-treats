@@ -5676,7 +5676,13 @@ function renderAdminSuppliers(data, container, reload) {
             itemTable.append(el('div', { className: 'grid grid-cols-12 gap-2 px-3 py-2 border-t border-gray-50 items-center' },
               el('div', { className: 'col-span-5 font-semibold text-gray-800' }, item.stockItem?.name || item.stockItemId),
               el('div', { className: 'col-span-2 text-right text-gray-600' }, `${Number(item.orderedQty).toFixed(3)} ${item.stockItem?.uom?.abbreviation || item.stockItem?.unit || ''}`),
-              el('div', { className: 'col-span-2 text-right text-gray-600' }, `${Number(item.receivedQty).toFixed(3)}`),
+              el('div', { className: 'col-span-2 text-right' },
+                el('span', {
+                  className: Number(item.receivedQty) >= Number(item.orderedQty)
+                    ? 'text-green-600 font-bold'
+                    : 'text-gray-600'
+                }, `${Number(item.receivedQty).toFixed(3)} ${item.stockItem?.uom?.abbreviation || item.stockItem?.unit || ''}`),
+              ),
               el('div', { className: 'col-span-2 text-right text-gray-500' }, `R ${Number(item.unitCost).toFixed(4)}`),
               el('div', { className: 'col-span-1 text-right font-bold text-gray-800' }, `R ${Number(item.total).toFixed(2)}`),
             ));
@@ -5694,7 +5700,7 @@ function renderAdminSuppliers(data, container, reload) {
         if (['ORDERED','PARTIAL'].includes(po.status)) {
           btnRow.append(el('button', {
             className: 'text-sm font-bold bg-green-100 text-green-700 px-3 py-1.5 rounded-lg hover:bg-green-200',
-            onClick: async () => { if (!confirm('Mark this PO as received? This will add all items to stock.')) return; try { await api.suppliers.receivePO(po.id); toast('PO received — stock updated!', 'success'); reload(); } catch(e) { toast(e?.message||'Failed','error'); } }
+            onClick: async () => { if (!confirm('Mark this PO as received? This will add items to stock and update unit costs.')) return; try { await api.suppliers.receivePO(po.id); toast('PO received — stock and unit costs updated ✅', 'success'); reload(); } catch(e) { toast(e?.message||'Failed','error'); } }
           }, '✅ Mark Received (Add Stock)'));
         }
         if (!['RECEIVED','CANCELLED'].includes(po.status)) {

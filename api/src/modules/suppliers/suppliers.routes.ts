@@ -21,10 +21,10 @@ const supplierRoutes: FastifyPluginAsync = async (fastify) => {
       where: { id },
       include: {
         products: {
-          select: { id: true, name: true, classification: true, stockItem: { select: { id: true, currentStock: true, unit: true } } },
+          select: { id: true, name: true, classification: true, stockItem: { select: { id: true, currentStock: true, unit: true, uom: { select: { abbreviation: true } } } } },
         },
         purchaseOrders: {
-          include: { items: { include: { stockItem: { select: { id: true, name: true, unit: true } } } } },
+          include: { items: { include: { stockItem: { select: { id: true, name: true, unit: true, uom: { select: { id: true, abbreviation: true } } } } } } },
           orderBy: { createdAt: 'desc' },
           take: 10,
         },
@@ -53,7 +53,7 @@ const supplierRoutes: FastifyPluginAsync = async (fastify) => {
     return db.purchaseOrder.findMany({
       include: {
         supplier: { select: { id: true, name: true } },
-        items: { include: { stockItem: { select: { id: true, name: true, unit: true } } } },
+        items: { include: { stockItem: { select: { id: true, name: true, unit: true, uom: { select: { id: true, abbreviation: true } } } } } },
       },
       orderBy: { createdAt: 'desc' },
     })
@@ -119,7 +119,10 @@ const supplierRoutes: FastifyPluginAsync = async (fastify) => {
       })
       await db.stockItem.update({
         where: { id: item.stockItemId },
-        data: { currentStock: { increment: qty } },
+        data: {
+          currentStock: { increment: qty },
+          costPerUnit: item.unitCost,  // update to latest purchase price
+        },
       })
       await db.purchaseOrderItem.update({
         where: { id: item.id },
@@ -130,7 +133,10 @@ const supplierRoutes: FastifyPluginAsync = async (fastify) => {
     return db.purchaseOrder.update({
       where: { id },
       data: { status: 'RECEIVED' },
-      include: { items: true, supplier: true },
+      include: {
+        supplier: true,
+        items: { include: { stockItem: { select: { id: true, name: true, unit: true, uom: { select: { abbreviation: true } } } } } },
+      },
     })
   })
 }
