@@ -214,6 +214,194 @@ export async function generateBoardPdf(meeting: any): Promise<Buffer> {
   })
 }
 
+// ─── Strategy PDF ──────────────────────────────────────────────────────────────
+export async function generateStrategyPdf(strategy: any): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    const doc = new PDFDocument({ size: 'A4', margin: 50, autoFirstPage: true })
+    doc.on('data', (c: Buffer) => chunks.push(c))
+    doc.on('end',  () => resolve(Buffer.concat(chunks)))
+    doc.on('error', reject)
+
+    const pageW = doc.page.width - 100
+    const content = (strategy.contentJson || {}) as any
+
+    const IMPACT_COLOR: Record<string, string> = { HIGH: '#DC2626', MEDIUM: '#D97706', LOW: '#059669' }
+
+    // ─── HEADER ──────────────────────────────────────────────────────────────
+    doc.rect(0, 0, doc.page.width, 120).fill(BRAND)
+    doc.fillColor('white').font('Helvetica-Bold').fontSize(22).text('Tlaka Treats', 50, 26)
+    doc.font('Helvetica').fontSize(11).fillColor('rgba(255,255,255,0.75)').text('Business Strategy Document', 50, 54)
+    doc.font('Helvetica-Bold').fontSize(13).fillColor('white').text(strategy.title || 'Strategy', 50, 74)
+    doc.roundedRect(doc.page.width - 140, 28, 90, 22, 5).fill('rgba(255,255,255,0.2)')
+    doc.fillColor('white').font('Helvetica-Bold').fontSize(9)
+      .text(strategy.status || '', doc.page.width - 136, 35, { width: 82, align: 'center' })
+    doc.fillColor('rgba(255,255,255,0.65)').font('Helvetica').fontSize(9)
+      .text(`v${strategy.currentVersion || 1}  ·  ${new Date(strategy.createdAt).toLocaleDateString('en-ZA')}`, 50, 99)
+    doc.y = 140
+
+    function sectionHead(title: string) {
+      if (doc.y > doc.page.height - 130) doc.addPage()
+      doc.moveDown(0.3)
+      doc.rect(50, doc.y, pageW, 24).fill(BRAND + '12')
+      doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(11).text(title, 58, doc.y + 7)
+      doc.y += 30
+    }
+
+    function bodyText(text: string) {
+      if (doc.y > doc.page.height - 60) doc.addPage()
+      doc.fillColor(DARK).font('Helvetica').fontSize(10).text(text, 50, doc.y, { width: pageW })
+      doc.moveDown(0.4)
+    }
+
+    function bullet(text: string) {
+      if (doc.y > doc.page.height - 50) doc.addPage()
+      const y = doc.y
+      doc.circle(62, y + 5, 3).fill(BRAND)
+      doc.fillColor(DARK).font('Helvetica').fontSize(10).text(text, 72, y, { width: pageW - 24 })
+      doc.moveDown(0.2)
+    }
+
+    function lbl(text: string) {
+      doc.fillColor(MUTED).font('Helvetica-Bold').fontSize(8).text(text.toUpperCase(), 50, doc.y)
+      doc.moveDown(0.2)
+    }
+
+    if (content.executiveSummary) { sectionHead('Executive Summary'); bodyText(content.executiveSummary) }
+
+    if (content.vision || content.mission) {
+      sectionHead('Vision & Mission')
+      if (content.vision)  { lbl('Vision');  bodyText(content.vision);  doc.moveDown(0.2) }
+      if (content.mission) { lbl('Mission'); bodyText(content.mission) }
+    }
+
+    if ((content.coreValues || []).length) {
+      sectionHead('Core Values')
+      const cols = 2; const colW2 = (pageW - 10) / cols
+      let ci = 0; let rowY = doc.y
+      ;(content.coreValues as any[]).forEach(cv => {
+        if (ci === 0 && doc.y > doc.page.height - 70) { doc.addPage(); rowY = doc.y }
+        const x = 50 + ci * (colW2 + 10)
+        doc.roundedRect(x, rowY, colW2, 50, 5).fill(LIGHT)
+        doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(10).text(cv.value || '', x + 8, rowY + 8, { width: colW2 - 16 })
+        doc.fillColor(MUTED).font('Helvetica').fontSize(8.5).text(cv.description || '', x + 8, rowY + 24, { width: colW2 - 16, height: 20, ellipsis: true })
+        ci++
+        if (ci >= cols) { ci = 0; rowY += 58; doc.y = rowY }
+      })
+      if (ci > 0) doc.y = rowY + 58
+    }
+
+    if (content.swot) {
+      sectionHead('SWOT Analysis')
+      const sw = content.swot
+      const qW = (pageW - 6) / 2; const qH = 90
+      if (doc.y + qH * 2 + 20 > doc.page.height - 60) doc.addPage()
+      const baseY = doc.y
+      const quads = [
+        { label: 'Strengths',     items: sw.strengths     || [], color: '#059669', x: 50,          y: baseY },
+        { label: 'Weaknesses',    items: sw.weaknesses    || [], color: '#DC2626', x: 50 + qW + 6, y: baseY },
+        { label: 'Opportunities', items: sw.opportunities || [], color: '#2563EB', x: 50,          y: baseY + qH + 6 },
+        { label: 'Threats',       items: sw.threats       || [], color: '#D97706', x: 50 + qW + 6, y: baseY + qH + 6 },
+      ]
+      quads.forEach(q => {
+        doc.roundedRect(q.x, q.y, qW, qH, 5).fill(q.color + '10')
+        doc.rect(q.x, q.y, qW, 18).fill(q.color + '30')
+        doc.fillColor(q.color).font('Helvetica-Bold').fontSize(9).text(q.label.toUpperCase(), q.x + 8, q.y + 5, { width: qW - 16 })
+        let iy = q.y + 22
+        ;(q.items as string[]).slice(0, 4).forEach(item => {
+          doc.fillColor(DARK).font('Helvetica').fontSize(8.5).text('• ' + item, q.x + 8, iy, { width: qW - 16, height: 14, ellipsis: true })
+          iy += 14
+        })
+      })
+      doc.y = baseY + qH * 2 + 16
+    }
+
+    if ((content.strategicGoals || []).length) {
+      sectionHead('Strategic Goals')
+      ;(content.strategicGoals as any[]).forEach((goal, i) => {
+        if (doc.y > doc.page.height - 100) doc.addPage()
+        const pc = IMPACT_COLOR[goal.priority] || MUTED
+        const gy = doc.y
+        doc.roundedRect(50, gy, pageW, 14).fill(pc + '20')
+        doc.fillColor(pc).font('Helvetica-Bold').fontSize(10).text(`${i + 1}. ${goal.goal}`, 58, gy + 3, { width: pageW - 100 })
+        doc.y = gy + 22
+        doc.fillColor(MUTED).font('Helvetica').fontSize(8.5).text(`${goal.timeframe || ''}  ·  Owner: ${goal.owner || '—'}`, 58, doc.y)
+        doc.moveDown(0.4)
+        ;(goal.kpis || []).forEach((kpi: any) => {
+          doc.fillColor(DARK).font('Helvetica').fontSize(9)
+            .text(`📊 ${kpi.metric}: ${kpi.current} → ${kpi.target}`, 66, doc.y, { width: pageW - 20 })
+          doc.moveDown(0.2)
+        })
+        ;(goal.initiatives || []).forEach((ini: string) => bullet(ini))
+        doc.moveDown(0.3)
+      })
+    }
+
+    if ((content.actionPlan90Days || []).length) {
+      sectionHead('90-Day Action Plan')
+      ;(content.actionPlan90Days as any[]).forEach(week => {
+        if (doc.y > doc.page.height - 70) doc.addPage()
+        doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(10).text(week.week || '', 50, doc.y)
+        doc.fillColor(MUTED).font('Helvetica').fontSize(8.5).text(`Owner: ${week.owner || '—'}`, 200, doc.y - 12)
+        doc.moveDown(0.2)
+        ;(week.actions as string[] || []).forEach(a => bullet(a))
+        doc.moveDown(0.3)
+      })
+    }
+
+    if ((content.financialTargets || []).length) {
+      sectionHead('Financial Targets')
+      if (doc.y > doc.page.height - 100) doc.addPage()
+      const tblY = doc.y
+      doc.rect(50, tblY, pageW, 18).fill(LIGHT)
+      doc.fillColor(MUTED).font('Helvetica-Bold').fontSize(8.5)
+      doc.text('METRIC', 58, tblY + 5, { width: 140 })
+      doc.text('CURRENT', 202, tblY + 5, { width: 90 })
+      doc.text('TARGET', 297, tblY + 5, { width: 90 })
+      doc.text('BY', 392, tblY + 5, { width: 108 })
+      doc.y = tblY + 18
+      ;(content.financialTargets as any[]).forEach((ft, i) => {
+        if (doc.y > doc.page.height - 50) doc.addPage()
+        const ry = doc.y
+        doc.rect(50, ry, pageW, 20).fill(i % 2 === 0 ? 'white' : LIGHT)
+        doc.fillColor(DARK).font('Helvetica').fontSize(9).text(ft.metric || '', 58, ry + 5, { width: 140 })
+        doc.text(ft.current || '', 202, ry + 5, { width: 90 })
+        doc.fillColor('#059669').font('Helvetica-Bold').text(ft.target || '', 297, ry + 5, { width: 90 })
+        doc.fillColor(MUTED).font('Helvetica').text(ft.by || '', 392, ry + 5, { width: 108 })
+        doc.y = ry + 20
+      })
+      doc.moveDown(0.5)
+    }
+
+    if ((content.riskRegister || []).length) {
+      sectionHead('Risk Register')
+      ;(content.riskRegister as any[]).forEach(r => {
+        if (doc.y > doc.page.height - 70) doc.addPage()
+        const lc = IMPACT_COLOR[r.likelihood] || MUTED
+        const ic = IMPACT_COLOR[r.impact]     || MUTED
+        const ry = doc.y
+        doc.roundedRect(50, ry, pageW, 14).fill(lc + '15')
+        doc.fillColor(DARK).font('Helvetica-Bold').fontSize(9.5).text(r.risk || '', 58, ry + 3, { width: pageW - 100 })
+        doc.y = ry + 18
+        doc.fillColor(lc).font('Helvetica-Bold').fontSize(8).text(`Likelihood: ${r.likelihood}`, 58, doc.y)
+        doc.fillColor(ic).text(`  Impact: ${r.impact}`, 158, doc.y)
+        doc.fillColor(MUTED).font('Helvetica').text(`  Owner: ${r.owner || '—'}`, 248, doc.y)
+        doc.moveDown(0.35)
+        doc.fillColor(DARK).font('Helvetica').fontSize(9).text('→ ' + (r.mitigation || ''), 58, doc.y, { width: pageW - 20 })
+        doc.moveDown(0.5)
+      })
+    }
+
+    const footerY = doc.page.height - 60
+    doc.moveTo(50, footerY).lineTo(50 + pageW, footerY).strokeColor(BORDER).lineWidth(0.8).stroke()
+    doc.fillColor(MUTED).font('Helvetica').fontSize(8)
+      .text('Confidential · Tlaka Treats Strategy Document · hello@tlakatreats.co.za', 50, footerY + 10, { width: pageW, align: 'center' })
+    doc.text(`Version ${strategy.currentVersion || 1}  ·  Status: ${strategy.status}  ·  Generated by Claude AI`, 50, footerY + 22, { width: pageW, align: 'center' })
+
+    doc.end()
+  })
+}
+
 export async function generateQuotePdf(quote: any): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []

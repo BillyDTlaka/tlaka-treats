@@ -878,6 +878,54 @@ model Task {
   updatedAt   DateTime     @updatedAt
 }
 
+// ─── AI Strategy ──────────────────────────────────────────────────────────────
+
+enum StrategyStatus {
+  GENERATING
+  DRAFT
+  IN_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+  ARCHIVED
+}
+
+model Strategy {
+  id             String         @id @default(cuid())
+  title          String         @default("Business Strategy")
+  status         StrategyStatus @default(GENERATING)
+  errorMessage   String?
+  contextJson    Json           @default("{}")
+  snapshotJson   Json           @default("{}")
+  contentJson    Json           @default("{}")
+  currentVersion Int            @default(0)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  revisions      StrategyRevision[]
+  comments       StrategyComment[]
+}
+
+model StrategyRevision {
+  id          String   @id @default(cuid())
+  strategyId  String
+  strategy    Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+  version     Int
+  contentJson Json
+  changeType  String   // AI_GENERATED | AI_REFINED | MANUAL_EDIT
+  changeNote  String?
+  createdAt   DateTime @default(now())
+}
+
+model StrategyComment {
+  id         String   @id @default(cuid())
+  strategyId String
+  strategy   Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+  section    String?
+  body       String
+  author     String?
+  resolved   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+}
+
 // ─── AI Advisory Board ────────────────────────────────────────────────────────
 
 model BoardMeeting {
