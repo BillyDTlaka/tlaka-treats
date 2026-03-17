@@ -10060,7 +10060,7 @@ function renderAdminBoard(container) {
         } catch(err) {
           tasksBtn.disabled = false;
           tasksBtn.textContent = '✅ Create Tasks from Recommendations';
-          alert('Failed to create tasks: ' + (err?.message || 'Unknown error'));
+          alert('Failed to create tasks: ' + (err?.message || 'Unknown error') + (err?.status ? ` (HTTP ${err.status})` : ''));
         }
       });
 

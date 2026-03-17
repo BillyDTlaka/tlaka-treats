@@ -19,8 +19,15 @@ const taskRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post('/from-board/:meetingId', { preHandler: [authenticate, authorize('manage', 'product')] }, async (req, reply) => {
     const { meetingId } = req.params as { meetingId: string }
-    const result = await svc.createFromBoardMeeting(meetingId)
-    return reply.code(201).send(result)
+    fastify.log.info({ meetingId }, '[tasks] createFromBoardMeeting called')
+    try {
+      const result = await svc.createFromBoardMeeting(meetingId)
+      fastify.log.info({ meetingId, created: result.created }, '[tasks] createFromBoardMeeting success')
+      return reply.code(201).send(result)
+    } catch (err: any) {
+      fastify.log.error({ meetingId, err: err?.message }, '[tasks] createFromBoardMeeting failed')
+      throw err
+    }
   })
 
   fastify.get('/:id', { preHandler: [authenticate] }, async (req) => {
