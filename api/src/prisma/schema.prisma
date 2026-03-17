@@ -101,6 +101,7 @@ model User {
   addresses  Address[]
   quotesAsCustomer Quote[] @relation("QuoteCustomer")
   quotesCreated    Quote[] @relation("QuoteCreatedBy")
+  employee   Employee?
 }
 
 model Role {
@@ -669,6 +670,178 @@ model DiscountRule {
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// ─── Employees ────────────────────────────────────────────────────────────────
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  CASUAL
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+  TERMINATED
+}
+
+enum ShiftAssignmentStatus {
+  SCHEDULED
+  COMPLETED
+  ABSENT
+  LATE
+  CANCELLED
+}
+
+enum LeaveType {
+  ANNUAL
+  SICK
+  FAMILY
+  UNPAID
+  OTHER
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum PayrollStatus {
+  DRAFT
+  APPROVED
+  PAID
+}
+
+enum QualificationType {
+  QUALIFICATION
+  CERTIFICATION
+  LICENCE
+  TRAINING
+  OTHER
+}
+
+enum QualificationStatus {
+  VALID
+  EXPIRING_SOON
+  EXPIRED
+  REVOKED
+}
+
+model Employee {
+  id             String         @id @default(cuid())
+  userId         String         @unique
+  user           User           @relation(fields: [userId], references: [id])
+  employeeCode   String         @unique
+  jobTitle       String
+  department     String?
+  employmentType EmploymentType @default(FULL_TIME)
+  startDate      DateTime       @db.Date
+  endDate        DateTime?      @db.Date
+  hourlyRate     Decimal?       @db.Decimal(10, 2)
+  monthlyRate    Decimal?       @db.Decimal(10, 2)
+  bio            String?
+  bankName       String?
+  bankAccount    String?
+  bankBranch     String?
+  notes          String?
+  status         EmployeeStatus @default(ACTIVE)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  shifts         ShiftAssignment[]
+  leaveRequests  LeaveRequest[]
+  payrollItems   PayrollItem[]
+  qualifications EmployeeQualification[]
+}
+
+model EmployeeQualification {
+  id          String              @id @default(cuid())
+  employeeId  String
+  employee    Employee            @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  type        QualificationType
+  name        String
+  issuedBy    String?
+  issueDate   DateTime?           @db.Date
+  expiryDate  DateTime?           @db.Date
+  documentUrl String?
+  status      QualificationStatus @default(VALID)
+  notes       String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+}
+
+model Shift {
+  id          String   @id @default(cuid())
+  name        String
+  startTime   String   // "06:00"
+  endTime     String   // "14:00"
+  breakMins   Int      @default(30)
+  createdAt   DateTime @default(now())
+
+  assignments ShiftAssignment[]
+}
+
+model ShiftAssignment {
+  id          String                @id @default(cuid())
+  employeeId  String
+  employee    Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  shiftId     String
+  shift       Shift                 @relation(fields: [shiftId], references: [id])
+  date        DateTime              @db.Date
+  status      ShiftAssignmentStatus @default(SCHEDULED)
+  clockIn     DateTime?
+  clockOut    DateTime?
+  hoursWorked Decimal?              @db.Decimal(5, 2)
+  notes       String?
+  createdAt   DateTime              @default(now())
+
+  @@unique([employeeId, date])
+}
+
+model LeaveRequest {
+  id         String      @id @default(cuid())
+  employeeId String
+  employee   Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  type       LeaveType
+  fromDate   DateTime    @db.Date
+  toDate     DateTime    @db.Date
+  days       Int
+  reason     String?
+  status     LeaveStatus @default(PENDING)
+  approvedBy String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+}
+
+model PayrollRun {
+  id                   String        @id @default(cuid())
+  period               String        // "2026-03"
+  status               PayrollStatus @default(DRAFT)
+  totalGross           Decimal       @db.Decimal(10, 2)
+  totalNet             Decimal       @db.Decimal(10, 2)
+  processedAt          DateTime?
+  financeTransactionId String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  items PayrollItem[]
+}
+
+model PayrollItem {
+  id           String     @id @default(cuid())
+  payrollRunId String
+  payrollRun   PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  employeeId   String
+  employee     Employee   @relation(fields: [employeeId], references: [id])
+  hoursWorked  Decimal    @db.Decimal(5, 2)
+  grossPay     Decimal    @db.Decimal(10, 2)
+  deductions   Decimal    @default(0) @db.Decimal(10, 2)
+  netPay       Decimal    @db.Decimal(10, 2)
+  notes        String?
 }
 
 // ─── AI Advisory Board ────────────────────────────────────────────────────────
