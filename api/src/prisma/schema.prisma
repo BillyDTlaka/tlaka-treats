@@ -390,6 +390,8 @@ model Supplier {
 
   products       Product[]
   purchaseOrders PurchaseOrder[]
+  quoteRequests  SupplierQuoteRequest[]
+  supplierQuotes SupplierQuote[]
 }
 
 model StockItem {
@@ -413,6 +415,9 @@ model StockItem {
   recipeIngredients  RecipeIngredient[]
   purchaseOrderItems PurchaseOrderItem[]
   packagingRunItems  PackagingRunItem[]
+  supplierQuotes     SupplierQuote[]
+  marketPrices       MarketPrice[]
+  quoteRequestItems  SupplierQuoteRequestItem[]
 }
 
 model StockMovement {
@@ -966,4 +971,61 @@ model BoardMeeting {
   snapshotJson  Json     @default("{}")
   reportJson    Json     @default("{}")
   createdAt     DateTime @default(now())
+}
+
+// ─── Pricing Agent ────────────────────────────────────────────────────────────
+
+model SupplierQuoteRequest {
+  id         String    @id @default(cuid())
+  supplierId String
+  supplier   Supplier  @relation(fields: [supplierId], references: [id])
+  subject    String
+  body       String
+  status     String    @default("SENT")  // SENT | RESPONDED | CLOSED
+  sentAt     DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  items  SupplierQuoteRequestItem[]
+  quotes SupplierQuote[]
+}
+
+model SupplierQuoteRequestItem {
+  id          String               @id @default(cuid())
+  requestId   String
+  request     SupplierQuoteRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  stockItemId String
+  stockItem   StockItem            @relation(fields: [stockItemId], references: [id])
+}
+
+model SupplierQuote {
+  id           String                @id @default(cuid())
+  supplierId   String
+  supplier     Supplier              @relation(fields: [supplierId], references: [id])
+  requestId    String?
+  request      SupplierQuoteRequest? @relation(fields: [requestId], references: [id])
+  stockItemId  String
+  stockItem    StockItem             @relation(fields: [stockItemId], references: [id])
+  pricePerUnit Decimal               @db.Decimal(10, 4)
+  packSize     Decimal?              @db.Decimal(10, 3)
+  packPrice    Decimal?              @db.Decimal(10, 2)
+  unitLabel    String?
+  validUntil   DateTime?
+  source       String                @default("manual")
+  notes        String?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+}
+
+model MarketPrice {
+  id           String    @id @default(cuid())
+  stockItemId  String
+  stockItem    StockItem @relation(fields: [stockItemId], references: [id])
+  pricePerUnit Decimal   @db.Decimal(10, 4)
+  unitLabel    String?
+  source       String
+  url          String?
+  rawSnippet   String?
+  checkedAt    DateTime  @default(now())
+  createdAt    DateTime  @default(now())
 }

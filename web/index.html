@@ -346,6 +346,20 @@ const api = {
     approvePayroll:     (id)       => req('PATCH', `/employees/payroll/${id}/approve`),
     processPayroll:     (id, d)    => req('POST',  `/employees/payroll/${id}/process`, d),
   },
+  pricing: {
+    checkAll:          ()         => req('POST',   '/pricing/check', {}),
+    checkOne:          (id)       => req('POST',   `/pricing/check/${id}`, {}),
+    getMarketPrices:   ()         => req('GET',    '/pricing/market-prices'),
+    deleteMarketPrice: (id)       => req('DELETE', `/pricing/market-prices/${id}`),
+    getInsights:       ()         => req('GET',    '/pricing/insights'),
+    getSummary:        ()         => req('GET',    '/pricing/summary'),
+    getQuoteRequests:  ()         => req('GET',    '/pricing/quote-requests'),
+    sendQuoteRequest:  (d)        => req('POST',   '/pricing/quote-requests', d),
+    updateQuoteRequest:(id, d)    => req('PATCH',  `/pricing/quote-requests/${id}`, d),
+    getQuotes:         ()         => req('GET',    '/pricing/quotes'),
+    addQuote:          (d)        => req('POST',   '/pricing/quotes', d),
+    deleteQuote:       (id)       => req('DELETE', `/pricing/quotes/${id}`),
+  },
 };
 
 // ─── AUTH STORE ───────────────────────────────────────────────────
@@ -10076,6 +10090,7 @@ function renderAdminBohlale(container) {
     { id: 'board',    label: 'Board Meeting', icon: '🤝', desc: 'Virtual board with 6 AI advisors analysing your business' },
     { id: 'strategy', label: 'Strategy',      icon: '📊', desc: 'AI-generated business strategy with review & approval workflow' },
     { id: 'chat',     label: 'Bohlale Chat',  icon: '💬', desc: 'Chat with your business data and knowledge documents' },
+    { id: 'pricing',  label: 'Pricing',       icon: '🛒', desc: 'AI price intelligence — compare what you buy vs market prices' },
   ];
 
   let activeAgent = 'board';
@@ -10118,9 +10133,442 @@ function renderAdminBohlale(container) {
     if (activeAgent === 'board')    renderAdminBoard(contentArea);
     if (activeAgent === 'strategy') renderAdminStrategy(contentArea);
     if (activeAgent === 'chat')     renderAdminChat(contentArea);
+    if (activeAgent === 'pricing')  renderAdminPricing(contentArea);
   }
 
   renderContent();
+}
+
+// ── BOHLALE PRICING ───────────────────────────────────────────────────────────
+function renderAdminPricing(container) {
+  container.innerHTML = '';
+  const page = el('div', { className: 'flex h-full flex-col overflow-hidden' });
+  container.append(page);
+
+  let activeTab = 'insights';
+  let summary = [];
+  let quotes = [];
+  let quoteRequests = [];
+  let suppliers = [];
+  let insightsCache = null;
+
+  // ── Tab bar ─────────────────────────────────────────────────────────────────
+  const TABS = [
+    { id: 'insights',  label: '🧠 Insights' },
+    { id: 'prices',    label: '🌐 Market Prices' },
+    { id: 'quotes',    label: '📩 Supplier Quotes' },
+  ];
+
+  const tabBar = el('div', { className: 'flex gap-1 px-6 border-b border-gray-100 bg-white flex-shrink-0' },
+    ...TABS.map(t => {
+      const btn = el('button', {
+        className: `px-4 py-3 text-sm font-semibold border-b-2 transition-all ${activeTab === t.id ? 'border-brand text-brand' : 'border-transparent text-gray-400 hover:text-gray-700'}`,
+        onClick: () => {
+          activeTab = t.id;
+          page.querySelectorAll('[data-pricingtab]').forEach(b => {
+            const active = b.dataset.pricingtab === t.id;
+            b.className = `px-4 py-3 text-sm font-semibold border-b-2 transition-all ${active ? 'border-brand text-brand' : 'border-transparent text-gray-400 hover:text-gray-700'}`;
+          });
+          renderContent();
+        },
+      }, t.label);
+      btn.dataset.pricingtab = t.id;
+      return btn;
+    })
+  );
+  page.append(tabBar);
+
+  const content = el('div', { className: 'flex-1 overflow-auto p-6' });
+  page.append(content);
+
+  // ── Load data ────────────────────────────────────────────────────────────────
+  async function loadAll() {
+    try {
+      const [s, q, qr, sup] = await Promise.all([
+        api.pricing.getSummary(),
+        api.pricing.getQuotes(),
+        api.pricing.getQuoteRequests(),
+        api.suppliers.getAll(),
+      ]);
+      summary = s || [];
+      quotes = q || [];
+      quoteRequests = qr || [];
+      suppliers = sup || [];
+      renderContent();
+    } catch (e) {
+      content.innerHTML = `<p class="text-red-500">Failed to load: ${e.message}</p>`;
+    }
+  }
+
+  // ── Render content ───────────────────────────────────────────────────────────
+  function renderContent() {
+    content.innerHTML = '';
+    if (activeTab === 'insights') renderInsights();
+    if (activeTab === 'prices')   renderMarketPrices();
+    if (activeTab === 'quotes')   renderQuotes();
+  }
+
+  // ── Insights tab ─────────────────────────────────────────────────────────────
+  function renderInsights() {
+    const wrap = el('div', { className: 'max-w-3xl' });
+    content.append(wrap);
+
+    // Action bar
+    const bar = el('div', { className: 'flex items-center gap-3 mb-6' });
+    wrap.append(bar);
+
+    const checkBtn = el('button', {
+      className: 'px-4 py-2 bg-brand text-white rounded-lg text-sm font-semibold hover:bg-brand/90',
+      onClick: async () => {
+        checkBtn.disabled = true;
+        checkBtn.textContent = 'Checking prices…';
+        try {
+          await api.pricing.checkAll();
+          toast('Price check started — market prices will update shortly');
+          setTimeout(() => { loadAll(); }, 4000);
+        } catch(e) { toast(e.message, 'error'); }
+        finally { checkBtn.disabled = false; checkBtn.textContent = '🌐 Run Price Check'; }
+      },
+    }, '🌐 Run Price Check');
+
+    const insightsBtn = el('button', {
+      className: 'px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-semibold hover:bg-gray-200',
+      onClick: () => { insightsCache = null; renderInsights(); },
+    }, '🔄 Refresh Insights');
+
+    bar.append(checkBtn, insightsBtn);
+
+    if (insightsCache) {
+      wrap.append(el('div', { className: 'prose max-w-none bg-white rounded-xl border border-gray-100 p-6', innerHTML: mdToHtml(insightsCache) }));
+      return;
+    }
+
+    const loading = el('div', { className: 'flex items-center gap-3 text-gray-400 py-12' },
+      el('div', { className: 'animate-spin w-5 h-5 border-2 border-brand border-t-transparent rounded-full' }),
+      el('span', {}, 'Analysing your pricing data…')
+    );
+    wrap.append(loading);
+
+    api.pricing.getInsights().then(res => {
+      insightsCache = res.insights;
+      loading.remove();
+      wrap.append(el('div', { className: 'prose max-w-none bg-white rounded-xl border border-gray-100 p-6', innerHTML: mdToHtml(res.insights) }));
+    }).catch(e => {
+      loading.remove();
+      wrap.append(el('p', { className: 'text-red-500' }, e.message));
+    });
+  }
+
+  // ── Market Prices tab ────────────────────────────────────────────────────────
+  function renderMarketPrices() {
+    if (!summary.length) {
+      content.append(el('p', { className: 'text-gray-400 py-12 text-center' }, 'No ingredient stock items found. Add stock items with INGREDIENT or PACKAGING classification first.'));
+      return;
+    }
+
+    const wrap = el('div', { className: 'space-y-4' });
+    content.append(wrap);
+
+    for (const si of summary) {
+      const unit = si.uom?.abbreviation || si.unit || 'unit';
+      const currentCost = Number(si.costPerUnit) || 0;
+      const marketPrices = si.marketPrices || [];
+      const bestMarket = marketPrices.length ? Math.min(...marketPrices.map((m) => Number(m.pricePerUnit))) : null;
+      const saving = bestMarket && currentCost > 0 ? ((currentCost - bestMarket) / currentCost * 100).toFixed(1) : null;
+
+      const card = el('div', { className: 'bg-white rounded-xl border border-gray-100 p-4' });
+      wrap.append(card);
+
+      const header = el('div', { className: 'flex items-start justify-between mb-3' });
+      card.append(header);
+
+      const nameBlock = el('div', {},
+        el('p', { className: 'font-semibold text-gray-900' }, si.name),
+        el('p', { className: 'text-xs text-gray-400 mt-0.5' }, `Current cost: ${currentCost > 0 ? `R${currentCost.toFixed(2)}/${unit}` : 'Not set'}`)
+      );
+      header.append(nameBlock);
+
+      if (bestMarket !== null) {
+        const diff = currentCost > 0 && saving !== null ? Number(saving) : 0;
+        const badge = el('span', {
+          className: `text-xs font-bold px-2.5 py-1 rounded-full ${diff > 5 ? 'bg-red-50 text-red-600' : diff < -5 ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-600'}`,
+        }, diff > 5 ? `▲ ${saving}% overpaying` : diff < -5 ? `✓ ${Math.abs(diff).toFixed(1)}% below market` : '≈ Fair price');
+        header.append(badge);
+      }
+
+      // Single-item check button
+      const checkOneBtn = el('button', {
+        className: 'text-xs text-brand hover:underline mb-3',
+        onClick: async () => {
+          checkOneBtn.textContent = 'Checking…';
+          checkOneBtn.disabled = true;
+          try {
+            const r = await api.pricing.checkOne(si.id);
+            toast(`Found ${r.prices?.length || 0} price(s) for ${si.name}`);
+            await loadAll();
+          } catch(e) { toast(e.message, 'error'); }
+          finally { checkOneBtn.disabled = false; checkOneBtn.textContent = '🔍 Check now'; }
+        },
+      }, '🔍 Check now');
+      card.append(checkOneBtn);
+
+      if (!marketPrices.length) {
+        card.append(el('p', { className: 'text-xs text-gray-400' }, 'No market prices yet — run a price check.'));
+        continue;
+      }
+
+      const table = el('table', { className: 'w-full text-sm' });
+      card.append(table);
+      table.append(el('thead', {},
+        el('tr', { className: 'text-xs text-gray-400 border-b border-gray-50' },
+          el('th', { className: 'text-left pb-1.5 font-medium' }, 'Source'),
+          el('th', { className: 'text-right pb-1.5 font-medium' }, `Price/${unit}`),
+          el('th', { className: 'text-right pb-1.5 font-medium' }, 'Pack'),
+          el('th', { className: 'text-right pb-1.5 font-medium' }, 'vs Yours'),
+          el('th', { className: 'text-right pb-1.5 font-medium' }, ''),
+        )
+      ));
+      const tbody = el('tbody', {});
+      table.append(tbody);
+      for (const mp of marketPrices) {
+        const ppu = Number(mp.pricePerUnit);
+        const diff = currentCost > 0 ? ((ppu - currentCost) / currentCost * 100) : null;
+        tbody.append(el('tr', { className: 'border-b border-gray-50 last:border-0 hover:bg-gray-50' },
+          el('td', { className: 'py-1.5 text-gray-700' }, mp.source),
+          el('td', { className: 'py-1.5 text-right font-semibold' }, `R${ppu.toFixed(2)}`),
+          el('td', { className: 'py-1.5 text-right text-gray-400 text-xs' }, mp.rawSnippet ? mp.rawSnippet.slice(0, 30) + '…' : '—'),
+          el('td', { className: `py-1.5 text-right text-xs font-semibold ${diff === null ? 'text-gray-400' : diff > 5 ? 'text-green-600' : diff < -5 ? 'text-red-500' : 'text-gray-500'}` },
+            diff !== null ? (diff > 0 ? `+${diff.toFixed(0)}%` : `${diff.toFixed(0)}%`) : '—'
+          ),
+          el('td', { className: 'py-1.5 text-right' },
+            mp.url ? el('a', { href: mp.url, target: '_blank', className: 'text-xs text-brand hover:underline' }, 'View') : null
+          )
+        ));
+      }
+    }
+  }
+
+  // ── Supplier Quotes tab ──────────────────────────────────────────────────────
+  function renderQuotes() {
+    const wrap = el('div', { className: 'space-y-6' });
+    content.append(wrap);
+
+    // Send quote request button
+    const topBar = el('div', { className: 'flex justify-end' });
+    wrap.append(topBar);
+    topBar.append(el('button', {
+      className: 'px-4 py-2 bg-brand text-white rounded-lg text-sm font-semibold hover:bg-brand/90',
+      onClick: () => showSendQuoteModal(),
+    }, '+ Send Quote Request'));
+
+    // Quote Requests section
+    const reqSection = el('div', { className: 'bg-white rounded-xl border border-gray-100 p-5' });
+    wrap.append(reqSection);
+    reqSection.append(el('h3', { className: 'font-bold text-gray-900 mb-3' }, 'Sent Quote Requests'));
+
+    if (!quoteRequests.length) {
+      reqSection.append(el('p', { className: 'text-sm text-gray-400' }, 'No quote requests sent yet.'));
+    } else {
+      for (const qr of quoteRequests) {
+        const row = el('div', { className: 'flex items-center justify-between py-2.5 border-b border-gray-50 last:border-0' });
+        reqSection.append(row);
+        const items = qr.items?.map((i) => i.stockItem?.name).filter(Boolean).join(', ') || '—';
+        row.append(
+          el('div', {},
+            el('p', { className: 'text-sm font-semibold text-gray-800' }, qr.supplier?.name || '—'),
+            el('p', { className: 'text-xs text-gray-400 mt-0.5' }, items),
+          ),
+          el('div', { className: 'flex items-center gap-3' },
+            el('span', {
+              className: `text-xs px-2.5 py-1 rounded-full font-semibold ${qr.status === 'RESPONDED' ? 'bg-green-50 text-green-700' : qr.status === 'CLOSED' ? 'bg-gray-100 text-gray-500' : 'bg-blue-50 text-blue-700'}`,
+            }, qr.status),
+            el('span', { className: 'text-xs text-gray-400' }, new Date(qr.sentAt).toLocaleDateString('en-ZA')),
+            qr.status === 'SENT' ? el('button', {
+              className: 'text-xs text-brand hover:underline',
+              onClick: async () => {
+                await api.pricing.updateQuoteRequest(qr.id, { status: 'RESPONDED' });
+                await loadAll();
+              },
+            }, 'Mark Responded') : null,
+          )
+        );
+      }
+    }
+
+    // Received Quotes section
+    const quoteSection = el('div', { className: 'bg-white rounded-xl border border-gray-100 p-5' });
+    wrap.append(quoteSection);
+
+    const qHeader = el('div', { className: 'flex items-center justify-between mb-3' });
+    quoteSection.append(qHeader);
+    qHeader.append(
+      el('h3', { className: 'font-bold text-gray-900' }, 'Received Quotes'),
+      el('button', {
+        className: 'text-sm text-brand hover:underline font-semibold',
+        onClick: () => showAddQuoteModal(),
+      }, '+ Log Quote')
+    );
+
+    if (!quotes.length) {
+      quoteSection.append(el('p', { className: 'text-sm text-gray-400' }, 'No quotes logged yet. Click "Log Quote" to record a received supplier quote.'));
+    } else {
+      const tbl = el('table', { className: 'w-full text-sm' });
+      quoteSection.append(tbl);
+      tbl.append(el('thead', {},
+        el('tr', { className: 'text-xs text-gray-400 border-b border-gray-100' },
+          el('th', { className: 'text-left pb-2 font-medium' }, 'Ingredient'),
+          el('th', { className: 'text-left pb-2 font-medium' }, 'Supplier'),
+          el('th', { className: 'text-right pb-2 font-medium' }, 'Price/Unit'),
+          el('th', { className: 'text-right pb-2 font-medium' }, 'vs Current'),
+          el('th', { className: 'text-right pb-2 font-medium' }, 'Valid Until'),
+          el('th', { className: 'pb-2' }, ''),
+        )
+      ));
+      const tbody = el('tbody');
+      tbl.append(tbody);
+      for (const q of quotes) {
+        const ppu = Number(q.pricePerUnit);
+        const current = Number(q.stockItem?.costPerUnit) || 0;
+        const diff = current > 0 ? ((ppu - current) / current * 100) : null;
+        const unit = q.unitLabel || q.stockItem?.uom?.abbreviation || '';
+        tbody.append(el('tr', { className: 'border-b border-gray-50 last:border-0 hover:bg-gray-50' },
+          el('td', { className: 'py-2 font-medium text-gray-800' }, q.stockItem?.name || '—'),
+          el('td', { className: 'py-2 text-gray-600' }, q.supplier?.name || '—'),
+          el('td', { className: 'py-2 text-right font-semibold' }, `R${ppu.toFixed(2)}${unit ? `/${unit}` : ''}`),
+          el('td', { className: `py-2 text-right text-xs font-bold ${diff === null ? 'text-gray-400' : diff < -5 ? 'text-green-600' : diff > 5 ? 'text-red-500' : 'text-gray-500'}` },
+            diff !== null ? (diff < 0 ? `${diff.toFixed(0)}% cheaper` : diff > 5 ? `+${diff.toFixed(0)}% pricier` : 'Similar') : '—'
+          ),
+          el('td', { className: 'py-2 text-right text-xs text-gray-400' }, q.validUntil ? new Date(q.validUntil).toLocaleDateString('en-ZA') : '—'),
+          el('td', { className: 'py-2 text-right' },
+            el('button', {
+              className: 'text-xs text-red-400 hover:text-red-600',
+              onClick: async () => {
+                if (!confirm('Delete this quote?')) return;
+                await api.pricing.deleteQuote(q.id);
+                await loadAll();
+              },
+            }, '✕')
+          )
+        ));
+      }
+    }
+  }
+
+  // ── Send Quote Request Modal ──────────────────────────────────────────────────
+  function showSendQuoteModal() {
+    const modal = el('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4' });
+    document.body.append(modal);
+    const close = () => modal.remove();
+
+    const selectedItems = new Set();
+    const box = el('div', { className: 'bg-white rounded-2xl shadow-xl w-full max-w-lg p-6' });
+    modal.append(box);
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+
+    box.append(el('h2', { className: 'text-lg font-black text-gray-900 mb-4' }, 'Send Quote Request'));
+
+    // Supplier select
+    const supSel = el('select', { className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-4' },
+      el('option', { value: '' }, '— Select Supplier —'),
+      ...suppliers.map(s => el('option', { value: s.id }, `${s.name}${s.email ? '' : ' (no email)'}`, ))
+    );
+    box.append(el('label', { className: 'block text-sm font-semibold text-gray-700 mb-1' }, 'Supplier'), supSel);
+
+    // Ingredient checkboxes
+    box.append(el('p', { className: 'text-sm font-semibold text-gray-700 mb-2 mt-3' }, 'Select Ingredients'));
+    const itemsBox = el('div', { className: 'max-h-48 overflow-y-auto border border-gray-100 rounded-lg p-3 space-y-1.5' });
+    box.append(itemsBox);
+    for (const si of summary) {
+      const cb = el('label', { className: 'flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 rounded p-1' },
+        el('input', {
+          type: 'checkbox',
+          className: 'w-4 h-4 accent-brand',
+          onChange: e => e.target.checked ? selectedItems.add(si.id) : selectedItems.delete(si.id),
+        }),
+        el('span', {}, si.name),
+        el('span', { className: 'text-xs text-gray-400 ml-auto' }, `R${Number(si.costPerUnit).toFixed(2)} current`)
+      );
+      itemsBox.append(cb);
+    }
+
+    const notesArea = el('textarea', { className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-3 resize-none', rows: 2, placeholder: 'Additional notes (optional)' });
+    box.append(el('label', { className: 'block text-sm font-semibold text-gray-700 mb-1 mt-3' }, 'Notes'), notesArea);
+
+    const footer = el('div', { className: 'flex gap-3 mt-5' });
+    box.append(footer);
+    const sendBtn = el('button', {
+      className: 'flex-1 px-4 py-2.5 bg-brand text-white rounded-lg font-semibold text-sm hover:bg-brand/90',
+      onClick: async () => {
+        const supplierId = supSel.value;
+        if (!supplierId) { toast('Please select a supplier', 'error'); return; }
+        if (!selectedItems.size) { toast('Please select at least one ingredient', 'error'); return; }
+        sendBtn.disabled = true; sendBtn.textContent = 'Sending…';
+        try {
+          await api.pricing.sendQuoteRequest({ supplierId, stockItemIds: [...selectedItems], notes: notesArea.value.trim() || undefined });
+          toast('Quote request sent via email!');
+          close();
+          await loadAll();
+        } catch(e) { toast(e.message, 'error'); sendBtn.disabled = false; sendBtn.textContent = 'Send Email'; }
+      },
+    }, 'Send Email');
+    footer.append(el('button', { className: 'flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg font-semibold text-sm hover:bg-gray-200', onClick: close }, 'Cancel'), sendBtn);
+  }
+
+  // ── Log Received Quote Modal ──────────────────────────────────────────────────
+  function showAddQuoteModal() {
+    const modal = el('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4' });
+    document.body.append(modal);
+    const close = () => modal.remove();
+
+    const box = el('div', { className: 'bg-white rounded-2xl shadow-xl w-full max-w-md p-6' });
+    modal.append(box);
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+
+    box.append(el('h2', { className: 'text-lg font-black text-gray-900 mb-4' }, 'Log Received Quote'));
+
+    const row = (label, input) => el('div', { className: 'mb-3' }, el('label', { className: 'block text-sm font-semibold text-gray-700 mb-1' }, label), input);
+
+    const supSel = el('select', { className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm' },
+      el('option', { value: '' }, '— Supplier —'),
+      ...suppliers.map(s => el('option', { value: s.id }, s.name))
+    );
+    const itemSel = el('select', { className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm' },
+      el('option', { value: '' }, '— Ingredient —'),
+      ...summary.map(s => el('option', { value: s.id }, s.name))
+    );
+    const priceInp = el('input', { type: 'number', step: '0.01', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm', placeholder: 'e.g. 12.50' });
+    const unitInp  = el('input', { type: 'text',   className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm', placeholder: 'e.g. kg' });
+    const validInp = el('input', { type: 'date',   className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm' });
+    const notesInp = el('input', { type: 'text',   className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm', placeholder: 'Optional notes' });
+
+    box.append(row('Supplier', supSel), row('Ingredient', itemSel), row('Price per unit (R)', priceInp), row('Unit label', unitInp), row('Valid until', validInp), row('Notes', notesInp));
+
+    const footer = el('div', { className: 'flex gap-3 mt-5' });
+    box.append(footer);
+    const saveBtn = el('button', {
+      className: 'flex-1 px-4 py-2.5 bg-brand text-white rounded-lg font-semibold text-sm hover:bg-brand/90',
+      onClick: async () => {
+        if (!supSel.value || !itemSel.value || !priceInp.value) { toast('Supplier, ingredient and price are required', 'error'); return; }
+        saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+        try {
+          await api.pricing.addQuote({
+            supplierId:   supSel.value,
+            stockItemId:  itemSel.value,
+            pricePerUnit: Number(priceInp.value),
+            unitLabel:    unitInp.value.trim() || null,
+            validUntil:   validInp.value || null,
+            notes:        notesInp.value.trim() || null,
+          });
+          toast('Quote logged');
+          close();
+          await loadAll();
+        } catch(e) { toast(e.message, 'error'); saveBtn.disabled = false; saveBtn.textContent = 'Save Quote'; }
+      },
+    }, 'Save Quote');
+    footer.append(el('button', { className: 'flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg font-semibold text-sm hover:bg-gray-200', onClick: close }, 'Cancel'), saveBtn);
+  }
+
+  loadAll();
 }
 
 // ── BOHLALE CHAT ──────────────────────────────────────────────────────────────
