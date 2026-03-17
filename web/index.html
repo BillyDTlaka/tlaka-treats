@@ -2952,8 +2952,7 @@ const ADMIN_NAV = [
   { id: 'production',   label: 'Production',    icon: 'M12 2a10 10 0 100 20 10 10 0 000-20z|M12 6v6l4 2',                                                                                                               soon: false },
   { id: 'finance',      label: 'Finance',       icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z|M12 6v2|M12 16v2|M8.5 9.5A3.5 3.5 0 0112 8h1a2 2 0 110 4h-2a2 2 0 100 4h1a3.5 3.5 0 003.5-3.5', soon: false },
   { id: 'reports',      label: 'Reports',       icon: 'M18 20V10|M12 20V4|M6 20v-6',                                                                                                                                      soon: false },
-  { id: 'board',        label: 'AI Board',      icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z', soon: false },
-  { id: 'strategy',     label: 'AI Strategy',   icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z', soon: false },
+  { id: 'bohlale',      label: 'Bohlale',       icon: 'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z', soon: false },
   { id: 'employees',    label: 'Employees',     icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z', soon: false },
   { id: 'tasks',        label: 'Tasks',         icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4', soon: false },
   { id: 'marketing',    label: 'Marketing',     icon: 'M22 12h-4l-3 9L9 3l-3 9H2',                                                                                                                                        soon: true  },
@@ -2972,8 +2971,7 @@ const MODULE_META = {
   production:   { title: 'Production',    subtitle: 'Production runs & batch tracking' },
   finance:      { title: 'Finance',       subtitle: 'Money in, money out, commissions & bank' },
   reports:      { title: 'Reports',       subtitle: 'Analytics and reporting' },
-  board:        { title: 'AI Advisory Board',  subtitle: 'AI-powered board meeting for your business' },
-  strategy:     { title: 'AI Strategy',        subtitle: 'AI-generated business strategy with review & approval workflow' },
+  bohlale:      { title: 'Bohlale',             subtitle: 'AI intelligence — board meetings, strategy & insights' },
   employees:    { title: 'Employees',         subtitle: 'Staff, shifts, leave & payroll' },
   tasks:        { title: 'Tasks',             subtitle: 'Action items and board recommendations' },
   marketing:    { title: 'Marketing',     subtitle: 'Campaigns and promotions' },
@@ -3144,8 +3142,7 @@ function renderAdminModule(module, data, container, reload, navigate) {
     case 'production':  renderAdminProduction(data, container, reload); break;
     case 'finance':     renderAdminFinance(container);                   break;
     case 'reports':     renderAdminReports(data, container);             break;
-    case 'board':       renderAdminBoard(container);                     break;
-    case 'strategy':    renderAdminStrategy(container);                  break;
+    case 'bohlale':     renderAdminBohlale(container);                   break;
     case 'employees':   renderAdminEmployees(container);                 break;
     case 'tasks':       renderAdminTasks(container);                     break;
     case 'settings':    renderAdminSettings(data, container, reload);    break;
@@ -9990,6 +9987,61 @@ function renderAdminReports(data, container) {
   renderTabNav();
   renderActiveTab();
   container.append(shell);
+}
+
+// ── BOHLALE — AI Intelligence Hub ─────────────────────────────────────────────
+function renderAdminBohlale(container) {
+  container.innerHTML = '';
+  const page = el('div', { className: 'h-full flex flex-col' });
+  container.append(page);
+
+  const AGENTS = [
+    { id: 'board',    label: 'Board Meeting', icon: '🤝', desc: 'Virtual board with 6 AI advisors analysing your business' },
+    { id: 'strategy', label: 'Strategy',      icon: '📊', desc: 'AI-generated business strategy with review & approval workflow' },
+  ];
+
+  let activeAgent = 'board';
+
+  // Header
+  page.append(
+    el('div', { className: 'border-b border-gray-100 bg-white px-6 pt-5 pb-0 flex-shrink-0' },
+      el('div', { className: 'flex items-end gap-3 mb-0' },
+        el('div', { className: 'mb-3' },
+          el('h1', { className: 'text-2xl font-black text-gray-900' }, 'Bohlale'),
+          el('p', { className: 'text-sm text-gray-400 mt-0.5' }, 'AI intelligence for your business')
+        )
+      ),
+      el('div', { className: 'flex gap-1' },
+        ...AGENTS.map(agent => {
+          const tab = el('button', {
+            className: `px-5 py-2.5 text-sm font-black border-b-2 transition-all ${activeAgent === agent.id ? 'border-brand text-brand' : 'border-transparent text-gray-400 hover:text-gray-700'}`,
+            onClick: () => {
+              activeAgent = agent.id;
+              renderContent();
+              // Update active tab styles
+              page.querySelectorAll('[data-agenttab]').forEach(b => {
+                const isActive = b.dataset.agenttab === agent.id;
+                b.className = `px-5 py-2.5 text-sm font-black border-b-2 transition-all ${isActive ? 'border-brand text-brand' : 'border-transparent text-gray-400 hover:text-gray-700'}`;
+              });
+            },
+          }, el('span', { className: 'mr-1.5' }, agent.icon), agent.label);
+          tab.dataset.agenttab = agent.id;
+          return tab;
+        })
+      )
+    )
+  );
+
+  const contentArea = el('div', { className: 'flex-1 overflow-auto' });
+  page.append(contentArea);
+
+  function renderContent() {
+    contentArea.innerHTML = '';
+    if (activeAgent === 'board')    renderAdminBoard(contentArea);
+    if (activeAgent === 'strategy') renderAdminStrategy(contentArea);
+  }
+
+  renderContent();
 }
 
 // ── AI ADVISORY BOARD ─────────────────────────────────────────────────────────
