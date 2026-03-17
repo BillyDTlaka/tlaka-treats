@@ -49,6 +49,20 @@ const boardRoutes: FastifyPluginAsync = async (fastify) => {
     return meeting
   })
 
+  // ── GET /board/snapshot ─── Debug: see raw snapshot without running AI
+  fastify.get('/snapshot', { preHandler: [authenticate, authorize('manage', 'product')] }, async (req) => {
+    const { periodDays = 60 } = req.query as { periodDays?: number }
+    const snapshot = await buildSnapshot(db, Number(periodDays))
+    // Also include raw counts so we can see if queries are hitting data
+    const [orderCount, txnCount, stockCount, prodCount] = await Promise.all([
+      db.order.count(),
+      db.financeTransaction.count(),
+      db.stockItem.count(),
+      db.productionRun.count(),
+    ])
+    return { snapshot, debug: { totalOrdersInDb: orderCount, totalTransactionsInDb: txnCount, totalStockItemsInDb: stockCount, totalProductionRunsInDb: prodCount, periodDays: Number(periodDays) } }
+  })
+
   // ── GET /board/meetings ─── History (last 20)
   fastify.get('/meetings', { preHandler: [authenticate, authorize('manage', 'product')] }, async () => {
     return db.boardMeeting.findMany({

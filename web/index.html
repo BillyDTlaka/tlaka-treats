@@ -10265,6 +10265,24 @@ function renderAdminBoard(container) {
         ),
         debateToggle,
         runBtn,
+        el('button', { className: 'text-xs text-gray-400 hover:text-indigo-600 underline', onClick: async () => {
+          try {
+            const result = await req('GET', `/board/snapshot?periodDays=${periodDays}`);
+            const snap = result.snapshot;
+            const dbg  = result.debug;
+            const txt = [
+              `DB totals: ${dbg.totalOrdersInDb} orders, ${dbg.totalTransactionsInDb} transactions, ${dbg.totalStockItemsInDb} stock items, ${dbg.totalProductionRunsInDb} production runs`,
+              `Snapshot (${dbg.periodDays}-day window):`,
+              `  Revenue: R${snap.sales?.totalRevenue} from ${snap.sales?.totalOrders} orders`,
+              `  Finance income: R${snap.finance?.totalIncome} | expenses: R${snap.finance?.totalExpenses}`,
+              `  Top products: ${snap.sales?.topProducts?.map(p => p.name + ' R' + p.revenue).join(', ') || 'none'}`,
+              `  Production runs: ${snap.production?.runsCompleted} completed`,
+              `  Customers: ${snap.customers?.totalActiveCustomers}`,
+              `  Low stock items: ${snap.inventory?.lowStockItems?.length}`,
+            ].join('\n');
+            alert(txt);
+          } catch(e) { alert('Snapshot error: ' + e.message); }
+        }}, 'Check data snapshot')
       )
     ),
     reportArea
