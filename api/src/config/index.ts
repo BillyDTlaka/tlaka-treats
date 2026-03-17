@@ -22,7 +22,7 @@ export const config = {
 
   // AI Advisory Board (Anthropic)
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
-  braveSearchApiKey: process.env.BRAVE_SEARCH_API_KEY || '',
+  braveSearchApiKey: process.env.SERPER_API_KEY || process.env.BRAVE_SEARCH_API_KEY || '',
 
   // WhatsApp via Twilio
   twilio: {

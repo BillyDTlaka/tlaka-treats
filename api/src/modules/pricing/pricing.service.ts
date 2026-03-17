@@ -4,19 +4,24 @@ import { config } from '../../config'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' })
 const MODEL = 'claude-sonnet-4-6'
-const BRAVE_API = 'https://api.search.brave.com/res/v1/web/search'
+const SERPER_API = 'https://google.serper.dev/search'
 
-async function braveSearch(query: string): Promise<any[]> {
-  const key = config.braveSearchApiKey
+async function webSearch(query: string): Promise<any[]> {
+  const key = config.braveSearchApiKey  // reusing same config key — set BRAVE_SEARCH_API_KEY to your Serper key
   if (!key) return []
   try {
-    const url = `${BRAVE_API}?q=${encodeURIComponent(query)}&country=ZA&count=5`
-    const res = await fetch(url, {
-      headers: { 'X-Subscription-Token': key, 'Accept': 'application/json' },
+    const res = await fetch(SERPER_API, {
+      method: 'POST',
+      headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: query, gl: 'za', num: 5 }),
     })
     if (!res.ok) return []
     const data: any = await res.json()
-    return data.web?.results || []
+    return (data.organic || []).map((r: any) => ({
+      title:       r.title,
+      description: r.snippet,
+      url:         r.link,
+    }))
   } catch {
     return []
   }
@@ -33,7 +38,7 @@ export async function searchIngredientPrices(db: any, stockItemId: string): Prom
   const name = stockItem.name
   const query = `"${name}" price South Africa per ${unitLabel} Makro OR Checkers OR "Pick n Pay" OR Woolworths`
 
-  const results = await braveSearch(query)
+  const results = await webSearch(query)
   if (!results.length) return { stockItem, prices: [] }
 
   const prompt = `Extract retail prices from these South African search results for the ingredient "${name}" (measuring unit: ${unitLabel}).
