@@ -24,6 +24,7 @@ import uomRoutes         from './modules/uom/uom.routes'
 import reportsRoutes     from './modules/reports/reports.routes'
 import boardRoutes       from './modules/board/board.routes'
 import employeeRoutes    from './modules/employees/employees.routes'
+import taskRoutes        from './modules/tasks/tasks.routes'
 
 export async function buildApp() {
   const app = Fastify({
@@ -78,6 +79,7 @@ export async function buildApp() {
   await app.register(reportsRoutes,      { prefix: '/reports' })
   await app.register(boardRoutes,        { prefix: '/board' })
   await app.register(employeeRoutes,     { prefix: '/employees' })
+  await app.register(taskRoutes,         { prefix: '/tasks' })
 
   // Health check
   app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }))

@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify'
 import { authenticate, authorize } from '../../shared/middleware/auth'
 import { buildSnapshot } from './board.context'
 import { runBoardMeeting } from './board.service'
+import { generateBoardPdf } from '../../shared/services/pdf.service'
 
 const boardRoutes: FastifyPluginAsync = async (fastify) => {
   const db = fastify.prisma as any
@@ -47,6 +48,19 @@ const boardRoutes: FastifyPluginAsync = async (fastify) => {
     const meeting = await db.boardMeeting.findUnique({ where: { id } })
     if (!meeting) throw { statusCode: 404, message: 'Board meeting not found' }
     return meeting
+  })
+
+  // ── GET /board/meetings/:id/pdf ─── Download report as PDF
+  fastify.get('/meetings/:id/pdf', { preHandler: [authenticate, authorize('manage', 'product')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const meeting = await db.boardMeeting.findUnique({ where: { id } })
+    if (!meeting) throw { statusCode: 404, message: 'Board meeting not found' }
+    if (meeting.status !== 'COMPLETED') throw { statusCode: 400, message: 'Meeting is not completed yet' }
+    const buf = await generateBoardPdf(meeting)
+    const date = new Date(meeting.createdAt).toISOString().slice(0, 10)
+    reply.header('Content-Type', 'application/pdf')
+    reply.header('Content-Disposition', `attachment; filename="board-report-${date}.pdf"`)
+    return reply.send(buf)
   })
 
   // ── GET /board/snapshot ─── Debug: see raw snapshot without running AI

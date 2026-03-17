@@ -11,6 +11,209 @@ function fmt(n: number | null | undefined) {
   return `R${Number(n ?? 0).toFixed(2)}`
 }
 
+// ─── Board Meeting PDF ─────────────────────────────────────────────────────────
+export async function generateBoardPdf(meeting: any): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    const doc = new PDFDocument({ size: 'A4', margin: 50, autoFirstPage: true })
+
+    doc.on('data', (c: Buffer) => chunks.push(c))
+    doc.on('end', () => resolve(Buffer.concat(chunks)))
+    doc.on('error', reject)
+
+    const pageW = doc.page.width - 100
+
+    const report  = meeting.reportJson  || {}
+    const verdict = report.verdict      || {}
+    const meta    = report.meta         || {}
+
+    const HEALTH_COLOR: Record<string, string> = {
+      STRONG: '#059669', STABLE: '#2563EB', AT_RISK: '#D97706', CRITICAL: '#DC2626',
+    }
+    const PRIORITY_COLOR: Record<string, string> = { HIGH: '#DC2626', MEDIUM: '#D97706', LOW: '#059669' }
+    const SEV_COLOR: Record<string, string> = { CRITICAL: '#DC2626', HIGH: '#EA580C', MEDIUM: '#D97706', LOW: '#6B7280' }
+    const hColor = HEALTH_COLOR[verdict.overallHealth] || '#2563EB'
+
+    // ─── HEADER ────────────────────────────────────────────────────────────────
+    doc.rect(0, 0, doc.page.width, 110).fill(BRAND)
+    doc.fillColor('white').font('Helvetica-Bold').fontSize(24).text('Tlaka Treats', 50, 28)
+    doc.font('Helvetica').fontSize(11).fillColor('rgba(255,255,255,0.75)').text('AI Advisory Board Meeting', 50, 58)
+    doc.font('Helvetica').fontSize(10).fillColor('rgba(255,255,255,0.65)').text(
+      `Generated ${new Date(meta.generatedAt || meeting.createdAt).toLocaleString('en-ZA')}   ·   ${meta.periodDays || 30}-day window   ·   ${meta.totalAgentCalls || 7} AI calls`,
+      50, 78
+    )
+
+    // Health badge top-right
+    doc.fillColor('white').font('Helvetica-Bold').fontSize(11)
+      .text('BOARD REPORT', doc.page.width - 160, 30, { width: 110, align: 'right' })
+    doc.font('Helvetica-Bold').fontSize(18).fillColor('white')
+      .text(verdict.overallHealth || 'STABLE', doc.page.width - 160, 50, { width: 110, align: 'right' })
+
+    doc.y = 130
+
+    // ─── VERDICT ───────────────────────────────────────────────────────────────
+    doc.roundedRect(50, doc.y, pageW, 52, 6).fill(hColor + '15')
+    doc.fillColor(hColor).font('Helvetica-Bold').fontSize(13)
+      .text(verdict.overallHealth || '', 62, doc.y + 10)
+    doc.fillColor(DARK).font('Helvetica').fontSize(10)
+      .text(verdict.headline || '', 62, doc.y + 28, { width: pageW - 24 })
+    doc.y += 62
+
+    // Board sentiment row
+    const sentRow = Object.entries(verdict.boardSentiment || {})
+    if (sentRow.length) {
+      doc.fillColor(MUTED).font('Helvetica').fontSize(9)
+      sentRow.forEach(([key, val], i) => {
+        doc.text(`${val} ${key}`, 50 + i * 80, doc.y, { width: 78, align: 'center' })
+      })
+      doc.y += 18
+    }
+
+    doc.moveDown(0.5)
+    doc.moveTo(50, doc.y).lineTo(50 + pageW, doc.y).strokeColor(BORDER).lineWidth(0.8).stroke()
+    doc.moveDown(0.8)
+
+    // ── Helper: section heading ─────────────────────────────────────────────
+    function sectionHead(title: string) {
+      if (doc.y > doc.page.height - 120) doc.addPage()
+      doc.fillColor(DARK).font('Helvetica-Bold').fontSize(12).text(title, 50, doc.y)
+      doc.moveDown(0.35)
+      doc.moveTo(50, doc.y).lineTo(50 + pageW, doc.y).strokeColor(BORDER).lineWidth(0.5).stroke()
+      doc.moveDown(0.4)
+    }
+
+    function pill(text: string, color: string, x: number, y: number, w = 70) {
+      doc.roundedRect(x, y, w, 14, 4).fill(color + '25')
+      doc.fillColor(color).font('Helvetica-Bold').fontSize(7.5).text(text, x + 4, y + 3, { width: w - 8 })
+    }
+
+    // ─── KEY INSIGHTS ──────────────────────────────────────────────────────────
+    if ((report.keyInsights || []).length) {
+      sectionHead('KEY INSIGHTS')
+      ;(report.keyInsights as any[]).forEach((ins, i) => {
+        if (doc.y > doc.page.height - 80) doc.addPage()
+        const rowY = doc.y
+        doc.roundedRect(50, rowY, 22, 22, 4).fill(BRAND + '20')
+        doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(10).text(String(i + 1), 50, rowY + 6, { width: 22, align: 'center' })
+        doc.fillColor(DARK).font('Helvetica').fontSize(9.5)
+          .text(ins.insight, 80, rowY + 2, { width: pageW - 36 })
+        if (ins.dataRef) {
+          doc.fillColor(MUTED).font('Helvetica').fontSize(8).text(`[${ins.dataRef}]`, 80, doc.y)
+        }
+        doc.y = Math.max(doc.y, rowY + 26)
+        doc.moveDown(0.2)
+      })
+      doc.moveDown(0.5)
+    }
+
+    // ─── RECOMMENDED ACTIONS ───────────────────────────────────────────────────
+    if ((report.recommendedActions || []).length) {
+      sectionHead('RECOMMENDED ACTIONS')
+      ;(report.recommendedActions as any[]).forEach((act, i) => {
+        if (doc.y > doc.page.height - 90) doc.addPage()
+        const rowY = doc.y
+        const pc = PRIORITY_COLOR[act.priority] || MUTED
+        doc.roundedRect(50, rowY, pageW, 1).fill(i % 2 === 0 ? LIGHT : 'white')
+        doc.fillColor(DARK).font('Helvetica-Bold').fontSize(10)
+          .text(`${i + 1}. ${act.action}`, 50, rowY, { width: pageW - 100 })
+        pill(act.priority, pc, 50 + pageW - 92, rowY, 56)
+        doc.fillColor(MUTED).font('Helvetica').fontSize(8.5)
+          .text(act.expectedImpact || '', 50, doc.y, { width: pageW - 110 })
+        const metaY = doc.y
+        const tf = (act.timeframe || '').replace(/_/g, ' ')
+        doc.fillColor('#6366F1').font('Helvetica').fontSize(8).text(tf, 50, metaY)
+        if (act.owner) doc.fillColor(MUTED).font('Helvetica').fontSize(8).text(`Owner: ${act.owner}`, 160, metaY)
+        const cons = act.advisorConsensus === 'agreed' ? '✓ Board agreed' : '~ Mixed'
+        doc.fillColor(act.advisorConsensus === 'agreed' ? '#059669' : '#D97706').font('Helvetica-Bold').fontSize(8).text(cons, 280, metaY)
+        doc.y = Math.max(doc.y, rowY + 42)
+        doc.moveDown(0.3)
+      })
+      doc.moveDown(0.5)
+    }
+
+    // ─── RISK WARNINGS ─────────────────────────────────────────────────────────
+    if ((report.riskWarnings || []).length) {
+      sectionHead('RISK WARNINGS')
+      ;(report.riskWarnings as any[]).forEach(r => {
+        if (doc.y > doc.page.height - 80) doc.addPage()
+        const rowY = doc.y
+        const sc = SEV_COLOR[r.severity] || MUTED
+        pill(r.severity, sc, 50, rowY, 58)
+        doc.fillColor(DARK).font('Helvetica-Bold').fontSize(9.5)
+          .text(r.risk, 116, rowY, { width: pageW - 68 })
+        doc.fillColor(MUTED).font('Helvetica').fontSize(8.5)
+          .text('→ ' + (r.mitigation || ''), 116, doc.y, { width: pageW - 68 })
+        doc.y = Math.max(doc.y, rowY + 30)
+        doc.moveDown(0.3)
+      })
+      doc.moveDown(0.5)
+    }
+
+    // ─── GROWTH OPPORTUNITIES ──────────────────────────────────────────────────
+    if ((report.growthOpportunities || []).length) {
+      sectionHead('GROWTH OPPORTUNITIES')
+      ;(report.growthOpportunities as any[]).forEach(o => {
+        if (doc.y > doc.page.height - 80) doc.addPage()
+        const rowY = doc.y
+        doc.fillColor(DARK).font('Helvetica-Bold').fontSize(9.5)
+          .text(o.opportunity, 50, rowY, { width: pageW - 120 })
+        doc.fillColor('#059669').font('Helvetica-Bold').fontSize(8.5)
+          .text(o.potentialValue || '', 50, doc.y, { width: pageW - 120 })
+        pill((o.effort || '') + ' EFFORT', '#6366F1', 50 + pageW - 100, rowY, 90)
+        doc.y = Math.max(doc.y, rowY + 28)
+        doc.moveDown(0.3)
+      })
+      doc.moveDown(0.5)
+    }
+
+    // ─── ADVISOR HIGHLIGHTS ────────────────────────────────────────────────────
+    if ((report.advisorHighlights || []).length) {
+      sectionHead('ADVISOR HIGHLIGHTS')
+      const cols = 2
+      const colW = (pageW - 10) / cols
+      let colIdx = 0
+      let rowStartY = doc.y
+      ;(report.advisorHighlights as any[]).forEach(adv => {
+        if (colIdx === 0 && doc.y > doc.page.height - 90) { doc.addPage(); rowStartY = doc.y }
+        const x = 50 + colIdx * (colW + 10)
+        doc.roundedRect(x, rowStartY, colW, 46, 5).fill(LIGHT)
+        doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(8.5)
+          .text((adv.role || '').replace(/_/g, ' '), x + 8, rowStartY + 6, { width: colW - 16 })
+        doc.fillColor(DARK).font('Helvetica').fontSize(8.5)
+          .text(adv.headline || '', x + 8, rowStartY + 20, { width: colW - 16, height: 22, ellipsis: true })
+        colIdx++
+        if (colIdx >= cols) {
+          colIdx = 0
+          rowStartY += 54
+          doc.y = rowStartY
+        }
+      })
+      if (colIdx > 0) doc.y = rowStartY + 54
+      doc.moveDown(0.5)
+    }
+
+    // ─── NEXT MEETING FOCUS ────────────────────────────────────────────────────
+    if ((report.nextMeetingFocus || []).length) {
+      if (doc.y > doc.page.height - 100) doc.addPage()
+      sectionHead('NEXT MEETING FOCUS')
+      ;(report.nextMeetingFocus as string[]).forEach(item => {
+        doc.fillColor(DARK).font('Helvetica').fontSize(9.5)
+          .text('→  ' + item, 56, doc.y, { width: pageW - 10 })
+        doc.moveDown(0.4)
+      })
+    }
+
+    // ─── FOOTER ────────────────────────────────────────────────────────────────
+    const footerY = doc.page.height - 60
+    doc.moveTo(50, footerY).lineTo(50 + pageW, footerY).strokeColor(BORDER).lineWidth(0.8).stroke()
+    doc.fillColor(MUTED).font('Helvetica').fontSize(8)
+      .text('Confidential · Tlaka Treats AI Advisory Board Report · hello@tlakatreats.co.za', 50, footerY + 10, { width: pageW, align: 'center' })
+    doc.text(`Powered by Claude AI (${meta.agentModel || ''} + ${meta.synthModel || ''})`, 50, footerY + 22, { width: pageW, align: 'center' })
+
+    doc.end()
+  })
+}
+
 export async function generateQuotePdf(quote: any): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []

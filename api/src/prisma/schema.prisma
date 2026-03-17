@@ -844,6 +844,40 @@ model PayrollItem {
   notes        String?
 }
 
+// ─── Tasks ────────────────────────────────────────────────────────────────────
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum TaskPriority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum TaskSource {
+  MANUAL
+  BOARD_MEETING
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  title       String
+  description String?
+  priority    TaskPriority @default(MEDIUM)
+  status      TaskStatus   @default(OPEN)
+  dueDate     DateTime?    @db.Date
+  owner       String?
+  source      TaskSource   @default(MANUAL)
+  sourceId    String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
 // ─── AI Advisory Board ────────────────────────────────────────────────────────
 
 model BoardMeeting {
