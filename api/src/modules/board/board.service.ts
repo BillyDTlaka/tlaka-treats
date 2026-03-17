@@ -258,27 +258,64 @@ function parseJson(text: string, label = ''): any {
   return {}
 }
 
+/** Compact the snapshot to reduce token usage — keep numbers, trim verbose arrays */
+function compactSnapshot(s: BusinessSnapshot): object {
+  return {
+    business: s.business,
+    sales: {
+      totalRevenue:         s.sales.totalRevenue,
+      totalOrders:          s.sales.totalOrders,
+      avgOrderValue:        s.sales.avgOrderValue,
+      revenueVsPriorPeriod: s.sales.revenueVsPriorPeriod,
+      topProducts:          s.sales.topProducts.slice(0, 5).map(p => ({ name: p.name, revenue: p.revenue, units: p.units })),
+      slowestProducts:      s.sales.slowestProducts.slice(0, 3).map(p => ({ name: p.name, revenue: p.revenue, units: p.units })),
+      revenueByWeekday:     s.sales.revenueByWeekday,
+    },
+    finance: {
+      totalIncome:              s.finance.totalIncome,
+      totalExpenses:            s.finance.totalExpenses,
+      netProfit:                s.finance.netProfit,
+      profitMargin:             s.finance.profitMargin,
+      largestExpenseCategories: s.finance.largestExpenseCategories.slice(0, 5),
+      cashPosition:             s.finance.cashPosition,
+      outstandingReceivables:   s.finance.outstandingReceivables,
+    },
+    inventory: {
+      totalStockValue:   s.inventory.totalStockValue,
+      lowStockCount:     s.inventory.lowStockItems.length,
+      lowStockItems:     s.inventory.lowStockItems.slice(0, 5).map(i => `${i.name} (${i.currentStock}/${i.minStock})`),
+      outOfStockCount:   s.inventory.outOfStockItems.length,
+      outOfStockItems:   s.inventory.outOfStockItems.slice(0, 5),
+      stockTurnoverRate: s.inventory.stockTurnoverRate,
+    },
+    production: s.production,
+    customers:  s.customers,
+    signals:    s.signals,
+  }
+}
+
 export async function runBoardMeeting(
   snapshot: BusinessSnapshot,
   opts: BoardMeetingOptions = {}
 ): Promise<BoardMeetingReport> {
-  const dataBlock = JSON.stringify(snapshot)
+  const dataBlock = JSON.stringify(compactSnapshot(snapshot))
 
-  const phase1Prompt = `Business data snapshot:\n${dataBlock}\n\nRespond with JSON only.`
+  const phase1Prompt = `Business data snapshot (currency: ZAR, symbol R):\n${dataBlock}\n\nRespond with JSON only — no prose, no markdown.`
 
   // ── Phase 1: Parallel agent analysis ────────────────────────────────────────
   const phase1Results = await Promise.all(
-    AGENTS.map(agent =>
-      client.messages.create({
+    AGENTS.map(async agent => {
+      const r = await client.messages.create({
         model:      AGENT_MODEL,
-        max_tokens: 900,
+        max_tokens: 1500,
         system:     agent.system,
         messages:   [{ role: 'user', content: phase1Prompt }],
-      }).then(r => ({
-        role:     agent.role,
-        analysis: parseJson(r.content[0].type === 'text' ? r.content[0].text : '{}', agent.role) as AgentAnalysis,
-      }))
-    )
+      })
+      const rawText = r.content[0]?.type === 'text' ? r.content[0].text : ''
+      console.log(`[board] ${agent.role} stop_reason=${r.stop_reason} tokens=${r.usage?.output_tokens} raw(300)=${rawText.slice(0, 300)}`)
+      const analysis = parseJson(rawText || '{}', agent.role) as AgentAnalysis
+      return { role: agent.role, analysis }
+    })
   )
 
   // ── Phase 2: Debate (optional) ───────────────────────────────────────────────
@@ -300,7 +337,7 @@ Output the same JSON schema with your refined positions.`.trim()
       AGENTS.map((agent, i) =>
         client.messages.create({
           model:      AGENT_MODEL,
-          max_tokens: 700,
+          max_tokens: 1200,
           system:     agent.system,
           messages:   [
             { role: 'user',      content: phase1Prompt },
