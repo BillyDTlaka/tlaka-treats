@@ -28,6 +28,7 @@ import taskRoutes        from './modules/tasks/tasks.routes'
 import strategyRoutes   from './modules/strategy/strategy.routes'
 import chatRoutes       from './modules/chat/chat.routes'
 import pricingRoutes    from './modules/pricing/pricing.routes'
+import leadsRoutes      from './modules/leads/leads.routes'
 
 export async function buildApp() {
   const app = Fastify({
@@ -86,6 +87,7 @@ export async function buildApp() {
   await app.register(strategyRoutes,    { prefix: '/strategy' })
   await app.register(chatRoutes,        { prefix: '/chat' })
   await app.register(pricingRoutes,    { prefix: '/pricing' })
+  await app.register(leadsRoutes,       { prefix: '/leads' })
 
   // Health check
   app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }))

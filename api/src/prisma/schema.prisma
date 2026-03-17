@@ -1029,3 +1029,23 @@ model MarketPrice {
   checkedAt    DateTime  @default(now())
   createdAt    DateTime  @default(now())
 }
+
+// ─── Leads ────────────────────────────────────────────────────────────────────
+
+model Lead {
+  id          String    @id @default(cuid())
+  name        String?
+  contact     String?
+  sourceName  String?
+  sourceUrl   String?
+  leadType    String    @default("GENERAL")   // EVENT | DIRECT | WHOLESALE | GENERAL
+  eventType   String?                          // WEDDING | FUNERAL | CORPORATE | BIRTHDAY | OTHER
+  eventDate   DateTime?
+  location    String?
+  description String?
+  status      String    @default("NEW")       // NEW | CONTACTED | INTERESTED | CONVERTED | DEAD
+  notes       String?
+  outreach    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}

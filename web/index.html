@@ -360,6 +360,15 @@ const api = {
     addQuote:          (d)        => req('POST',   '/pricing/quotes', d),
     deleteQuote:       (id)       => req('DELETE', `/pricing/quotes/${id}`),
   },
+  leads: {
+    getAll:          (p)    => req('GET',    '/leads' + (p ? '?' + new URLSearchParams(p) : '')),
+    create:          (d)    => req('POST',   '/leads', d),
+    update:          (id,d) => req('PATCH',  `/leads/${id}`, d),
+    remove:          (id)   => req('DELETE', `/leads/${id}`),
+    search:          (d)    => req('POST',   '/leads/search', d),
+    genOutreach:     (id)   => req('POST',   `/leads/${id}/outreach`, {}),
+    stats:           ()     => req('GET',    '/leads/stats'),
+  },
 };
 
 // ─── AUTH STORE ───────────────────────────────────────────────────
@@ -10091,6 +10100,7 @@ function renderAdminBohlale(container) {
     { id: 'strategy', label: 'Strategy',      icon: '📊', desc: 'AI-generated business strategy with review & approval workflow' },
     { id: 'chat',     label: 'Bohlale Chat',  icon: '💬', desc: 'Chat with your business data and knowledge documents' },
     { id: 'pricing',  label: 'Pricing',       icon: '🛒', desc: 'AI price intelligence — compare what you buy vs market prices' },
+    { id: 'leads',    label: 'Leads',         icon: '🎯', desc: 'AI lead finder — discover people looking for biscuits and event catering' },
   ];
 
   let activeAgent = 'board';
@@ -10134,9 +10144,355 @@ function renderAdminBohlale(container) {
     if (activeAgent === 'strategy') renderAdminStrategy(contentArea);
     if (activeAgent === 'chat')     renderAdminChat(contentArea);
     if (activeAgent === 'pricing')  renderAdminPricing(contentArea);
+    if (activeAgent === 'leads')    renderAdminLeads(contentArea);
   }
 
   renderContent();
+}
+
+// ── BOHLALE LEADS ─────────────────────────────────────────────────────────────
+function renderAdminLeads(container) {
+  container.innerHTML = '';
+  const page = el('div', { className: 'flex h-full overflow-hidden' });
+  container.append(page);
+
+  let leads = [];
+  let stats = { total: 0, byStatus: {} };
+  let activeStatus = 'ALL';
+  let selectedLead = null;
+
+  const STATUSES = ['ALL', 'NEW', 'CONTACTED', 'INTERESTED', 'CONVERTED', 'DEAD'];
+  const STATUS_COLORS = {
+    NEW:        'bg-blue-50 text-blue-700',
+    CONTACTED:  'bg-yellow-50 text-yellow-700',
+    INTERESTED: 'bg-purple-50 text-purple-700',
+    CONVERTED:  'bg-green-50 text-green-700',
+    DEAD:       'bg-gray-100 text-gray-400',
+  };
+  const EVENT_ICONS = { WEDDING: '💍', FUNERAL: '🕊️', CORPORATE: '🏢', BIRTHDAY: '🎂', OTHER: '📅', GENERAL: '👤', DIRECT: '🛒', WHOLESALE: '📦' };
+
+  // ── Left panel ──────────────────────────────────────────────────────────────
+  const left = el('div', { className: 'w-80 border-r border-gray-100 flex flex-col bg-gray-50 flex-shrink-0' });
+  page.append(left);
+
+  // Search panel
+  const searchPanel = el('div', { className: 'p-4 border-b border-gray-100 bg-white' });
+  left.append(searchPanel);
+  searchPanel.append(el('p', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wider mb-3' }, 'Find Leads'));
+
+  const areaInp = el('input', { type: 'text', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-2', placeholder: 'Area (e.g. Johannesburg, Soweto)' });
+  searchPanel.append(areaInp);
+
+  const EVENT_TYPES = ['WEDDING', 'FUNERAL', 'CORPORATE', 'BIRTHDAY'];
+  const selectedEvents = new Set();
+  const evtRow = el('div', { className: 'flex flex-wrap gap-1.5 mb-3' });
+  searchPanel.append(evtRow);
+  for (const et of EVENT_TYPES) {
+    const btn = el('button', {
+      className: 'px-2.5 py-1 rounded-full text-xs font-semibold border border-gray-200 text-gray-500 hover:border-brand hover:text-brand transition-all',
+      onClick: () => {
+        if (selectedEvents.has(et)) {
+          selectedEvents.delete(et);
+          btn.className = 'px-2.5 py-1 rounded-full text-xs font-semibold border border-gray-200 text-gray-500 hover:border-brand hover:text-brand transition-all';
+        } else {
+          selectedEvents.add(et);
+          btn.className = 'px-2.5 py-1 rounded-full text-xs font-semibold border border-brand bg-brand/5 text-brand transition-all';
+        }
+      },
+    }, `${EVENT_ICONS[et]} ${et}`);
+    evtRow.append(btn);
+  }
+
+  const searchBtn = el('button', {
+    className: 'w-full py-2 bg-brand text-white rounded-lg text-sm font-bold hover:bg-brand/90',
+    onClick: async () => {
+      const area = areaInp.value.trim();
+      if (!area) { toast('Enter an area to search', 'error'); return; }
+      searchBtn.disabled = true;
+      searchBtn.textContent = 'Searching…';
+      searchStatus.textContent = '';
+      try {
+        const r = await api.leads.search({
+          area,
+          eventTypes: [...selectedEvents],
+          keywords: [],
+        });
+        searchStatus.textContent = `✓ Found ${r.found} results, saved ${r.saved} new leads`;
+        await loadLeads();
+      } catch(e) {
+        toast(e.message, 'error');
+      } finally {
+        searchBtn.disabled = false;
+        searchBtn.textContent = '🔍 Find Leads';
+      }
+    },
+  }, '🔍 Find Leads');
+  searchPanel.append(searchBtn);
+  const searchStatus = el('p', { className: 'text-xs text-green-600 mt-2 min-h-4' }, '');
+  searchPanel.append(searchStatus);
+
+  // Status filter tabs
+  const filterBar = el('div', { className: 'flex gap-1 px-3 py-2 border-b border-gray-100 bg-white overflow-x-auto' });
+  left.append(filterBar);
+
+  function updateFilterBar() {
+    filterBar.innerHTML = '';
+    for (const s of STATUSES) {
+      const count = s === 'ALL' ? stats.total : (stats.byStatus[s] || 0);
+      const active = activeStatus === s;
+      const btn = el('button', {
+        className: `px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${active ? 'bg-brand text-white' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'}`,
+        onClick: () => { activeStatus = s; updateFilterBar(); renderLeadList(); },
+      }, `${s} ${count > 0 ? `(${count})` : ''}`);
+      filterBar.append(btn);
+    }
+  }
+
+  // Lead list
+  const leadList = el('div', { className: 'flex-1 overflow-y-auto' });
+  left.append(leadList);
+
+  // Add manual lead button
+  const addBtn = el('button', {
+    className: 'mx-4 mb-3 mt-2 w-[calc(100%-2rem)] py-2 border-2 border-dashed border-gray-200 text-gray-400 text-sm rounded-lg hover:border-brand hover:text-brand transition-all',
+    onClick: () => showAddLeadModal(),
+  }, '+ Add Lead Manually');
+
+  function renderLeadList() {
+    leadList.innerHTML = '';
+    const filtered = activeStatus === 'ALL' ? leads : leads.filter(l => l.status === activeStatus);
+    if (!filtered.length) {
+      leadList.append(el('p', { className: 'text-xs text-gray-400 text-center py-8 px-4' }, activeStatus === 'ALL' ? 'No leads yet. Run a search or add one manually.' : `No ${activeStatus.toLowerCase()} leads.`));
+      leadList.append(addBtn);
+      return;
+    }
+    for (const lead of filtered) {
+      const icon = EVENT_ICONS[lead.eventType] || EVENT_ICONS[lead.leadType] || '👤';
+      const card = el('div', {
+        className: `mx-3 my-1 p-3 rounded-xl cursor-pointer transition-all border ${selectedLead?.id === lead.id ? 'border-brand bg-brand/5' : 'border-transparent bg-white hover:border-gray-200'}`,
+        onClick: () => { selectedLead = lead; renderLeadList(); renderDetail(); },
+      });
+      leadList.append(card);
+
+      card.append(
+        el('div', { className: 'flex items-start justify-between gap-2' },
+          el('div', { className: 'flex items-center gap-2 flex-1 min-w-0' },
+            el('span', { className: 'text-base flex-shrink-0' }, icon),
+            el('div', { className: 'min-w-0' },
+              el('p', { className: 'text-sm font-semibold text-gray-900 truncate' }, lead.name || 'Unknown'),
+              el('p', { className: 'text-xs text-gray-400 truncate' }, lead.location || lead.sourceName || '—'),
+            )
+          ),
+          el('span', { className: `text-xs px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ${STATUS_COLORS[lead.status] || 'bg-gray-100 text-gray-500'}` }, lead.status)
+        ),
+        lead.description ? el('p', { className: 'text-xs text-gray-500 mt-1.5 line-clamp-2' }, lead.description) : null
+      );
+    }
+    leadList.append(addBtn);
+  }
+
+  // ── Right detail panel ──────────────────────────────────────────────────────
+  const right = el('div', { className: 'flex-1 overflow-y-auto p-6' });
+  page.append(right);
+
+  function renderDetail() {
+    right.innerHTML = '';
+    if (!selectedLead) {
+      right.append(el('div', { className: 'flex items-center justify-center h-full text-gray-300 text-sm' }, 'Select a lead to view details'));
+      return;
+    }
+    const lead = selectedLead;
+    const icon = EVENT_ICONS[lead.eventType] || EVENT_ICONS[lead.leadType] || '👤';
+
+    const wrap = el('div', { className: 'max-w-2xl' });
+    right.append(wrap);
+
+    // Header
+    wrap.append(
+      el('div', { className: 'flex items-start justify-between mb-6' },
+        el('div', { className: 'flex items-center gap-3' },
+          el('span', { className: 'text-3xl' }, icon),
+          el('div', {},
+            el('h2', { className: 'text-xl font-black text-gray-900' }, lead.name || 'Unknown Lead'),
+            el('p', { className: 'text-sm text-gray-400' }, [lead.location, lead.sourceName].filter(Boolean).join(' · ') || '—')
+          )
+        ),
+        el('span', { className: `px-3 py-1 rounded-full text-sm font-bold ${STATUS_COLORS[lead.status] || 'bg-gray-100 text-gray-500'}` }, lead.status)
+      )
+    );
+
+    // Info grid
+    const grid = el('div', { className: 'grid grid-cols-2 gap-3 mb-5' });
+    wrap.append(grid);
+    const infoCard = (label, value) => value ? el('div', { className: 'bg-gray-50 rounded-xl p-3' },
+      el('p', { className: 'text-xs text-gray-400 mb-0.5' }, label),
+      el('p', { className: 'text-sm font-semibold text-gray-800' }, value)
+    ) : null;
+    [
+      infoCard('Event Type', lead.eventType),
+      infoCard('Lead Type', lead.leadType),
+      infoCard('Event Date', lead.eventDate ? new Date(lead.eventDate).toLocaleDateString('en-ZA') : null),
+      infoCard('Contact', lead.contact),
+    ].filter(Boolean).forEach(c => grid.append(c));
+
+    // Description
+    if (lead.description) {
+      wrap.append(el('div', { className: 'bg-blue-50 rounded-xl p-4 mb-5' },
+        el('p', { className: 'text-xs font-bold text-blue-400 mb-1' }, 'CONTEXT'),
+        el('p', { className: 'text-sm text-blue-800' }, lead.description)
+      ));
+    }
+
+    // Source link
+    if (lead.sourceUrl) {
+      wrap.append(el('a', { href: lead.sourceUrl, target: '_blank', className: 'text-xs text-brand hover:underline block mb-5' }, `🔗 View source: ${lead.sourceName || lead.sourceUrl.slice(0, 60)}`));
+    }
+
+    // Status pipeline
+    wrap.append(el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wider mb-2' }, 'Update Status'));
+    const pipeline = el('div', { className: 'flex gap-2 flex-wrap mb-5' });
+    wrap.append(pipeline);
+    for (const s of ['NEW', 'CONTACTED', 'INTERESTED', 'CONVERTED', 'DEAD']) {
+      const active = lead.status === s;
+      pipeline.append(el('button', {
+        className: `px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${active ? 'bg-brand text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`,
+        onClick: async () => {
+          await api.leads.update(lead.id, { status: s });
+          selectedLead = { ...lead, status: s };
+          await loadLeads();
+          renderDetail();
+        },
+      }, s));
+    }
+
+    // Notes
+    wrap.append(el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wider mb-2' }, 'Notes'));
+    const notesArea = el('textarea', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none mb-1', rows: 3, placeholder: 'Add notes…' });
+    notesArea.value = lead.notes || '';
+    wrap.append(notesArea);
+    const saveNotes = el('button', {
+      className: 'text-xs text-brand font-semibold hover:underline mb-5',
+      onClick: async () => {
+        await api.leads.update(lead.id, { notes: notesArea.value });
+        toast('Notes saved');
+      },
+    }, 'Save notes');
+    wrap.append(saveNotes);
+
+    // Outreach
+    wrap.append(el('div', { className: 'border-t border-gray-100 pt-5' }));
+    wrap.append(el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wider mb-2' }, 'AI Outreach Message'));
+
+    if (lead.outreach) {
+      const outBox = el('div', { className: 'bg-green-50 rounded-xl p-4 mb-3 text-sm text-green-900 whitespace-pre-wrap' }, lead.outreach);
+      wrap.append(outBox);
+      const copyBtn = el('button', {
+        className: 'text-xs text-brand font-semibold hover:underline mr-4',
+        onClick: () => { navigator.clipboard.writeText(lead.outreach); toast('Copied!'); },
+      }, '📋 Copy');
+      const regenBtn = el('button', {
+        className: 'text-xs text-gray-400 hover:text-gray-600',
+        onClick: async () => { regenBtn.textContent = 'Regenerating…'; await genOutreach(); },
+      }, '🔄 Regenerate');
+      wrap.append(el('div', { className: 'flex gap-2' }, copyBtn, regenBtn));
+    } else {
+      const genBtn = el('button', {
+        className: 'px-4 py-2 bg-brand text-white rounded-lg text-sm font-semibold hover:bg-brand/90',
+        onClick: async () => { genBtn.disabled = true; genBtn.textContent = 'Generating…'; await genOutreach(); },
+      }, '✨ Generate Outreach Message');
+      wrap.append(genBtn);
+    }
+
+    async function genOutreach() {
+      try {
+        const r = await api.leads.genOutreach(lead.id);
+        selectedLead = { ...lead, outreach: r.outreach };
+        await loadLeads();
+        renderDetail();
+      } catch(e) { toast(e.message, 'error'); }
+    }
+
+    // Delete
+    wrap.append(
+      el('div', { className: 'border-t border-gray-100 mt-6 pt-4' },
+        el('button', {
+          className: 'text-xs text-red-400 hover:text-red-600',
+          onClick: async () => {
+            if (!confirm('Delete this lead?')) return;
+            await api.leads.remove(lead.id);
+            selectedLead = null;
+            await loadLeads();
+            renderDetail();
+          },
+        }, 'Delete lead')
+      )
+    );
+  }
+
+  // ── Add Lead Modal ───────────────────────────────────────────────────────────
+  function showAddLeadModal() {
+    const modal = el('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4' });
+    document.body.append(modal);
+    const close = () => modal.remove();
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+
+    const box = el('div', { className: 'bg-white rounded-2xl shadow-xl w-full max-w-md p-6' });
+    modal.append(box);
+    box.append(el('h2', { className: 'text-lg font-black text-gray-900 mb-4' }, 'Add Lead Manually'));
+
+    const row = (label, input) => el('div', { className: 'mb-3' }, el('label', { className: 'block text-sm font-semibold text-gray-700 mb-1' }, label), input);
+    const inp = (placeholder, type = 'text') => el('input', { type, className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm', placeholder });
+
+    const nameInp     = inp('Name or organisation');
+    const contactInp  = inp('Phone / email / social handle');
+    const locationInp = inp('Location');
+    const evtSel = el('select', { className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm' },
+      el('option', { value: '' }, '— Event type (optional) —'),
+      ...['WEDDING','FUNERAL','CORPORATE','BIRTHDAY','OTHER'].map(e => el('option', { value: e }, e))
+    );
+    const descArea = el('textarea', { className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none', rows: 2, placeholder: 'Brief context about this lead' });
+    const sourceInp   = inp('Source URL (optional)');
+
+    box.append(row('Name', nameInp), row('Contact', contactInp), row('Location', locationInp), row('Event Type', evtSel), row('Description', descArea), row('Source URL', sourceInp));
+
+    const footer = el('div', { className: 'flex gap-3 mt-5' });
+    box.append(footer);
+    const saveBtn = el('button', {
+      className: 'flex-1 py-2.5 bg-brand text-white rounded-lg font-semibold text-sm hover:bg-brand/90',
+      onClick: async () => {
+        saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+        try {
+          await api.leads.create({
+            name:        nameInp.value.trim()     || null,
+            contact:     contactInp.value.trim()  || null,
+            location:    locationInp.value.trim() || null,
+            eventType:   evtSel.value             || null,
+            description: descArea.value.trim()    || null,
+            sourceUrl:   sourceInp.value.trim()   || null,
+            sourceName:  'Manual',
+          });
+          toast('Lead added');
+          close();
+          await loadLeads();
+        } catch(e) { toast(e.message, 'error'); saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+      },
+    }, 'Save');
+    footer.append(el('button', { className: 'flex-1 py-2.5 bg-gray-100 text-gray-700 rounded-lg font-semibold text-sm', onClick: close }, 'Cancel'), saveBtn);
+  }
+
+  // ── Load ─────────────────────────────────────────────────────────────────────
+  async function loadLeads() {
+    try {
+      [leads, stats] = await Promise.all([api.leads.getAll(), api.leads.stats()]);
+      // keep selectedLead in sync
+      if (selectedLead) selectedLead = leads.find(l => l.id === selectedLead.id) || selectedLead;
+      updateFilterBar();
+      renderLeadList();
+    } catch(e) { console.error(e); }
+  }
+
+  renderDetail();
+  loadLeads();
 }
 
 // ── BOHLALE PRICING ───────────────────────────────────────────────────────────
