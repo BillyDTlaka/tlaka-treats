@@ -290,6 +290,18 @@ const api = {
     update:         (id, d) => req('PATCH',  `/tasks/${id}`, d),
     delete:         (id)    => req('DELETE', `/tasks/${id}`),
   },
+  chat: {
+    listConversations:  ()        => req('GET',    '/chat/conversations'),
+    getConversation:    (id)      => req('GET',    `/chat/conversations/${id}`),
+    createConversation: ()        => req('POST',   '/chat/conversations', {}),
+    renameConversation: (id,t)    => req('PATCH',  `/chat/conversations/${id}`, { title: t }),
+    deleteConversation: (id)      => req('DELETE', `/chat/conversations/${id}`),
+    listDocuments:      ()        => req('GET',    '/chat/documents'),
+    getDocument:        (id)      => req('GET',    `/chat/documents/${id}`),
+    createDocument:     (d)       => req('POST',   '/chat/documents', d),
+    updateDocument:     (id,d)    => req('PATCH',  `/chat/documents/${id}`, d),
+    deleteDocument:     (id)      => req('DELETE', `/chat/documents/${id}`),
+  },
   strategy: {
     create:         (d)          => req('POST',  '/strategy', d),
     getAll:         ()           => req('GET',   '/strategy'),
@@ -9998,6 +10010,7 @@ function renderAdminBohlale(container) {
   const AGENTS = [
     { id: 'board',    label: 'Board Meeting', icon: '🤝', desc: 'Virtual board with 6 AI advisors analysing your business' },
     { id: 'strategy', label: 'Strategy',      icon: '📊', desc: 'AI-generated business strategy with review & approval workflow' },
+    { id: 'chat',     label: 'Bohlale Chat',  icon: '💬', desc: 'Chat with your business data and knowledge documents' },
   ];
 
   let activeAgent = 'board';
@@ -10039,9 +10052,395 @@ function renderAdminBohlale(container) {
     contentArea.innerHTML = '';
     if (activeAgent === 'board')    renderAdminBoard(contentArea);
     if (activeAgent === 'strategy') renderAdminStrategy(contentArea);
+    if (activeAgent === 'chat')     renderAdminChat(contentArea);
   }
 
   renderContent();
+}
+
+// ── BOHLALE CHAT ──────────────────────────────────────────────────────────────
+function renderAdminChat(container) {
+  container.innerHTML = '';
+  const page = el('div', { className: 'flex h-full overflow-hidden', style: { minHeight: '70vh' } });
+  container.append(page);
+
+  let conversations = [];
+  let currentConvId = null;
+  let isStreaming   = false;
+
+  // ── Left sidebar: conversation list + docs ───────────────────────────────────
+  const sidebar = el('div', { className: 'w-64 border-r border-gray-100 flex flex-col bg-gray-50 flex-shrink-0' });
+
+  const sidebarTabs = el('div', { className: 'flex border-b border-gray-200' });
+  let sidebarTab = 'chats';
+  const chatTabBtn = el('button', { className: 'flex-1 text-xs font-black py-2.5 border-b-2 border-brand text-brand' }, '💬 Chats');
+  const docsTabBtn = el('button', { className: 'flex-1 text-xs font-black py-2.5 border-b-2 border-transparent text-gray-400' }, '📄 Documents');
+
+  chatTabBtn.addEventListener('click', () => {
+    sidebarTab = 'chats';
+    chatTabBtn.className = 'flex-1 text-xs font-black py-2.5 border-b-2 border-brand text-brand';
+    docsTabBtn.className = 'flex-1 text-xs font-black py-2.5 border-b-2 border-transparent text-gray-400';
+    renderSidebarContent();
+  });
+  docsTabBtn.addEventListener('click', () => {
+    sidebarTab = 'docs';
+    docsTabBtn.className = 'flex-1 text-xs font-black py-2.5 border-b-2 border-brand text-brand';
+    chatTabBtn.className = 'flex-1 text-xs font-black py-2.5 border-b-2 border-transparent text-gray-400';
+    renderSidebarContent();
+  });
+  sidebarTabs.append(chatTabBtn, docsTabBtn);
+
+  const sidebarBody = el('div', { className: 'flex-1 overflow-y-auto' });
+  const newChatBtn  = el('button', {
+    className: 'w-full text-left text-sm font-bold text-brand hover:bg-brand/5 px-4 py-3 border-b border-gray-100 flex items-center gap-2',
+    onClick: async () => { await startNewConversation(); }
+  }, el('span', { className: 'text-lg' }, '+'), el('span', {}, 'New Chat'));
+
+  sidebar.append(sidebarTabs, newChatBtn, sidebarBody);
+
+  // ── Main chat area ───────────────────────────────────────────────────────────
+  const main = el('div', { className: 'flex-1 flex flex-col overflow-hidden' });
+
+  const messagesEl = el('div', { className: 'flex-1 overflow-y-auto px-6 py-4 space-y-4' });
+
+  const inputRow = el('div', { className: 'border-t border-gray-100 bg-white p-4 flex gap-3 items-end' });
+  const inputEl = el('textarea', {
+    className: 'flex-1 border border-gray-200 rounded-2xl px-4 py-3 text-sm resize-none outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand max-h-32',
+    placeholder: 'Ask about your business data, sales, stock, strategy…',
+    rows: 1,
+  });
+  inputEl.addEventListener('input', () => {
+    inputEl.style.height = 'auto';
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 128) + 'px';
+  });
+  inputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  const sendBtn = el('button', {
+    className: 'bg-brand text-white rounded-2xl px-5 py-3 text-sm font-black hover:opacity-90 flex-shrink-0 disabled:opacity-40',
+    onClick: () => sendMessage(),
+  }, '↑');
+  inputRow.append(inputEl, sendBtn);
+  main.append(messagesEl, inputRow);
+  page.append(sidebar, main);
+
+  // ── Sidebar renderer ─────────────────────────────────────────────────────────
+  function renderSidebarContent() {
+    sidebarBody.innerHTML = '';
+    if (sidebarTab === 'chats') renderConvList();
+    else renderDocList();
+  }
+
+  function renderConvList() {
+    sidebarBody.innerHTML = '';
+    if (!conversations.length) {
+      sidebarBody.append(el('p', { className: 'text-xs text-gray-400 text-center py-8 px-4' }, 'No conversations yet.\nClick + New Chat to start.'));
+      return;
+    }
+    conversations.forEach(c => {
+      const isActive = c.id === currentConvId;
+      const row = el('div', {
+        className: `flex items-start gap-2 px-3 py-2.5 cursor-pointer group transition-colors ${isActive ? 'bg-brand/10' : 'hover:bg-gray-100'}`,
+        onClick: () => loadConversation(c.id),
+      });
+      row.append(
+        el('div', { className: 'flex-1 min-w-0' },
+          el('p', { className: `text-xs font-semibold truncate ${isActive ? 'text-brand' : 'text-gray-800'}` }, c.title),
+          el('p', { className: 'text-xs text-gray-400 mt-0.5' }, new Date(c.updatedAt).toLocaleDateString('en-ZA'))
+        ),
+        el('button', {
+          className: 'opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-xs px-1',
+          title: 'Delete',
+          onClick: async (e) => {
+            e.stopPropagation();
+            if (!confirm('Delete this conversation?')) return;
+            await api.chat.deleteConversation(c.id);
+            conversations = conversations.filter(x => x.id !== c.id);
+            if (currentConvId === c.id) { currentConvId = null; showWelcome(); }
+            renderConvList();
+          }
+        }, '🗑')
+      );
+      sidebarBody.append(row);
+    });
+  }
+
+  function renderDocList() {
+    sidebarBody.innerHTML = '';
+    const addBtn = el('button', {
+      className: 'w-full text-xs text-brand font-bold px-4 py-2.5 border-b border-gray-100 hover:bg-brand/5 text-left',
+      onClick: openDocModal,
+    }, '+ Add Document');
+    sidebarBody.append(addBtn);
+
+    api.chat.listDocuments().then(docs => {
+      if (!docs.length) {
+        sidebarBody.append(el('p', { className: 'text-xs text-gray-400 text-center py-6 px-4' }, 'No documents yet.\nAdd policies, procedures, price lists etc.'));
+        return;
+      }
+      docs.forEach(d => {
+        const row = el('div', { className: 'flex items-start gap-2 px-3 py-2.5 border-b border-gray-50 group' });
+        row.append(
+          el('div', { className: 'flex-1 min-w-0' },
+            el('p', { className: 'text-xs font-semibold text-gray-800 truncate' }, d.name),
+            el('p', { className: 'text-xs text-gray-400' }, new Date(d.createdAt).toLocaleDateString('en-ZA'))
+          ),
+          el('button', {
+            className: 'opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-xs px-1',
+            onClick: async () => {
+              if (!confirm(`Delete "${d.name}"?`)) return;
+              await api.chat.deleteDocument(d.id);
+              renderDocList();
+            }
+          }, '🗑')
+        );
+        sidebarBody.append(row);
+      });
+    }).catch(() => {});
+  }
+
+  // ── Message rendering ────────────────────────────────────────────────────────
+  function showWelcome() {
+    messagesEl.innerHTML = '';
+    messagesEl.append(
+      el('div', { className: 'flex flex-col items-center justify-center h-full py-16 text-center' },
+        el('div', { className: 'text-5xl mb-4' }, '💬'),
+        el('h3', { className: 'text-lg font-black text-gray-800 mb-2' }, 'Bohlale Chat'),
+        el('p', { className: 'text-sm text-gray-400 max-w-sm' }, 'Ask anything about your business — sales trends, stock levels, finance, strategy, or anything in your knowledge documents.'),
+        el('div', { className: 'mt-6 grid grid-cols-1 gap-2 w-full max-w-md' },
+          ...['What were my top selling products this month?',
+              'How is my cash flow looking?',
+              'Which products are running low on stock?',
+              'What should I focus on this week?'].map(q =>
+            el('button', {
+              className: 'text-left text-sm text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-xl px-4 py-2.5 transition',
+              onClick: async () => { await startNewConversation(); inputEl.value = q; sendMessage(); }
+            }, q)
+          )
+        )
+      )
+    );
+  }
+
+  function appendMessage(role, content, streaming = false) {
+    const isUser = role === 'user';
+    const wrap = el('div', { className: `flex ${isUser ? 'justify-end' : 'justify-start'} gap-3` });
+
+    if (!isUser) {
+      wrap.append(el('div', { className: 'w-8 h-8 rounded-full bg-brand flex items-center justify-center text-white text-sm font-black flex-shrink-0 mt-1' }, 'B'));
+    }
+
+    const bubble = el('div', {
+      className: `max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${isUser ? 'bg-brand text-white rounded-tr-sm' : 'bg-white border border-gray-100 text-gray-800 rounded-tl-sm shadow-sm'}`,
+    });
+
+    if (!isUser) {
+      // Render markdown-like formatting for assistant messages
+      bubble.innerHTML = mdToHtml(content);
+    } else {
+      bubble.textContent = content;
+    }
+
+    wrap.append(bubble);
+    messagesEl.append(wrap);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return bubble;
+  }
+
+  function mdToHtml(text) {
+    return text
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/`(.+?)`/g, '<code class="bg-gray-100 px-1 rounded text-xs">$1</code>')
+      .replace(/^### (.+)$/gm, '<p class="font-bold text-gray-900 mt-3 mb-1">$1</p>')
+      .replace(/^## (.+)$/gm, '<p class="font-black text-gray-900 mt-3 mb-1 text-base">$1</p>')
+      .replace(/^# (.+)$/gm, '<p class="font-black text-gray-900 mt-3 mb-1 text-lg">$1</p>')
+      .replace(/^- (.+)$/gm, '<li class="ml-4 list-disc">$1</li>')
+      .replace(/^(\d+)\. (.+)$/gm, '<li class="ml-4 list-decimal">$2</li>')
+      .replace(/\n\n/g, '<br><br>')
+      .replace(/\n/g, '<br>');
+  }
+
+  // ── Send message with streaming ──────────────────────────────────────────────
+  async function sendMessage() {
+    if (isStreaming) return;
+    const content = inputEl.value.trim();
+    if (!content) return;
+    if (!currentConvId) { await startNewConversation(); }
+
+    inputEl.value = '';
+    inputEl.style.height = 'auto';
+    sendBtn.disabled = true;
+    isStreaming = true;
+
+    appendMessage('user', content);
+
+    // Typing indicator
+    const typingWrap = el('div', { className: 'flex justify-start gap-3' });
+    const typingDot = el('div', { className: 'w-8 h-8 rounded-full bg-brand flex items-center justify-center text-white text-sm font-black flex-shrink-0 mt-1' }, 'B');
+    const typingBubble = el('div', { className: 'bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm' },
+      el('div', { className: 'flex gap-1 items-center h-4' },
+        el('div', { className: 'w-2 h-2 rounded-full bg-gray-300 animate-bounce', style: { animationDelay: '0ms' } }),
+        el('div', { className: 'w-2 h-2 rounded-full bg-gray-300 animate-bounce', style: { animationDelay: '150ms' } }),
+        el('div', { className: 'w-2 h-2 rounded-full bg-gray-300 animate-bounce', style: { animationDelay: '300ms' } })
+      )
+    );
+    typingWrap.append(typingDot, typingBubble);
+    messagesEl.append(typingWrap);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+
+    try {
+      const res = await fetch(`${API_BASE}/chat/conversations/${currentConvId}/message`, {
+        method:  'POST',
+        headers: headers(),
+        body:    JSON.stringify({ content }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${res.status}`);
+      }
+
+      typingWrap.remove();
+      const assistantBubble = appendMessage('assistant', '');
+      let fullText = '';
+
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') break;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.error) throw new Error(parsed.error);
+            if (parsed.text) {
+              fullText += parsed.text;
+              assistantBubble.innerHTML = mdToHtml(fullText);
+              messagesEl.scrollTop = messagesEl.scrollHeight;
+            }
+          } catch {}
+        }
+      }
+
+      // Refresh conversation list to update "updated at" timestamp
+      conversations = await api.chat.listConversations();
+      renderConvList();
+
+    } catch (err) {
+      typingWrap.remove();
+      appendMessage('assistant', `⚠️ Error: ${err.message || 'Something went wrong'}. Please try again.`);
+    } finally {
+      sendBtn.disabled = false;
+      isStreaming = false;
+      inputEl.focus();
+    }
+  }
+
+  // ── Load conversation ────────────────────────────────────────────────────────
+  async function loadConversation(id) {
+    currentConvId = id;
+    messagesEl.innerHTML = '';
+    renderConvList();
+
+    try {
+      const conv = await api.chat.getConversation(id);
+      if (!conv.messages.length) { showWelcome(); return; }
+      conv.messages.forEach(m => appendMessage(m.role, m.content));
+    } catch(e) { showWelcome(); }
+  }
+
+  async function startNewConversation() {
+    const conv = await api.chat.createConversation();
+    currentConvId = conv.id;
+    conversations = [conv, ...conversations];
+    renderConvList();
+    showWelcome();
+  }
+
+  // ── Document modal ───────────────────────────────────────────────────────────
+  function openDocModal() {
+    const overlay = el('div', { className: 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4' });
+    const nameInput = el('input', {
+      className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30 mb-3',
+      placeholder: 'Document name (e.g. Price List, Company Policy, Procedures)',
+    });
+    const descInput = el('input', {
+      className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30 mb-3',
+      placeholder: 'Short description (optional)',
+    });
+    const contentArea = el('textarea', {
+      className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none outline-none focus:ring-2 focus:ring-brand/30',
+      placeholder: 'Paste or type document content here…',
+      rows: 12,
+    });
+
+    // File input for .txt / .md
+    const fileInput = el('input', { type: 'file', accept: '.txt,.md,.csv', className: 'hidden' });
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      if (!nameInput.value) nameInput.value = file.name.replace(/\.[^/.]+$/, '');
+      const reader = new FileReader();
+      reader.onload = e => { contentArea.value = e.target.result; };
+      reader.readAsText(file);
+    });
+
+    const fileBtn = el('button', {
+      className: 'text-xs text-indigo-600 font-bold hover:underline mb-2',
+      onClick: () => fileInput.click(),
+    }, '📁 Load from .txt / .md / .csv file');
+
+    const saveBtn = el('button', { className: 'bg-brand text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90' }, 'Save Document');
+    saveBtn.addEventListener('click', async () => {
+      if (!nameInput.value.trim() || !contentArea.value.trim()) {
+        alert('Name and content are required.'); return;
+      }
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+      try {
+        await api.chat.createDocument({ name: nameInput.value.trim(), description: descInput.value.trim() || undefined, content: contentArea.value.trim() });
+        overlay.remove();
+        renderDocList();
+      } catch(e) { alert('Failed: ' + e.message); saveBtn.disabled = false; saveBtn.textContent = 'Save Document'; }
+    });
+
+    overlay.append(
+      el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-xl shadow-2xl' },
+        el('div', { className: 'flex items-center justify-between mb-4' },
+          el('h3', { className: 'font-black text-gray-900' }, 'Add Knowledge Document'),
+          el('button', { className: 'text-gray-400 text-2xl font-bold', onClick: () => overlay.remove() }, '×')
+        ),
+        el('p', { className: 'text-xs text-gray-400 mb-4' }, 'Documents are included in every chat response. Add price lists, procedures, policies, product info — anything Bohlale should know.'),
+        nameInput, descInput, fileBtn, fileInput, contentArea,
+        el('div', { className: 'flex justify-end gap-3 mt-4' },
+          el('button', { className: 'text-sm text-gray-500 px-4 py-2', onClick: () => overlay.remove() }, 'Cancel'),
+          saveBtn
+        )
+      )
+    );
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.append(overlay);
+    nameInput.focus();
+  }
+
+  // ── Init ─────────────────────────────────────────────────────────────────────
+  api.chat.listConversations().then(list => {
+    conversations = list;
+    renderConvList();
+    if (list.length > 0) loadConversation(list[0].id);
+    else showWelcome();
+  }).catch(() => showWelcome());
 }
 
 // ── AI ADVISORY BOARD ─────────────────────────────────────────────────────────

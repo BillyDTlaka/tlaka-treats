@@ -26,6 +26,7 @@ import boardRoutes       from './modules/board/board.routes'
 import employeeRoutes    from './modules/employees/employees.routes'
 import taskRoutes        from './modules/tasks/tasks.routes'
 import strategyRoutes   from './modules/strategy/strategy.routes'
+import chatRoutes       from './modules/chat/chat.routes'
 
 export async function buildApp() {
   const app = Fastify({
@@ -82,6 +83,7 @@ export async function buildApp() {
   await app.register(employeeRoutes,     { prefix: '/employees' })
   await app.register(taskRoutes,         { prefix: '/tasks' })
   await app.register(strategyRoutes,    { prefix: '/strategy' })
+  await app.register(chatRoutes,        { prefix: '/chat' })
 
   // Health check
   app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }))
