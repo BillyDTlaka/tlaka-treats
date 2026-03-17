@@ -10032,9 +10032,8 @@ function renderAdminBoard(container) {
       // Attach auth token so the server can authenticate the download
       pdfBtn.addEventListener('click', async () => {
         try {
-          const token = localStorage.getItem('authToken');
           const res = await fetch(`${API_BASE}/board/meetings/${meetingId}/pdf`, {
-            headers: { Authorization: `Bearer ${token}` },
+            headers: { Authorization: `Bearer ${token()}` },
           });
           if (!res.ok) { alert('Failed to generate PDF'); return; }
           const blob = await res.blob();
