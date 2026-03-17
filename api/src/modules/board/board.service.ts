@@ -235,25 +235,26 @@ export interface BoardMeetingReport {
 }
 
 function parseJson(text: string, label = ''): any {
-  // Try 1: direct parse
-  try { return JSON.parse(text.trim()) } catch {}
+  const clean = text.replace(/^```(?:json)?\s*/im, '').replace(/\s*```\s*$/m, '').trim()
 
-  // Try 2: strip markdown fences
-  try {
-    const stripped = text.replace(/^```(?:json)?\s*/im, '').replace(/\s*```\s*$/m, '').trim()
-    return JSON.parse(stripped)
-  } catch {}
+  // Try 1: direct parse of cleaned text
+  try { return JSON.parse(clean) } catch {}
 
-  // Try 3: extract first {...} block (handles prose before/after JSON)
-  try {
-    const start = text.indexOf('{')
-    const end   = text.lastIndexOf('}')
-    if (start !== -1 && end !== -1 && end > start) {
-      return JSON.parse(text.slice(start, end + 1))
+  // Try 2: scan every { position — handles prose/garbage before the JSON object
+  let pos = 0
+  while (true) {
+    const start = clean.indexOf('{', pos)
+    if (start === -1) break
+    // Try closing from the last } backwards (handles truncated outer wrapper)
+    let end = clean.lastIndexOf('}')
+    while (end > start) {
+      try { return JSON.parse(clean.slice(start, end + 1)) } catch {}
+      end = clean.lastIndexOf('}', end - 1)
     }
-  } catch {}
+    pos = start + 1
+  }
 
-  // All attempts failed — log raw text so we can debug
+  // All attempts failed
   console.error(`[board] parseJson failed${label ? ` (${label})` : ''}. Raw text (500 chars):\n${text.slice(0, 500)}`)
   return {}
 }
@@ -357,15 +358,16 @@ Output the same JSON schema with your refined positions.`.trim()
 
   const synthResponse = await client.messages.create({
     model:      SYNTH_MODEL,
-    max_tokens: 4000,
+    max_tokens: 8000,
     system:     SYNTHESIZER_SYSTEM,
     messages:   [{
       role:    'user',
-      content: `Business: ${snapshot.business.name} | Period: ${snapshot.business.periodDays} days\n\nAdvisor analyses:\n${allAnalyses}\n\nProduce the final board meeting report JSON.`,
+      content: `Business: ${snapshot.business.name} | Period: ${snapshot.business.periodDays} days\n\nAdvisor analyses:\n${allAnalyses}\n\nProduce the final board meeting report JSON. Be concise — max 3 items per array, strings under 120 chars each.`,
     }],
   })
 
   const synthRaw  = synthResponse.content[0].type === 'text' ? synthResponse.content[0].text : '{}'
+  console.log(`[board] SYNTHESISER stop_reason=${synthResponse.stop_reason} tokens=${synthResponse.usage?.output_tokens}`)
   const synthJson = parseJson(synthRaw, 'SYNTHESISER')
 
   const totalCalls = opts.includeDebate ? AGENTS.length * 2 + 1 : AGENTS.length + 1
