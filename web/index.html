@@ -2953,42 +2953,26 @@ function svgIcon(pathD, size = 20) {
 }
 
 const ADMIN_NAV = [
-  { id: 'dashboard',    label: 'Dashboard',    icon: 'M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z|M9 22V12h6v10',                                                                                                     soon: false },
-  { id: 'orders',       label: 'Orders',        icon: 'M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z|M3 6h18|M16 10a4 4 0 01-8 0',                                                                                       soon: false },
-  { id: 'products',     label: 'Products',      icon: 'M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z|M3.27 6.96L12 12.01l8.73-5.05|M12 22.08V12', soon: false },
-  { id: 'customers',    label: 'Customers',     icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2|M9 11a4 4 0 100-8 4 4 0 000 8z|M23 21v-2a4 4 0 00-3-3.87|M16 3.13a4 4 0 010 7.75',                                    soon: false },
-  { id: 'ambassadors',  label: 'Ambassadors',   icon: 'M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z',                                                                   soon: false },
-  { id: 'inventory',    label: 'Inventory',     icon: 'M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z|M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16',                                                   soon: false },
-  { id: 'suppliers',    label: 'Suppliers',     icon: 'M20 7H4a2 2 0 00-2 2v6a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z|M6 7V5a2 2 0 012-2h8a2 2 0 012 2v2',                                                         soon: false },
-  { id: 'recipes',      label: 'Recipes',       icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 000 4h6a2 2 0 000-4M9 5a2 2 0 012-2h2a2 2 0 012 2|M9 12h6|M9 16h4',            soon: false },
-  { id: 'production',   label: 'Production',    icon: 'M12 2a10 10 0 100 20 10 10 0 000-20z|M12 6v6l4 2',                                                                                                               soon: false },
-  { id: 'finance',      label: 'Finance',       icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z|M12 6v2|M12 16v2|M8.5 9.5A3.5 3.5 0 0112 8h1a2 2 0 110 4h-2a2 2 0 100 4h1a3.5 3.5 0 003.5-3.5', soon: false },
-  { id: 'reports',      label: 'Reports',       icon: 'M18 20V10|M12 20V4|M6 20v-6',                                                                                                                                      soon: false },
-  { id: 'bohlale',      label: 'Bohlale',       icon: 'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z', soon: false },
-  { id: 'employees',    label: 'Employees',     icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z', soon: false },
-  { id: 'tasks',        label: 'Tasks',         icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4', soon: false },
-  { id: 'marketing',    label: 'Marketing',     icon: 'M22 12h-4l-3 9L9 3l-3 9H2',                                                                                                                                        soon: true  },
+  { id: 'dashboard',   label: 'Dashboard',  icon: 'M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z|M9 22V12h6v10',                                                                                                                                                                                                          soon: false },
+  { id: 'sales',       label: 'Sales',      icon: 'M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z|M3 6h18|M16 10a4 4 0 01-8 0',                                                                                                                                                                                          soon: false },
+  { id: 'catalogue',   label: 'Catalogue',  icon: 'M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z|M3.27 6.96L12 12.01l8.73-5.05|M12 22.08V12',                                                                                                       soon: false },
+  { id: 'operations',  label: 'Operations', icon: 'M12 2a10 10 0 100 20 10 10 0 000-20z|M12 6v6l4 2',                                                                                                                                                                                                                     soon: false },
+  { id: 'finance',     label: 'Finance',    icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z|M12 6v2|M12 16v2|M8.5 9.5A3.5 3.5 0 0112 8h1a2 2 0 110 4h-2a2 2 0 100 4h1a3.5 3.5 0 003.5-3.5',                                                                                                 soon: false },
+  { id: 'people',      label: 'People',     icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2|M9 11a4 4 0 100-8 4 4 0 000 8z|M23 21v-2a4 4 0 00-3-3.87|M16 3.13a4 4 0 010 7.75',                                                                                                                                          soon: false },
+  { id: 'bohlale',     label: 'Bohlale',    icon: 'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',                                                   soon: false },
+  { id: 'settings',    label: 'Settings',   icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z|M15 12a3 3 0 11-6 0 3 3 0 016 0z', soon: false },
   { id: 'settings',     label: 'Settings',      icon: 'M12 15a3 3 0 100-6 3 3 0 000 6z|M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z', soon: false },
 ];
 
 const MODULE_META = {
-  dashboard:    { title: 'Dashboard',     subtitle: 'Overview of your business' },
-  orders:       { title: 'Orders',        subtitle: 'Manage and track all orders' },
-  products:     { title: 'Products',      subtitle: 'Manage your product catalogue' },
-  customers:    { title: 'Customers',     subtitle: 'View and manage customers' },
-  ambassadors:  { title: 'Ambassadors',   subtitle: 'Manage your ambassador network' },
-  inventory:    { title: 'Inventory',     subtitle: 'Stock items, movements & stock taking' },
-  suppliers:    { title: 'Suppliers',     subtitle: 'Manage suppliers & purchase orders' },
-  recipes:      { title: 'Recipes',       subtitle: 'Product recipes & ingredient lists' },
-  production:   { title: 'Production',    subtitle: 'Production runs & batch tracking' },
-  finance:      { title: 'Finance',       subtitle: 'Money in, money out, commissions & bank' },
-  reports:      { title: 'Reports',       subtitle: 'Analytics and reporting' },
-  bohlale:      { title: 'Bohlale',             subtitle: 'AI intelligence — board meetings, strategy & insights' },
-  employees:    { title: 'Employees',         subtitle: 'Staff, shifts, leave & payroll' },
-  tasks:        { title: 'Tasks',             subtitle: 'Action items and board recommendations' },
-  marketing:    { title: 'Marketing',     subtitle: 'Campaigns and promotions' },
-  inventory:    { title: 'Inventory',     subtitle: 'Stock management' },
-  settings:     { title: 'Settings',      subtitle: 'Configure your store' },
+  dashboard:   { title: 'Dashboard',   subtitle: 'Overview of your business' },
+  sales:       { title: 'Sales',       subtitle: 'Orders, customers & ambassadors' },
+  catalogue:   { title: 'Catalogue',   subtitle: 'Products & recipes' },
+  operations:  { title: 'Operations',  subtitle: 'Production, inventory & suppliers' },
+  finance:     { title: 'Finance',     subtitle: 'Transactions, reports & cash flow' },
+  people:      { title: 'People',      subtitle: 'Employees, tasks & scheduling' },
+  bohlale:     { title: 'Bohlale',     subtitle: 'AI intelligence — board meetings, strategy & chat' },
+  settings:    { title: 'Settings',    subtitle: 'Configure your store' },
 };
 
 function AdminOverviewPage() {
@@ -3090,7 +3074,9 @@ function AdminOverviewPage() {
       ));
       return;
     }
-    function navigate(mod) {
+    // navigate(hubId, tabId?) — tabId pre-selects the sub-tab within a hub
+    function navigate(mod, tabId) {
+      if (tabId) sessionStorage.setItem('hub_' + mod, tabId);
       activeModule = mod;
       updateNav();
       updateTopbar();
@@ -3140,26 +3126,103 @@ function AdminOverviewPage() {
   return shell;
 }
 
-// ── MODULE ROUTER ────────────────────────────────────────────────────────
+// ── MODULE ROUTER ─────────────────────────────────────────────────────────────
 function renderAdminModule(module, data, container, reload, navigate) {
   switch (module) {
-    case 'dashboard':   renderAdminDashboard(data, container, reload, navigate);   break;
-    case 'orders':      renderAdminOrders(data, container, reload);      break;
-    case 'products':    renderAdminProducts(data, container, reload);    break;
-    case 'customers':   renderAdminCustomers(data, container, reload);   break;
-    case 'ambassadors': renderAdminAmbassadors(data, container, reload); break;
-    case 'inventory':   renderAdminInventory(data, container, reload);  break;
-    case 'suppliers':   renderAdminSuppliers(data, container, reload);  break;
-    case 'recipes':     renderAdminRecipes(data, container, reload);    break;
-    case 'production':  renderAdminProduction(data, container, reload); break;
-    case 'finance':     renderAdminFinance(container);                   break;
-    case 'reports':     renderAdminReports(data, container);             break;
-    case 'bohlale':     renderAdminBohlale(container);                   break;
-    case 'employees':   renderAdminEmployees(container);                 break;
-    case 'tasks':       renderAdminTasks(container);                     break;
-    case 'settings':    renderAdminSettings(data, container, reload);    break;
-    default:            renderAdminSoon(module, container);              break;
+    case 'dashboard':  renderAdminDashboard(data, container, reload, navigate); break;
+    case 'sales':      renderAdminSales(data, container, reload);               break;
+    case 'catalogue':  renderAdminCatalogue(data, container, reload);           break;
+    case 'operations': renderAdminOperations(data, container, reload);          break;
+    case 'finance':    renderAdminFinanceHub(data, container, reload);          break;
+    case 'people':     renderAdminPeople(container);                            break;
+    case 'bohlale':    renderAdminBohlale(container);                           break;
+    case 'settings':   renderAdminSettings(data, container, reload);            break;
+    default:           renderAdminSoon(module, container);                      break;
   }
+}
+
+// ── TAB HUB HELPER ────────────────────────────────────────────────────────────
+// Creates a standard tab-bar wrapper and calls the render fn for the active tab.
+// tabDefs: [{ id, label, render: (area) => void }]
+// persists active tab in sessionStorage under key `hub_<hubId>`
+function renderTabHub(container, hubId, tabDefs) {
+  container.innerHTML = '';
+
+  const stored = sessionStorage.getItem('hub_' + hubId);
+  let activeTab = (stored && tabDefs.find(t => t.id === stored)) ? stored : tabDefs[0].id;
+
+  const wrap    = el('div', { className: 'flex flex-col h-full' });
+  const tabBar  = el('div', { className: 'flex border-b border-gray-100 bg-white px-6 pt-4 flex-shrink-0' });
+  const content = el('div', { className: 'flex-1 overflow-auto' });
+
+  function activate(id) {
+    activeTab = id;
+    sessionStorage.setItem('hub_' + hubId, id);
+    // Update tab styles
+    tabBar.querySelectorAll('[data-tabid]').forEach(btn => {
+      const isActive = btn.dataset.tabid === id;
+      btn.className = `px-4 py-2.5 text-sm font-black border-b-2 mr-1 transition-all ${isActive ? 'border-brand text-brand' : 'border-transparent text-gray-400 hover:text-gray-700'}`;
+    });
+    // Render content
+    content.innerHTML = '';
+    const def = tabDefs.find(t => t.id === id);
+    if (def) def.render(content);
+  }
+
+  tabDefs.forEach(t => {
+    const btn = el('button', {
+      className: `px-4 py-2.5 text-sm font-black border-b-2 mr-1 transition-all ${activeTab === t.id ? 'border-brand text-brand' : 'border-transparent text-gray-400 hover:text-gray-700'}`,
+      onClick: () => activate(t.id),
+    }, t.label);
+    btn.dataset.tabid = t.id;
+    tabBar.append(btn);
+  });
+
+  wrap.append(tabBar, content);
+  container.append(wrap);
+  activate(activeTab);
+}
+
+// ── SALES HUB: Orders · Customers · Ambassadors ───────────────────────────────
+function renderAdminSales(data, container, reload) {
+  renderTabHub(container, 'sales', [
+    { id: 'orders',      label: '🛒 Orders',      render: c => renderAdminOrders(data, c, reload) },
+    { id: 'customers',   label: '👤 Customers',   render: c => renderAdminCustomers(data, c, reload) },
+    { id: 'ambassadors', label: '⭐ Ambassadors',  render: c => renderAdminAmbassadors(data, c, reload) },
+  ]);
+}
+
+// ── CATALOGUE HUB: Products · Recipes ─────────────────────────────────────────
+function renderAdminCatalogue(data, container, reload) {
+  renderTabHub(container, 'catalogue', [
+    { id: 'products', label: '📦 Products', render: c => renderAdminProducts(data, c, reload) },
+    { id: 'recipes',  label: '📋 Recipes',  render: c => renderAdminRecipes(data, c, reload) },
+  ]);
+}
+
+// ── OPERATIONS HUB: Production · Inventory · Suppliers ───────────────────────
+function renderAdminOperations(data, container, reload) {
+  renderTabHub(container, 'operations', [
+    { id: 'production', label: '⚙️ Production', render: c => renderAdminProduction(data, c, reload) },
+    { id: 'inventory',  label: '🏪 Inventory',  render: c => renderAdminInventory(data, c, reload) },
+    { id: 'suppliers',  label: '🚚 Suppliers',  render: c => renderAdminSuppliers(data, c, reload) },
+  ]);
+}
+
+// ── FINANCE HUB: Transactions · Reports ───────────────────────────────────────
+function renderAdminFinanceHub(data, container, reload) {
+  renderTabHub(container, 'finance', [
+    { id: 'finance',  label: '💰 Transactions', render: c => renderAdminFinance(c) },
+    { id: 'reports',  label: '📊 Reports',      render: c => renderAdminReports(data, c) },
+  ]);
+}
+
+// ── PEOPLE HUB: Employees · Tasks ─────────────────────────────────────────────
+function renderAdminPeople(container) {
+  renderTabHub(container, 'people', [
+    { id: 'employees', label: '👥 Employees', render: c => renderAdminEmployees(c) },
+    { id: 'tasks',     label: '✅ Tasks',     render: c => renderAdminTasks(c) },
+  ]);
 }
 
 function renderAdminSoon(module, container) {
@@ -3254,9 +3317,9 @@ function renderAdminDashboard(data, container, reload, navigate) {
     // KPI cards
     page.append(el('div', { className: 'grid grid-cols-2 md:grid-cols-4 gap-4 mb-6' },
       kpiCard('Total Revenue',      `R${revenue.toFixed(2)}`, '#10B981', 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z'),
-      kpiCard('Total Orders',       String(orders.length),    '#3B82F6', 'M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z|M3 6h18',                                           navigate ? () => navigate('orders')      : null),
-      kpiCard('Pending Orders',     String(pendingOrders),    '#F59E0B', 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',                                                      navigate ? () => navigate('orders')      : null),
-      kpiCard('Active Ambassadors', String(activeAmb),        '#8B5CF6', 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2|M9 11a4 4 0 100-8 4 4 0 000 8z',                         navigate ? () => navigate('ambassadors') : null)
+      kpiCard('Total Orders',       String(orders.length),    '#3B82F6', 'M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z|M3 6h18',                                           navigate ? () => navigate('sales', 'orders')      : null),
+      kpiCard('Pending Orders',     String(pendingOrders),    '#F59E0B', 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',                                                      navigate ? () => navigate('sales', 'orders')      : null),
+      kpiCard('Active Ambassadors', String(activeAmb),        '#8B5CF6', 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2|M9 11a4 4 0 100-8 4 4 0 000 8z',                         navigate ? () => navigate('sales', 'ambassadors') : null)
     ));
 
     // Recent Orders table — top 5, sorted newest first
@@ -3266,7 +3329,7 @@ function renderAdminDashboard(data, container, reload, navigate) {
         el('div', { className: 'px-5 py-4 border-b border-gray-100 flex justify-between items-center' },
           el('h3', { className: 'font-bold text-gray-900 text-sm' }, 'Recent Orders'),
           navigate
-            ? el('button', { className: 'text-xs text-brand font-semibold hover:opacity-80', onClick: () => navigate('orders') }, 'View all →')
+            ? el('button', { className: 'text-xs text-brand font-semibold hover:opacity-80', onClick: () => navigate('sales', 'orders') }, 'View all →')
             : el('span', { className: 'text-xs text-gray-400' }, `${orders.length} total`)
         ),
         el('div', { className: 'divide-y divide-gray-50' },
@@ -3275,7 +3338,7 @@ function renderAdminDashboard(data, container, reload, navigate) {
             : recentOrders.map(order =>
                 el('div', {
                   className: 'flex items-center justify-between px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors',
-                  onClick: navigate ? () => navigate('orders') : undefined,
+                  onClick: navigate ? () => navigate('sales', 'orders') : undefined,
                 },
                   el('div', {},
                     el('p', { className: 'text-sm font-semibold text-gray-900' }, `${order.customer?.firstName || ''} ${order.customer?.lastName || ''}`),
