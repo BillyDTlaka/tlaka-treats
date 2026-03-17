@@ -84,15 +84,16 @@ export async function buildSnapshot(db: any, periodDays: number): Promise<Busine
     for (const item of o.items) {
       const name = item.variant?.product?.name || 'Unknown'
       if (!productRevMap[name]) productRevMap[name] = { name, revenue: 0, units: 0 }
-      productRevMap[name].revenue += Number(item.price) * Number(item.quantity)
+      productRevMap[name].revenue += Number(item.subtotal)
       productRevMap[name].units   += Number(item.quantity)
     }
   }
   const productList = Object.values(productRevMap).sort((a, b) => b.revenue - a.revenue)
 
   // ── Finance ─────────────────────────────────────────────────────────────
+  // Match on either `date` (business date) or `createdAt` — seed data uses createdAt
   const transactions = await db.financeTransaction.findMany({
-    where: { createdAt: { gte: from } },
+    where: { OR: [{ date: { gte: from } }, { createdAt: { gte: from } }] },
   })
   const totalIncome   = transactions.filter((t: any) => t.type === 'INCOME').reduce((s: number, t: any) => s + Number(t.amount), 0)
   const totalExpenses = transactions.filter((t: any) => t.type === 'EXPENSE').reduce((s: number, t: any) => s + Number(t.amount), 0)
@@ -141,7 +142,7 @@ export async function buildSnapshot(db: any, periodDays: number): Promise<Busine
   }
   const topRecipeByVolume = Object.entries(recipeCount).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A'
   const avgBatchSize = prodRuns.length > 0
-    ? prodRuns.reduce((s: number, r: any) => s + Number(r.batchCount || 1), 0) / prodRuns.length
+    ? prodRuns.reduce((s: number, r: any) => s + Number(r.batches || 1), 0) / prodRuns.length
     : 0
 
   // ── Customers (customers are Users linked via order.customerId) ──────────

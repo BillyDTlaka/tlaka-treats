@@ -9976,14 +9976,14 @@ function renderAdminBoard(container) {
   const SENTIMENT_ICON = { POSITIVE: '😊', CAUTIOUS: '🤔', CONCERNED: '😟', CRITICAL: '🚨' };
 
   // ── Run controls ────────────────────────────────────────────────────────────
-  let periodDays = 30;
+  let periodDays = 60;
   let includeDebate = false;
   let running = false;
 
   const periodSel = el('select', { className: 'border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand' });
   [['7 days', 7], ['30 days', 30], ['60 days', 60], ['90 days', 90]].forEach(([label, val]) => {
     const o = document.createElement('option');
-    o.value = String(val); o.textContent = label; if (val === 30) o.selected = true;
+    o.value = String(val); o.textContent = label; if (val === 60) o.selected = true;
     periodSel.append(o);
   });
   periodSel.addEventListener('change', () => { periodDays = Number(periodSel.value); });
