@@ -6,62 +6,81 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' })
 const MODEL = 'claude-sonnet-4-6'
 const SERPER_API = 'https://google.serper.dev/search'
 
-async function webSearch(query: string): Promise<any[]> {
-  const key = config.braveSearchApiKey  // reusing same config key — set BRAVE_SEARCH_API_KEY to your Serper key
+const DEFAULT_STORES = [
+  { name: 'Makro',       domain: 'makro.co.za',    sortOrder: 0 },
+  { name: 'Checkers',    domain: 'checkers.co.za',  sortOrder: 1 },
+  { name: 'Pick n Pay',  domain: 'pnp.co.za',       sortOrder: 2 },
+  { name: 'Shoprite',    domain: 'shoprite.co.za',  sortOrder: 3 },
+  { name: "Baker's Bin", domain: 'bakersbin.co.za', sortOrder: 4 },
+]
+
+export async function seedDefaultStores(db: any): Promise<void> {
+  const count = await db.pricingStore.count()
+  if (count > 0) return
+  for (const s of DEFAULT_STORES) {
+    await db.pricingStore.create({ data: s })
+  }
+}
+
+async function serperSearch(query: string): Promise<any[]> {
+  const key = process.env.SERPER_API_KEY || process.env.BRAVE_SEARCH_API_KEY || ''
   if (!key) return []
   try {
     const res = await fetch(SERPER_API, {
       method: 'POST',
       headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: query, gl: 'za', num: 5 }),
+      body: JSON.stringify({ q: query, gl: 'za', num: 10 }),
     })
     if (!res.ok) return []
     const data: any = await res.json()
     return (data.organic || []).map((r: any) => ({
-      title:       r.title,
-      description: r.snippet,
-      url:         r.link,
+      title:   r.title,
+      snippet: r.snippet || '',
+      url:     r.link,
     }))
   } catch {
     return []
   }
 }
 
-export async function searchIngredientPrices(db: any, stockItemId: string): Promise<any> {
-  const stockItem = await db.stockItem.findUnique({
-    where: { id: stockItemId },
-    include: { uom: true, product: true },
-  })
-  if (!stockItem) throw new Error('Stock item not found')
+export async function searchItemPrices(
+  db: any,
+  searchTerm: string,
+  stockItemId: string | null,
+  stores: { name: string; domain: string }[]
+): Promise<any[]> {
+  if (!stores.length) return []
 
-  const unitLabel = stockItem.uom?.abbreviation || stockItem.unit || 'unit'
-  const name = stockItem.name
-  const query = `"${name}" price South Africa per ${unitLabel} Makro OR Checkers OR "Pick n Pay" OR Woolworths`
+  const siteFilter = stores.map(s => `site:${s.domain}`).join(' OR ')
+  const query = `"${searchTerm}" price South Africa (${siteFilter})`
 
-  const results = await webSearch(query)
-  if (!results.length) return { stockItem, prices: [] }
+  const results = await serperSearch(query)
+  if (!results.length) return []
 
-  const prompt = `Extract retail prices from these South African search results for the ingredient "${name}" (measuring unit: ${unitLabel}).
+  const prompt = `Extract retail prices from these South African search results for the product "${searchTerm}".
+
+Known stores to look for: ${stores.map(s => `${s.name} (${s.domain})`).join(', ')}
 
 Search results:
-${results.map((r: any, i: number) => `${i + 1}. ${r.title}\n${r.description || ''}\nURL: ${r.url}`).join('\n\n')}
+${results.map((r, i) => `${i + 1}. ${r.title}\n${r.snippet}\nURL: ${r.url}`).join('\n\n')}
 
-Return a JSON array of found prices. Each item must have:
-- "source": store name (e.g. "Makro", "Checkers", "Pick n Pay", "Woolworths", or domain name)
-- "pricePerUnit": number — price per single ${unitLabel} (calculate from pack price if needed)
-- "packSize": number or null — pack size in ${unitLabel} (e.g. 5 for a 5kg bag)
-- "packPrice": number or null — total pack price in Rand
-- "unitLabel": "${unitLabel}"
-- "url": the URL
-- "rawSnippet": the relevant snippet text
+Return a JSON array. For each price found:
+{
+  "storeName": "exact store name from the known stores list, or domain if unknown",
+  "pricePerUnit": number (price per single unit — calculate if pack price given),
+  "packSize": number or null (e.g. 5 for a 5kg bag),
+  "packPrice": number or null (total pack price in Rand),
+  "unitLabel": "kg/L/unit/etc",
+  "url": "source URL",
+  "rawSnippet": "relevant price text"
+}
 
 Rules:
-- Only include prices you are confident about
-- Convert pack prices to per-unit prices (e.g. R149 for 12.5kg = R11.92/kg)
-- Ignore prices in currencies other than Rand
-- If no clear prices found, return []
-
-Return ONLY valid JSON array, no explanation.`
+- Only include prices you are confident about (actual Rand amounts)
+- Normalise to price per unit (e.g. R149 for 12.5kg = R11.92/kg)
+- If the same store appears multiple times, keep the lowest price
+- Return [] if no clear prices found
+- Return ONLY valid JSON array, no explanation.`
 
   const msg = await client.messages.create({
     model: MODEL,
@@ -76,112 +95,107 @@ Return ONLY valid JSON array, no explanation.`
     if (match) prices = JSON.parse(match[0])
   } catch {}
 
-  // Delete old market prices for this ingredient first
-  await db.marketPrice.deleteMany({ where: { stockItemId } })
+  // Delete old market prices for this item if linked to a stockItem
+  if (stockItemId) {
+    await db.marketPrice.deleteMany({ where: { stockItemId } })
+  }
 
-  const saved = []
+  const saved: any[] = []
   for (const p of prices) {
     if (!p.pricePerUnit || Number(p.pricePerUnit) <= 0) continue
     const mp = await db.marketPrice.create({
       data: {
-        stockItemId,
+        stockItemId:  stockItemId || null,
+        searchTerm:   stockItemId ? null : searchTerm,
         pricePerUnit: p.pricePerUnit,
-        unitLabel: p.unitLabel || unitLabel,
-        source: p.source || 'Web',
-        url: p.url || null,
-        rawSnippet: p.rawSnippet || null,
-        checkedAt: new Date(),
+        unitLabel:    p.unitLabel  || null,
+        source:       p.storeName  || 'Web',
+        url:          p.url        || null,
+        rawSnippet:   p.rawSnippet || null,
+        checkedAt:    new Date(),
       },
     })
-    saved.push(mp)
+    saved.push({ ...mp, storeName: p.storeName, packSize: p.packSize, packPrice: p.packPrice })
   }
 
-  return { stockItem, prices: saved }
+  return saved
 }
 
-export async function runPriceCheckAll(db: any): Promise<any[]> {
-  const stockItems = await db.stockItem.findMany({
-    where: { product: { classification: { in: ['INGREDIENT', 'PACKAGING'] } }, isActive: true },
-    select: { id: true, name: true },
-  })
-
+export async function runPriceCheck(
+  db: any,
+  items: { stockItemId?: string; searchTerm: string }[]
+): Promise<{ term: string; found: number }[]> {
+  const stores = await db.pricingStore.findMany({ where: { isActive: true }, orderBy: { sortOrder: 'asc' } })
   const results = []
-  for (const si of stockItems) {
-    try {
-      const r = await searchIngredientPrices(db, si.id)
-      results.push({ id: si.id, name: si.name, found: r.prices?.length || 0 })
-    } catch (e: any) {
-      results.push({ id: si.id, name: si.name, found: 0, error: e.message })
-    }
+  for (const item of items) {
+    const prices = await searchItemPrices(db, item.searchTerm, item.stockItemId || null, stores)
+    results.push({ term: item.searchTerm, found: prices.length })
   }
   return results
 }
 
-export async function generatePricingInsights(db: any): Promise<string> {
-  const stockItems = await db.stockItem.findMany({
-    where: { product: { classification: { in: ['INGREDIENT', 'PACKAGING'] } } },
-    include: {
-      uom: true,
-      product: { select: { name: true, classification: true } },
-      marketPrices: { orderBy: { checkedAt: 'desc' }, take: 5 },
-      supplierQuotes: {
-        orderBy: { createdAt: 'desc' },
-        take: 5,
-        include: { supplier: { select: { name: true } } },
-      },
-      purchaseOrderItems: {
-        orderBy: { purchaseOrder: { orderDate: 'desc' } },
-        take: 3,
-        include: { purchaseOrder: { include: { supplier: { select: { name: true } } } } },
-      },
-    },
+export async function generateShoppingList(
+  db: any,
+  stockItemIds: string[],
+  customTerms: string[]
+): Promise<string> {
+  // Gather all market prices for the selected items
+  const where: any = { OR: [] }
+  if (stockItemIds.length) where.OR.push({ stockItemId: { in: stockItemIds } })
+  if (customTerms.length)  where.OR.push({ searchTerm:  { in: customTerms }  })
+  if (!where.OR.length) return 'No items selected.'
+
+  const prices = await db.marketPrice.findMany({
+    where,
+    include: { stockItem: { select: { name: true, costPerUnit: true, uom: { select: { abbreviation: true } } } } },
+    orderBy: { checkedAt: 'desc' },
   })
 
-  if (!stockItems.length) return 'No ingredient data available yet. Add stock items first.'
+  if (!prices.length) return 'No price data found. Run a price check first.'
 
-  const data = stockItems.map((si: any) => ({
-    name: si.name,
-    unit: si.uom?.abbreviation || si.unit || 'unit',
-    currentCostPerUnit: Number(si.costPerUnit),
-    recentPurchases: si.purchaseOrderItems.map((poi: any) => ({
-      supplier: poi.purchaseOrder.supplier.name,
-      unitCost: Number(poi.unitCost),
-      date: poi.purchaseOrder.orderDate,
-    })),
-    marketPrices: si.marketPrices.map((mp: any) => ({
-      source: mp.source,
-      pricePerUnit: Number(mp.pricePerUnit),
-      checkedAt: mp.checkedAt,
-    })),
-    supplierQuotes: si.supplierQuotes.map((sq: any) => ({
-      supplier: sq.supplier.name,
-      pricePerUnit: Number(sq.pricePerUnit),
-      date: sq.createdAt,
-    })),
+  const grouped: Record<string, any[]> = {}
+  for (const p of prices) {
+    const key = p.stockItem?.name || p.searchTerm || 'Unknown'
+    if (!grouped[key]) grouped[key] = []
+    grouped[key].push(p)
+  }
+
+  const itemSummaries = Object.entries(grouped).map(([name, ps]) => ({
+    item: name,
+    prices: ps.map(p => ({ store: p.source, pricePerUnit: Number(p.pricePerUnit), unit: p.unitLabel || p.stockItem?.uom?.abbreviation || 'unit', url: p.url })),
   }))
 
-  const prompt = `You are Bohlale, AI business assistant for Tlaka Treats (small South African food business).
+  const prompt = `You are Bohlale, AI assistant for Tlaka Treats — a small South African baked goods business that buys ingredients directly from retail stores.
 
-Analyse these ingredient and packaging costs compared to market prices and supplier quotes.
+Based on these price comparisons, create an optimised shopping list that tells the owner exactly where to buy each item at the lowest price.
 
-Data:
-${JSON.stringify(data, null, 2)}
+Price data:
+${JSON.stringify(itemSummaries, null, 2)}
 
-Provide a concise pricing intelligence report with:
+Output a **Purchase List** formatted as:
 
-## 🔴 Overpaying (biggest savings first)
-List items where we pay more than market/quote prices. Show: current cost vs best available price, % difference, estimated monthly saving (assume reasonable purchase volume).
+## 🛒 Shopping List by Store
 
-## 🟡 Review These
-Items with limited market data or minor discrepancies worth monitoring.
+For each store that has the best price for at least one item, create a section:
 
-## 🟢 Competitive Pricing
-Items where our costs are at or below market prices.
+### [Store Name]
+| Item | Price | Unit |
+|------|-------|------|
+| ... | R... | per kg |
 
-## 📋 Recommended Actions
-3-5 specific actions to take this month (e.g. "Request updated quote from Supplier X for flour", "Buy sugar from Makro at R11.92/kg instead of R18/kg").
+**Store Total: R...**  (sum of best prices for items bought here)
 
-Use South African Rand (R). Be specific with numbers. If market price data is missing for some items, note that a price check should be run.`
+At the end:
+## 📋 Summary
+- Total estimated spend: R...
+- Items with no price data: [list]
+- Biggest saving vs current cost: [if cost data available]
+
+Rules:
+- Use South African Rand (R)
+- Pick the single cheapest store per item
+- If prices are very close (< 5% difference), note "Similar pricing across stores"
+- Keep it practical and clear for a busy business owner`
 
   const msg = await client.messages.create({
     model: MODEL,
@@ -230,15 +244,15 @@ Kind regards,
 Tlaka Treats Procurement Team`
 
   const transport = nodemailer.createTransport({
-    host: config.email.host,
-    port: config.email.port,
+    host:   config.email.host,
+    port:   config.email.port,
     secure: config.email.secure,
-    auth: { user: config.email.user, pass: config.email.pass },
+    auth:   { user: config.email.user, pass: config.email.pass },
   })
 
   await transport.sendMail({ from: config.email.from, to: supplier.email, subject, text: body })
 
-  const request = await db.supplierQuoteRequest.create({
+  return db.supplierQuoteRequest.create({
     data: {
       supplierId,
       subject,
@@ -251,6 +265,4 @@ Tlaka Treats Procurement Team`
       items: { include: { stockItem: true } },
     },
   })
-
-  return request
 }
