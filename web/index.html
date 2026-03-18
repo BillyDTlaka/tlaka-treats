@@ -12527,7 +12527,7 @@ function renderAdminStrategy(container) {
     }
     if (s.status === 'APPROVED') {
       wfBar.append(
-        wfBtn('⬇️ Download PDF', BRAND, async () => {
+        wfBtn('⬇️ Download PDF', '#8B3A3A', async () => {
           const res = await fetch(api.strategy.pdfUrl(s.id), { headers: { Authorization: `Bearer ${token()}` } });
           if (!res.ok) { alert('PDF failed'); return; }
           const blob = await res.blob();
@@ -12751,7 +12751,7 @@ function renderAdminStrategy(container) {
           val.forEach(item => {
             sectionCard.append(
               el('div', { className: 'flex gap-3 py-2 border-b border-gray-50 last:border-0' },
-                el('div', { className: 'w-2 h-2 rounded-full mt-2 flex-shrink-0', style: { backgroundColor: BRAND } }),
+                el('div', { className: 'w-2 h-2 rounded-full mt-2 flex-shrink-0 bg-brand' }),
                 el('div', {},
                   el('p', { className: 'text-sm font-bold text-gray-900' }, item.value || item),
                   item.description ? el('p', { className: 'text-xs text-gray-500' }, item.description) : null
