@@ -10549,6 +10549,7 @@ function renderAdminPricing(container) {
 
   // ── Configure tab ─────────────────────────────────────────────────────────────
   function renderConfigure() {
+    content.innerHTML = '';
     const grid = el('div', { className: 'grid grid-cols-2 gap-6 max-w-5xl' });
     content.append(grid);
 
@@ -10569,14 +10570,15 @@ function renderAdminPricing(container) {
         row.append(
           el('div', { className: 'flex items-center gap-2' },
             el('button', {
-              className: `w-9 h-5 rounded-full transition-colors flex-shrink-0 ${s.isActive ? 'bg-brand' : 'bg-gray-200'}`,
-              onClick: async () => {
+              className: `w-9 h-5 rounded-full transition-colors flex-shrink-0 relative ${s.isActive ? 'bg-brand' : 'bg-gray-200'}`,
+              onClick: async function() {
                 await api.pricing.updateStore(s.id, { isActive: !s.isActive });
                 s.isActive = !s.isActive;
-                renderStoreList();
+                this.className = `w-9 h-5 rounded-full transition-colors flex-shrink-0 relative ${s.isActive ? 'bg-brand' : 'bg-gray-200'}`;
+                this.querySelector('span').style.transform = s.isActive ? 'translateX(16px)' : 'translateX(2px)';
               },
             },
-              el('span', { className: `block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${s.isActive ? 'translate-x-4' : 'translate-x-0'}` })
+              el('span', { className: 'block w-4 h-4 bg-white rounded-full shadow absolute top-0.5', style: `transform: ${s.isActive ? 'translateX(16px)' : 'translateX(2px)'}` })
             ),
             el('div', {},
               el('p', { className: `text-sm font-semibold ${s.isActive ? 'text-gray-900' : 'text-gray-400'}` }, s.name),
@@ -10627,30 +10629,33 @@ function renderAdminPricing(container) {
       itemsList.append(el('p', { className: 'text-xs text-gray-400 text-center py-3' }, 'No INGREDIENT or PACKAGING stock items found'));
     }
     for (const si of stockItems) {
-      const checked = selectedStockIds.has(si.id);
+      const cb = el('input', { type: 'checkbox', className: 'w-4 h-4 accent-brand' });
+      cb.checked = selectedStockIds.has(si.id);
+      cb.addEventListener('change', () => cb.checked ? selectedStockIds.add(si.id) : selectedStockIds.delete(si.id));
       const lbl = el('label', { className: 'flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 rounded p-1' },
-        el('input', {
-          type: 'checkbox',
-          className: 'w-4 h-4 accent-brand',
-          checked,
-          onChange: e => e.target.checked ? selectedStockIds.add(si.id) : selectedStockIds.delete(si.id),
-        }),
+        cb,
         el('span', { className: 'flex-1' }, si.name),
         el('span', { className: 'text-xs text-gray-400' }, si.uom?.abbreviation || '')
       );
       itemsList.append(lbl);
     }
 
-    // Select all / none
+    // Select all / none — re-render only the items list, not the whole tab
     productsCard.append(
       el('div', { className: 'flex gap-3 mb-3' },
         el('button', {
           className: 'text-xs text-brand hover:underline',
-          onClick: () => { stockItems.forEach(s => selectedStockIds.add(s.id)); renderConfigure(); },
+          onClick: () => {
+            stockItems.forEach(s => selectedStockIds.add(s.id));
+            itemsList.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true);
+          },
         }, 'Select all'),
         el('button', {
           className: 'text-xs text-gray-400 hover:underline',
-          onClick: () => { selectedStockIds.clear(); renderConfigure(); },
+          onClick: () => {
+            selectedStockIds.clear();
+            itemsList.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+          },
         }, 'Clear')
       )
     );
@@ -10870,6 +10875,7 @@ function renderAdminPricing(container) {
       ]);
       stores = st || [];
       stockItems = (si || []).filter(s => ['INGREDIENT', 'PACKAGING'].includes(s.product?.classification));
+      selectedStockIds = new Set(stockItems.map(s => s.id)); // default: all selected
       marketPrices = mp || [];
       renderContent();
     } catch(e) {
