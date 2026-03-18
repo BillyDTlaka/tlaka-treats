@@ -321,6 +321,16 @@ const api = {
     getProgress:    (id)         => req('GET',    `/strategy/${id}/progress`),
     updateProgress: (id, d)      => req('PATCH',  `/strategy/${id}/progress`, d),
   },
+  company: {
+    get:    ()  => req('GET',   '/company'),
+    update: (d) => req('PATCH', '/company', d),
+  },
+  departments: {
+    list:   ()       => req('GET',    '/departments'),
+    create: (d)      => req('POST',   '/departments', d),
+    update: (id, d)  => req('PATCH',  `/departments/${id}`, d),
+    remove: (id)     => req('DELETE', `/departments/${id}`),
+  },
   employees: {
     list:               (p)        => req('GET',  '/employees' + (p ? '?' + new URLSearchParams(p) : '')),
     create:             (d)        => req('POST',  '/employees', d),
@@ -3248,12 +3258,682 @@ function renderAdminFinanceHub(data, container, reload) {
   renderAdminFinance(container);
 }
 
-// ── PEOPLE HUB: Employees · Tasks ─────────────────────────────────────────────
+// ── PEOPLE HUB: Company · Departments · Org Chart · Staff · Schedule · Leave · Payroll · Tasks ──
 function renderAdminPeople(container) {
-  renderTabHub(container, 'people', [
-    { id: 'employees', label: '👥 Employees', render: c => renderAdminEmployees(c) },
-    { id: 'tasks',     label: '✅ Tasks',     render: c => renderAdminTasks(c) },
-  ]);
+  container.innerHTML = '';
+  const layout = el('div', { className: 'flex min-h-screen bg-gray-50' });
+  container.append(layout);
+
+  // ── Sidebar nav ──────────────────────────────────────────────────────────
+  const NAV_ITEMS = [
+    { id: 'company',     icon: '🏢', label: 'Company'       },
+    { id: 'departments', icon: '🏗',  label: 'Departments'   },
+    { id: 'orgchart',    icon: '🗂',  label: 'Org Chart'     },
+    { id: 'staff',       icon: '👥',  label: 'Staff'         },
+    { id: 'casual',      icon: '⏱',  label: 'Casual Workers' },
+    { id: 'schedule',    icon: '📅',  label: 'Schedule'      },
+    { id: 'leave',       icon: '🌴',  label: 'Leave'         },
+    { id: 'payroll',     icon: '💰',  label: 'Payroll'       },
+    { id: 'tasks',       icon: '✅',  label: 'Tasks'         },
+  ];
+
+  let activeSection = 'staff';
+  const sidebar = el('div', { className: 'w-56 flex-shrink-0 bg-white border-r border-gray-100 min-h-screen p-4' });
+  sidebar.append(el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-widest mb-4 px-2' }, 'People & HR'));
+
+  const mainArea = el('div', { className: 'flex-1 p-6 overflow-auto' });
+  layout.append(sidebar, mainArea);
+
+  function renderSidebar() {
+    sidebar.querySelectorAll('.people-nav-btn').forEach(b => b.remove());
+    NAV_ITEMS.forEach(item => {
+      const btn = el('button', {
+        className: `people-nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold mb-1 transition ${activeSection === item.id ? 'bg-brand/10 text-brand' : 'text-gray-600 hover:bg-gray-50'}`,
+        onClick: () => { activeSection = item.id; renderSidebar(); renderSection(); }
+      },
+        el('span', { className: 'text-base w-5 text-center' }, item.icon),
+        item.label
+      );
+      sidebar.append(btn);
+    });
+  }
+
+  function renderSection() {
+    mainArea.innerHTML = '';
+    switch (activeSection) {
+      case 'company':     renderCompanySection();     break;
+      case 'departments': renderDepartmentsSection(); break;
+      case 'orgchart':    renderOrgChartSection();    break;
+      case 'staff':       renderStaffSection();       break;
+      case 'casual':      renderCasualSection();      break;
+      case 'schedule':    renderScheduleSection();    break;
+      case 'leave':       renderLeaveSection();       break;
+      case 'payroll':     renderPayrollSection();     break;
+      case 'tasks':       renderAdminTasks(mainArea); break;
+    }
+  }
+
+  // ── COMPANY ──────────────────────────────────────────────────────────────
+  function renderCompanySection() {
+    const page = el('div', { className: 'max-w-2xl' });
+    mainArea.append(page);
+    page.append(el('h2', { className: 'text-2xl font-black text-gray-900 mb-6' }, '🏢 Company Profile'));
+
+    api.company.get().then(co => {
+      let editing = false;
+      const fields = [
+        { key: 'name',           label: 'Company Name',        required: true },
+        { key: 'tradingName',    label: 'Trading Name'         },
+        { key: 'registrationNo', label: 'Registration No.'     },
+        { key: 'vatNo',          label: 'VAT No.'              },
+        { key: 'address',        label: 'Street Address'       },
+        { key: 'city',           label: 'City'                 },
+        { key: 'province',       label: 'Province'             },
+        { key: 'postalCode',     label: 'Postal Code'          },
+        { key: 'phone',          label: 'Phone'                },
+        { key: 'email',          label: 'Email'                },
+        { key: 'website',        label: 'Website'              },
+      ];
+
+      const card = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-6' });
+      page.append(card);
+
+      const inputs = {};
+      const grid = el('div', { className: 'grid grid-cols-2 gap-4' });
+
+      fields.forEach(f => {
+        const input = el('input', {
+          className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30 disabled:bg-gray-50 disabled:text-gray-500',
+          value: co[f.key] || '',
+          disabled: true,
+        });
+        inputs[f.key] = input;
+        grid.append(el('div', {},
+          el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, f.label),
+          input
+        ));
+      });
+      card.append(grid);
+
+      const editBtn = el('button', {
+        className: 'mt-5 bg-brand text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90',
+        onClick: async () => {
+          if (!editing) {
+            editing = true;
+            editBtn.textContent = 'Save Changes';
+            editBtn.className = 'mt-5 bg-green-600 text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90';
+            Object.values(inputs).forEach(inp => { inp.disabled = false; });
+          } else {
+            const data = {};
+            fields.forEach(f => { data[f.key] = inputs[f.key].value.trim() || null; });
+            data.name = inputs.name.value.trim() || 'Tlaka Treats';
+            await api.company.update(data);
+            editing = false;
+            editBtn.textContent = '✏️ Edit';
+            editBtn.className = 'mt-5 bg-brand text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90';
+            Object.values(inputs).forEach(inp => { inp.disabled = true; });
+          }
+        }
+      }, '✏️ Edit');
+      card.append(editBtn);
+    }).catch(e => mainArea.append(el('p', { className: 'text-red-500 text-sm' }, 'Error: ' + e.message)));
+  }
+
+  // ── DEPARTMENTS ───────────────────────────────────────────────────────────
+  function renderDepartmentsSection() {
+    const page = el('div', { className: 'max-w-3xl' });
+    mainArea.append(page);
+
+    const hdr = el('div', { className: 'flex items-center justify-between mb-6' },
+      el('h2', { className: 'text-2xl font-black text-gray-900' }, '🏗 Departments'),
+      el('button', {
+        className: 'bg-brand text-white font-bold px-4 py-2 rounded-xl text-sm hover:opacity-90',
+        onClick: () => openDeptModal(null, () => { mainArea.innerHTML = ''; renderDepartmentsSection(); }),
+      }, '+ New Department')
+    );
+    page.append(hdr);
+
+    const list = el('div', { className: 'space-y-3' });
+    page.append(list);
+
+    Promise.all([api.departments.list(), api.employees.list()]).then(([depts, emps]) => {
+      if (!depts.length) {
+        list.append(el('div', { className: 'text-center py-12 text-gray-400' },
+          el('p', { className: 'text-4xl mb-3' }, '🏗'),
+          el('p', {}, 'No departments yet. Create your first one.')
+        ));
+        return;
+      }
+      depts.forEach(dept => {
+        const empCount = (dept.employees || []).length;
+        const mgrName = dept.manager ? `${dept.manager.user?.firstName || ''} ${dept.manager.user?.lastName || ''}`.trim() : null;
+
+        const card = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-5 flex items-start gap-4' },
+          el('div', { className: 'w-10 h-10 rounded-xl bg-brand/10 text-brand flex items-center justify-center text-lg font-black flex-shrink-0' }, dept.name.slice(0,1)),
+          el('div', { className: 'flex-1 min-w-0' },
+            el('div', { className: 'flex items-center gap-2 mb-1' },
+              el('p', { className: 'font-black text-gray-900' }, dept.name),
+              el('span', { className: 'text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-medium' }, `${empCount} active`)
+            ),
+            dept.description ? el('p', { className: 'text-sm text-gray-500 mb-2' }, dept.description) : null,
+            el('div', { className: 'flex items-center gap-4 text-xs text-gray-400' },
+              mgrName ? el('span', {}, '👤 Manager: ' + mgrName) : el('span', {}, 'No manager assigned'),
+              ...(dept.employees || []).slice(0, 4).map(e => {
+                const name = `${e.user?.firstName || ''} ${e.user?.lastName || ''}`.trim() || e.jobTitle;
+                return el('span', { className: 'bg-gray-100 px-2 py-0.5 rounded-full' }, name);
+              }),
+              empCount > 4 ? el('span', { className: 'text-gray-400' }, `+${empCount - 4} more`) : null,
+            )
+          ),
+          el('div', { className: 'flex gap-2 flex-shrink-0' },
+            el('button', {
+              className: 'text-xs text-indigo-600 font-bold hover:underline px-2 py-1',
+              onClick: () => openDeptModal(dept, () => { mainArea.innerHTML = ''; renderDepartmentsSection(); }),
+            }, 'Edit'),
+            el('button', {
+              className: 'text-xs text-red-400 font-bold hover:underline px-2 py-1',
+              onClick: async () => {
+                if (!confirm(`Delete "${dept.name}"? Employees will be unlinked.`)) return;
+                await api.departments.remove(dept.id);
+                mainArea.innerHTML = '';
+                renderDepartmentsSection();
+              },
+            }, 'Delete')
+          )
+        );
+        list.append(card);
+      });
+    });
+
+    function openDeptModal(dept, onSave) {
+      const overlay = el('div', { className: 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4' });
+      const nameInput = el('input', {
+        className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30',
+        placeholder: 'e.g. Production, Sales, Admin',
+        value: dept?.name || '',
+      });
+      const descInput = el('textarea', {
+        className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none resize-none focus:ring-2 focus:ring-brand/30',
+        placeholder: 'Short description (optional)',
+        rows: 2,
+        value: dept?.description || '',
+      });
+      const mgrSel = el('select', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none' });
+      mgrSel.append(el('option', { value: '' }, 'No manager'));
+      api.employees.list({ status: 'ACTIVE' }).then(emps => {
+        emps.forEach(e => {
+          const name = `${e.user?.firstName || ''} ${e.user?.lastName || ''}`.trim() || e.jobTitle;
+          const opt = el('option', { value: e.id }, name + ' · ' + e.jobTitle);
+          if (dept?.managerId === e.id) opt.selected = true;
+          mgrSel.append(opt);
+        });
+      });
+
+      const saveBtn = el('button', {
+        className: 'bg-brand text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90',
+        onClick: async () => {
+          const data = { name: nameInput.value.trim(), description: descInput.value.trim() || null, managerId: mgrSel.value || null };
+          if (!data.name) { nameInput.focus(); return; }
+          if (dept) await api.departments.update(dept.id, data);
+          else await api.departments.create(data);
+          overlay.remove();
+          onSave();
+        }
+      }, dept ? 'Save Changes' : 'Create Department');
+
+      overlay.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl' },
+        el('div', { className: 'flex items-center justify-between mb-5' },
+          el('h3', { className: 'font-black text-gray-900' }, dept ? 'Edit Department' : 'New Department'),
+          el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl', onClick: () => overlay.remove() }, '×')
+        ),
+        el('div', { className: 'space-y-4' },
+          el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Name *'), nameInput),
+          el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Description'), descInput),
+          el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Department Head'), mgrSel),
+        ),
+        el('div', { className: 'flex justify-end gap-3 mt-5' },
+          el('button', { className: 'text-sm text-gray-500 px-4 py-2', onClick: () => overlay.remove() }, 'Cancel'),
+          saveBtn
+        )
+      ));
+      overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+      document.body.append(overlay);
+      nameInput.focus();
+    }
+  }
+
+  // ── ORG CHART ─────────────────────────────────────────────────────────────
+  function renderOrgChartSection() {
+    const page = el('div', { className: 'max-w-5xl' });
+    mainArea.append(page);
+    page.append(el('h2', { className: 'text-2xl font-black text-gray-900 mb-6' }, '🗂 Org Chart'));
+
+    api.employees.list().then(emps => {
+      const active = emps.filter(e => e.status !== 'TERMINATED');
+      const byId = {};
+      active.forEach(e => { byId[e.id] = e; });
+      const roots = active.filter(e => !e.reportsToId || !byId[e.reportsToId]);
+      const children = {};
+      active.forEach(e => {
+        if (e.reportsToId && byId[e.reportsToId]) {
+          if (!children[e.reportsToId]) children[e.reportsToId] = [];
+          children[e.reportsToId].push(e);
+        }
+      });
+
+      function renderNode(emp, depth) {
+        const name = `${emp.user?.firstName || ''} ${emp.user?.lastName || ''}`.trim() || 'Unknown';
+        const kids = children[emp.id] || [];
+        const EMP_TYPE_COLOR = { FULL_TIME: '#059669', PART_TIME: '#2563EB', CONTRACT: '#7C3AED', CASUAL: '#D97706' };
+        const tc = EMP_TYPE_COLOR[emp.employmentType] || '#6B7280';
+
+        const node = el('div', { className: 'flex flex-col items-center' },
+          el('div', { className: 'bg-white border-2 rounded-2xl p-3 text-center shadow-sm min-w-28 max-w-36', style: { borderColor: tc } },
+            el('div', { className: 'w-10 h-10 rounded-full mx-auto mb-2 flex items-center justify-center text-white text-sm font-black', style: { backgroundColor: tc } }, name.slice(0,1)),
+            el('p', { className: 'font-bold text-gray-900 text-xs leading-tight' }, name),
+            el('p', { className: 'text-xs text-gray-500 mt-0.5 leading-tight' }, emp.jobTitle),
+            emp.departmentRel ? el('p', { className: 'text-xs mt-1 px-1.5 py-0.5 rounded-full font-medium', style: { backgroundColor: tc + '15', color: tc } }, emp.departmentRel.name) : null,
+          )
+        );
+
+        if (kids.length) {
+          const childRow = el('div', { className: 'flex gap-6 mt-4 pt-4 relative' });
+          kids.forEach(k => childRow.append(renderNode(k, depth + 1)));
+          node.append(
+            el('div', { className: 'w-px h-4 bg-gray-200 mx-auto' }),
+            childRow
+          );
+        }
+        return node;
+      }
+
+      if (!active.length) {
+        page.append(el('p', { className: 'text-gray-400 text-center py-12' }, 'No employees found.'));
+        return;
+      }
+
+      const legend = el('div', { className: 'flex gap-4 mb-6 flex-wrap' });
+      [['Full Time','#059669'],['Part Time','#2563EB'],['Contract','#7C3AED'],['Casual','#D97706']].forEach(([l,c]) => {
+        legend.append(el('div', { className: 'flex items-center gap-1.5 text-xs text-gray-600' },
+          el('div', { className: 'w-3 h-3 rounded-full', style: { backgroundColor: c } }),
+          l
+        ));
+      });
+      page.append(legend);
+
+      const chartWrap = el('div', { className: 'overflow-x-auto pb-6' });
+      const chart = el('div', { className: 'flex gap-8 min-w-max' });
+      roots.forEach(r => chart.append(renderNode(r, 0)));
+      chartWrap.append(chart);
+      page.append(chartWrap);
+
+      page.append(el('div', { className: 'mt-8 bg-white rounded-2xl border border-gray-100 p-5' },
+        el('h3', { className: 'font-black text-gray-900 mb-4' }, 'Set Reporting Lines'),
+        el('p', { className: 'text-sm text-gray-500 mb-4' }, 'Assign who each employee reports to to build the org chart.'),
+        ...active.map(emp => {
+          const name = `${emp.user?.firstName || ''} ${emp.user?.lastName || ''}`.trim() || emp.jobTitle;
+          const sel = el('select', { className: 'text-sm border border-gray-200 rounded-xl px-3 py-2 flex-1 outline-none' });
+          sel.append(el('option', { value: '' }, '— No manager —'));
+          active.filter(e => e.id !== emp.id).forEach(m => {
+            const mn = `${m.user?.firstName || ''} ${m.user?.lastName || ''}`.trim() || m.jobTitle;
+            const opt = el('option', { value: m.id }, mn + ' · ' + m.jobTitle);
+            if (emp.reportsToId === m.id) opt.selected = true;
+            sel.append(opt);
+          });
+          const saveBtn = el('button', {
+            className: 'text-xs text-brand font-bold hover:underline',
+            onClick: async () => {
+              await api.employees.update(emp.id, { reportsToId: sel.value || null });
+              saveBtn.textContent = '✓ Saved';
+              setTimeout(() => { saveBtn.textContent = 'Save'; mainArea.innerHTML = ''; renderOrgChartSection(); }, 1500);
+            }
+          }, 'Save');
+          return el('div', { className: 'flex items-center gap-3 py-2 border-b border-gray-50 last:border-0' },
+            el('p', { className: 'w-40 text-sm font-medium text-gray-800 flex-shrink-0' }, name),
+            el('p', { className: 'text-xs text-gray-400 w-32 flex-shrink-0' }, emp.jobTitle),
+            sel,
+            saveBtn
+          );
+        })
+      ));
+    }).catch(e => page.append(el('p', { className: 'text-red-500 text-sm' }, 'Error: ' + e.message)));
+  }
+
+  // ── STAFF (all permanent) ─────────────────────────────────────────────────
+  function renderStaffSection() {
+    const page = el('div', {});
+    mainArea.append(page);
+
+    const hdr = el('div', { className: 'flex items-center justify-between mb-6' },
+      el('h2', { className: 'text-2xl font-black text-gray-900' }, '👥 Staff'),
+      el('button', {
+        className: 'bg-brand text-white font-bold px-4 py-2 rounded-xl text-sm hover:opacity-90',
+        onClick: () => openEmployeeModal(null, () => { mainArea.innerHTML = ''; renderStaffSection(); }),
+      }, '+ Add Employee')
+    );
+    page.append(hdr);
+
+    let filterStatus = '';
+    const filterRow = el('div', { className: 'flex gap-2 mb-5 flex-wrap' });
+    ['', 'ACTIVE', 'INACTIVE', 'TERMINATED'].forEach(s => {
+      const pill = el('button', {
+        className: `px-3 py-1 rounded-full text-xs font-bold border transition ${filterStatus === s ? 'bg-brand text-white border-brand' : 'border-gray-200 text-gray-600 hover:border-brand'}`,
+        onClick: () => { filterStatus = s; loadList(); }
+      }, s || 'All');
+      filterRow.append(pill);
+    });
+    page.append(filterRow);
+
+    const listEl = el('div', { className: 'grid grid-cols-1 gap-3' });
+    page.append(listEl);
+
+    function loadList() {
+      filterRow.querySelectorAll('button').forEach((b,i) => {
+        const s = ['','ACTIVE','INACTIVE','TERMINATED'][i];
+        b.className = `px-3 py-1 rounded-full text-xs font-bold border transition ${filterStatus === s ? 'bg-brand text-white border-brand' : 'border-gray-200 text-gray-600 hover:border-brand'}`;
+      });
+      listEl.innerHTML = '';
+      api.employees.list(filterStatus ? { status: filterStatus } : {}).then(emps => {
+        if (!emps.length) { listEl.append(el('p', { className: 'text-gray-400 text-center py-8' }, 'No employees found.')); return; }
+        emps.forEach(e => {
+          const name = `${e.user?.firstName || ''} ${e.user?.lastName || ''}`.trim() || 'Unknown';
+          const STATUS_COLOR = { ACTIVE: '#059669', INACTIVE: '#D97706', TERMINATED: '#DC2626' };
+          const EMP_TYPE_COLOR = { FULL_TIME: '#059669', PART_TIME: '#2563EB', CONTRACT: '#7C3AED', CASUAL: '#D97706' };
+          const sc = STATUS_COLOR[e.status] || '#6B7280';
+          const tc = EMP_TYPE_COLOR[e.employmentType] || '#6B7280';
+          const rate = e.hourlyRate ? `R${Number(e.hourlyRate).toFixed(2)}/hr` : e.monthlyRate ? `R${Number(e.monthlyRate).toLocaleString()}/mo` : 'No rate set';
+
+          listEl.append(el('div', {
+            className: 'bg-white rounded-2xl border border-gray-100 p-4 flex items-center gap-4 cursor-pointer hover:shadow-sm transition',
+            onClick: () => openEmployeeDetailModal(e.id, () => loadList()),
+          },
+            el('div', { className: 'w-11 h-11 rounded-full flex items-center justify-center text-white font-black text-sm flex-shrink-0', style: { backgroundColor: tc } }, name.slice(0,1).toUpperCase()),
+            el('div', { className: 'flex-1 min-w-0' },
+              el('div', { className: 'flex items-center gap-2 flex-wrap' },
+                el('p', { className: 'font-bold text-gray-900' }, name),
+                el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full', style: { backgroundColor: sc + '20', color: sc } }, e.status),
+                el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full', style: { backgroundColor: tc + '20', color: tc } }, e.employmentType.replace('_',' ')),
+              ),
+              el('div', { className: 'flex items-center gap-3 mt-1 text-xs text-gray-500 flex-wrap' },
+                el('span', {}, e.jobTitle),
+                e.departmentRel ? el('span', { className: 'bg-gray-100 px-2 py-0.5 rounded-full' }, e.departmentRel.name) : null,
+                el('span', { className: 'font-medium text-gray-700' }, rate),
+              )
+            ),
+            el('span', { className: 'text-xs text-gray-300' }, '›')
+          ));
+        });
+      });
+    }
+    loadList();
+  }
+
+  // ── CASUAL WORKERS ────────────────────────────────────────────────────────
+  function renderCasualSection() {
+    const page = el('div', { className: 'max-w-4xl' });
+    mainArea.append(page);
+
+    page.append(
+      el('div', { className: 'flex items-center justify-between mb-2' },
+        el('h2', { className: 'text-2xl font-black text-gray-900' }, '⏱ Casual Workers'),
+        el('button', {
+          className: 'bg-brand text-white font-bold px-4 py-2 rounded-xl text-sm hover:opacity-90',
+          onClick: () => openEmployeeModal(null, () => { mainArea.innerHTML = ''; renderCasualSection(); }, 'CASUAL'),
+        }, '+ Add Casual Worker')
+      ),
+      el('p', { className: 'text-sm text-gray-500 mb-6' }, 'Contract and casual staff paid by the hour. Rates × hours worked from schedule.')
+    );
+
+    const listEl = el('div', { className: 'space-y-3' });
+    page.append(listEl);
+
+    api.employees.list().then(emps => {
+      const casuals = emps.filter(e => ['CASUAL', 'CONTRACT'].includes(e.employmentType) && e.status !== 'TERMINATED');
+      if (!casuals.length) {
+        listEl.append(el('div', { className: 'text-center py-12 bg-white rounded-2xl border border-gray-100' },
+          el('p', { className: 'text-4xl mb-3' }, '⏱'),
+          el('p', { className: 'text-gray-500' }, 'No casual or contract workers yet.')
+        ));
+        return;
+      }
+      casuals.forEach(e => {
+        const name = `${e.user?.firstName || ''} ${e.user?.lastName || ''}`.trim() || 'Unknown';
+        const EMP_TYPE_COLOR = { CONTRACT: '#7C3AED', CASUAL: '#D97706' };
+        const tc = EMP_TYPE_COLOR[e.employmentType] || '#6B7280';
+
+        const card = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-5 flex items-center gap-4' },
+          el('div', { className: 'w-12 h-12 rounded-full flex items-center justify-center text-white font-black flex-shrink-0', style: { backgroundColor: tc } }, name.slice(0,1)),
+          el('div', { className: 'flex-1' },
+            el('div', { className: 'flex items-center gap-2 mb-1' },
+              el('p', { className: 'font-bold text-gray-900' }, name),
+              el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full', style: { backgroundColor: tc + '20', color: tc } }, e.employmentType),
+            ),
+            el('p', { className: 'text-sm text-gray-500' }, e.jobTitle + (e.departmentRel ? ' · ' + e.departmentRel.name : '')),
+          ),
+          el('div', { className: 'text-right flex-shrink-0' },
+            el('p', { className: 'text-xl font-black text-gray-900' }, e.hourlyRate ? `R${Number(e.hourlyRate).toFixed(2)}` : '—'),
+            el('p', { className: 'text-xs text-gray-400' }, 'per hour'),
+          ),
+          el('button', {
+            className: 'text-xs text-brand font-bold hover:underline ml-2',
+            onClick: () => openRateModal(e, () => { mainArea.innerHTML = ''; renderCasualSection(); }),
+          }, 'Set Rate')
+        );
+        listEl.append(card);
+      });
+    });
+
+    function openRateModal(emp, onSave) {
+      const name = `${emp.user?.firstName || ''} ${emp.user?.lastName || ''}`.trim() || emp.jobTitle;
+      const overlay = el('div', { className: 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4' });
+      const rateInput = el('input', {
+        className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30',
+        type: 'number', step: '0.01', min: '0',
+        value: emp.hourlyRate ? Number(emp.hourlyRate).toFixed(2) : '',
+        placeholder: '0.00',
+      });
+      const saveBtn = el('button', {
+        className: 'bg-brand text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90',
+        onClick: async () => {
+          await api.employees.update(emp.id, { hourlyRate: rateInput.value ? Number(rateInput.value) : null });
+          overlay.remove();
+          onSave();
+        }
+      }, 'Save Rate');
+      overlay.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-xs shadow-2xl text-center' },
+        el('p', { className: 'font-black text-gray-900 mb-1' }, name),
+        el('p', { className: 'text-xs text-gray-400 mb-4' }, 'Set hourly rate (ZAR)'),
+        el('div', { className: 'flex items-center gap-2 mb-5' },
+          el('span', { className: 'text-gray-600 font-bold' }, 'R'),
+          rateInput,
+          el('span', { className: 'text-gray-400 text-sm' }, '/ hr')
+        ),
+        el('div', { className: 'flex justify-center gap-3' },
+          el('button', { className: 'text-sm text-gray-500 px-4 py-2', onClick: () => overlay.remove() }, 'Cancel'),
+          saveBtn
+        )
+      ));
+      overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+      document.body.append(overlay);
+      rateInput.focus();
+    }
+  }
+
+  // ── SCHEDULE ────────────────────────────────────────────────────────────
+  function renderScheduleSection() {
+    renderScheduleTab(mainArea);
+  }
+
+  // ── LEAVE ────────────────────────────────────────────────────────────────
+  function renderLeaveSection() {
+    renderLeaveTab(mainArea);
+  }
+
+  // ── PAYROLL ───────────────────────────────────────────────────────────────
+  function renderPayrollSection() {
+    renderPayrollTab(mainArea);
+  }
+
+  // ── Employee form modal ───────────────────────────────────────────────────
+  function openEmployeeModal(emp, onSave, defaultType) {
+    const isNew = !emp;
+    const overlay = el('div', { className: 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto' });
+
+    const fields = {};
+    function inp(key, placeholder, type, val) {
+      const i = el('input', {
+        className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30',
+        type: type || 'text', placeholder: placeholder, value: val || '',
+      });
+      fields[key] = i; return i;
+    }
+
+    const empTypeSel = el('select', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none' });
+    ['FULL_TIME','PART_TIME','CONTRACT','CASUAL'].forEach(t => {
+      const opt = el('option', { value: t }, t.replace('_',' '));
+      if ((defaultType || emp?.employmentType) === t) opt.selected = true;
+      empTypeSel.append(opt);
+    });
+
+    const deptSel = el('select', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none' });
+    deptSel.append(el('option', { value: '' }, 'No department'));
+    api.departments.list().then(depts => {
+      depts.forEach(d => {
+        const opt = el('option', { value: d.id }, d.name);
+        if (emp?.departmentId === d.id) opt.selected = true;
+        deptSel.append(opt);
+      });
+    });
+
+    const form = el('div', { className: 'space-y-3' },
+      el('div', { className: 'grid grid-cols-2 gap-3' },
+        el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'First Name *'), inp('firstName', 'First name', 'text', emp?.user?.firstName || '')),
+        el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Last Name *'), inp('lastName', 'Last name', 'text', emp?.user?.lastName || '')),
+      ),
+      el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, isNew ? 'Email *' : 'Email'), inp('email', 'Email address', 'email', emp?.user?.email || '')),
+      isNew ? el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Password *'), inp('password', 'Temporary password', 'password', '')) : null,
+      el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Job Title *'), inp('jobTitle', 'e.g. Baker, Packer', 'text', emp?.jobTitle || '')),
+      el('div', { className: 'grid grid-cols-2 gap-3' },
+        el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Employment Type'), empTypeSel),
+        el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Department'), deptSel),
+      ),
+      el('div', { className: 'grid grid-cols-2 gap-3' },
+        el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Hourly Rate (R)'), inp('hourlyRate', '0.00', 'number', emp?.hourlyRate ? Number(emp.hourlyRate).toFixed(2) : '')),
+        el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Monthly Rate (R)'), inp('monthlyRate', '0.00', 'number', emp?.monthlyRate ? Number(emp.monthlyRate).toFixed(2) : '')),
+      ),
+      el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Start Date'), inp('startDate', '', 'date', emp?.startDate ? emp.startDate.slice(0,10) : '')),
+    );
+
+    const saveBtn = el('button', {
+      className: 'bg-brand text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90',
+      onClick: async () => {
+        const data = {
+          firstName:      fields.firstName.value.trim(),
+          lastName:       fields.lastName.value.trim(),
+          email:          fields.email.value.trim(),
+          jobTitle:       fields.jobTitle.value.trim(),
+          employmentType: empTypeSel.value,
+          departmentId:   deptSel.value || null,
+          hourlyRate:     fields.hourlyRate.value ? Number(fields.hourlyRate.value) : null,
+          monthlyRate:    fields.monthlyRate.value ? Number(fields.monthlyRate.value) : null,
+          startDate:      fields.startDate.value || new Date().toISOString().slice(0,10),
+        };
+        if (isNew) data.password = fields.password.value;
+        if (!data.firstName || !data.jobTitle) { alert('First name and job title are required'); return; }
+        try {
+          saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+          if (emp) await api.employees.update(emp.id, data);
+          else await api.employees.create(data);
+          overlay.remove();
+          onSave();
+        } catch(e) {
+          saveBtn.disabled = false; saveBtn.textContent = emp ? 'Save Changes' : 'Add Employee';
+          alert('Error: ' + e.message);
+        }
+      }
+    }, emp ? 'Save Changes' : 'Add Employee');
+
+    overlay.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl my-8' },
+      el('div', { className: 'flex items-center justify-between mb-5' },
+        el('h3', { className: 'font-black text-gray-900' }, emp ? 'Edit Employee' : 'Add Employee'),
+        el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl', onClick: () => overlay.remove() }, '×')
+      ),
+      form,
+      el('div', { className: 'flex justify-end gap-3 mt-5' },
+        el('button', { className: 'text-sm text-gray-500 px-4 py-2', onClick: () => overlay.remove() }, 'Cancel'),
+        saveBtn
+      )
+    ));
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.append(overlay);
+  }
+
+  function openEmployeeDetailModal(empId, onRefresh) {
+    const overlay = el('div', { className: 'fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4' });
+    const panel = el('div', { className: 'bg-white rounded-t-3xl sm:rounded-2xl w-full sm:max-w-2xl shadow-2xl overflow-y-auto max-h-screen sm:max-h-[90vh]' });
+    overlay.append(panel);
+
+    const loadDetail = () => {
+      panel.innerHTML = '';
+      api.employees.getById(empId).then(emp => {
+        const name = `${emp.user?.firstName || ''} ${emp.user?.lastName || ''}`.trim() || 'Unknown';
+        const EMP_TYPE_COLOR = { FULL_TIME: '#059669', PART_TIME: '#2563EB', CONTRACT: '#7C3AED', CASUAL: '#D97706' };
+        const tc = EMP_TYPE_COLOR[emp.employmentType] || '#6B7280';
+
+        panel.append(
+          el('div', { className: 'sticky top-0 bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between' },
+            el('div', { className: 'flex items-center gap-3' },
+              el('div', { className: 'w-10 h-10 rounded-full flex items-center justify-center text-white font-black', style: { backgroundColor: tc } }, name.slice(0,1)),
+              el('div', {},
+                el('p', { className: 'font-black text-gray-900' }, name),
+                el('p', { className: 'text-xs text-gray-500' }, emp.jobTitle + ' · ' + emp.employeeCode)
+              )
+            ),
+            el('div', { className: 'flex items-center gap-2' },
+              el('button', {
+                className: 'text-xs text-brand font-bold hover:underline',
+                onClick: () => { overlay.remove(); openEmployeeModal(emp, onRefresh); }
+              }, 'Edit'),
+              el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl', onClick: () => overlay.remove() }, '×')
+            )
+          ),
+          el('div', { className: 'p-6' },
+            el('div', { className: 'grid grid-cols-2 gap-4 mb-6' },
+              ...[
+                ['Employment Type', emp.employmentType.replace('_',' ')],
+                ['Status', emp.status],
+                ['Department', emp.departmentRel?.name || emp.department || '—'],
+                ['Start Date', emp.startDate ? new Date(emp.startDate).toLocaleDateString('en-ZA') : '—'],
+                ['Hourly Rate', emp.hourlyRate ? `R${Number(emp.hourlyRate).toFixed(2)}/hr` : '—'],
+                ['Monthly Rate', emp.monthlyRate ? `R${Number(emp.monthlyRate).toLocaleString()}/mo` : '—'],
+                ['Email', emp.user?.email || '—'],
+                ['Phone', emp.user?.phone || '—'],
+              ].map(([l,v]) => el('div', {},
+                el('p', { className: 'text-xs text-gray-400 uppercase font-bold mb-0.5' }, l),
+                el('p', { className: 'text-sm text-gray-800 font-medium' }, v)
+              ))
+            ),
+            emp.status !== 'TERMINATED' ? el('button', {
+              className: 'text-xs text-red-400 hover:text-red-600 font-bold',
+              onClick: async () => {
+                if (!confirm('Terminate this employee?')) return;
+                await api.employees.terminate(empId);
+                overlay.remove();
+                onRefresh();
+              }
+            }, 'Terminate Employee') : null
+          )
+        );
+      });
+    };
+    loadDetail();
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.append(overlay);
+  }
+
+  // ── Init ─────────────────────────────────────────────────────────────────
+  renderSidebar();
+  renderSection();
 }
 
 function renderAdminSoon(module, container) {
@@ -12341,6 +13021,329 @@ function renderAdminEmployees(container) {
 
   // init
   setTab('staff');
+}
+
+// ── STANDALONE WRAPPERS for People Hub ────────────────────────────────────────
+// The schedule/leave/payroll logic lives inside renderAdminEmployees as inner
+// functions that close over `content`.  These wrappers spin up a tiny shim so
+// the People Hub sidebar can call them directly with any container.
+
+function renderScheduleTab(container) {
+  // Build a minimal host so the inner renderAdminEmployees schedule logic runs
+  const host = el('div', { className: 'p-0' });
+  container.append(host);
+  // Inline the schedule rendering using the same API calls
+  (async () => {
+    host.innerHTML = '<div class="text-gray-400 text-sm p-4">Loading schedule…</div>';
+    let shifts = [], employees = [];
+    try { [shifts, employees] = await Promise.all([api.employees.listShifts(), api.employees.list({ status: 'ACTIVE' })]); }
+    catch(e) { host.innerHTML = `<p class="text-red-500 text-sm p-4">Failed to load: ${e.message}</p>`; return; }
+    host.innerHTML = '';
+
+    const today = new Date();
+    let weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - today.getDay() + 1);
+
+    const weekLabel = el('span', { className: 'font-medium text-gray-700 text-sm' });
+    const gridEl = el('div');
+
+    const loadSchedule = async () => {
+      const ws = new Date(weekStart), we = new Date(weekStart);
+      we.setDate(ws.getDate() + 6);
+      const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(ws); d.setDate(ws.getDate() + i); return d; });
+      weekLabel.textContent = `${ws.toLocaleDateString('en-ZA', { day:'numeric', month:'short' })} – ${we.toLocaleDateString('en-ZA', { day:'numeric', month:'short', year:'numeric' })}`;
+      let assignments = [];
+      try { assignments = await api.employees.getSchedule({ from: ws.toISOString().split('T')[0], to: we.toISOString().split('T')[0] }); }
+      catch(e) {}
+      gridEl.innerHTML = '';
+      const table = el('div', { className: 'overflow-x-auto' });
+      const grid = el('table', { className: 'w-full text-sm border-collapse' });
+      const thead = el('thead');
+      const hrow = el('tr');
+      hrow.append(el('th', { className: 'text-left p-2 text-xs text-gray-500 w-28' }, 'Employee'));
+      days.forEach(d => hrow.append(el('th', { className: 'text-center p-2 text-xs text-gray-500 w-24', style: { minWidth:'80px' } }, d.toLocaleDateString('en-ZA', { weekday:'short', day:'numeric' }))));
+      thead.append(hrow);
+      grid.append(thead);
+      const tbody = el('tbody');
+      employees.forEach(emp => {
+        const name = `${emp.user?.firstName || ''} ${emp.user?.lastName || ''}`.trim();
+        const row = el('tr', { className: 'border-t border-gray-50' });
+        row.append(el('td', { className: 'p-2 font-medium text-gray-800 text-xs' }, name));
+        days.forEach(d => {
+          const dateStr = d.toISOString().split('T')[0];
+          const asgn = assignments.find(a => a.employeeId === emp.id && a.date && a.date.slice(0,10) === dateStr);
+          const STATUS_COLOR = { SCHEDULED:'#2563EB', COMPLETED:'#059669', ABSENT:'#DC2626', LATE:'#D97706', CANCELLED:'#6B7280' };
+          const cell = el('td', { className: 'p-1 text-center' });
+          if (asgn) {
+            const sc = STATUS_COLOR[asgn.status] || '#6B7280';
+            cell.append(el('div', {
+              className: 'rounded-lg px-1 py-1 text-xs cursor-pointer',
+              style: { backgroundColor: sc + '15', color: sc, border: `1px solid ${sc}40` },
+              onClick: () => showAssignmentModal(asgn, shifts, employees, () => loadSchedule()),
+            }, asgn.shift?.name || '—'));
+          } else if (employees.length > 0 && shifts.length > 0) {
+            cell.append(el('button', {
+              className: 'w-full h-8 rounded-lg border border-dashed border-gray-200 hover:border-brand/40 hover:bg-brand/5 text-gray-300 hover:text-brand text-xs transition',
+              onClick: () => showAssignShiftModal(emp, dateStr, shifts, () => loadSchedule()),
+            }, '+'));
+          }
+          row.append(cell);
+        });
+        tbody.append(row);
+      });
+      grid.append(tbody);
+      table.append(grid);
+      gridEl.append(table);
+    };
+
+    function showAssignShiftModal(emp, dateStr, shifts, onDone) {
+      const name = `${emp.user?.firstName || ''} ${emp.user?.lastName || ''}`.trim();
+      const overlay = el('div', { className: 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4' });
+      const shiftSel = el('select', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none' });
+      shifts.forEach(s => shiftSel.append(el('option', { value: s.id }, `${s.name} (${s.startTime}–${s.endTime})`)));
+      const saveBtn = el('button', {
+        className: 'bg-brand text-white font-bold px-4 py-2 rounded-xl text-sm hover:opacity-90',
+        onClick: async () => {
+          try { await api.employees.assignShift({ employeeId: emp.id, shiftId: shiftSel.value, date: dateStr }); overlay.remove(); onDone(); }
+          catch(e) { alert('Error: ' + e.message); }
+        }
+      }, 'Assign');
+      overlay.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl' },
+        el('div', { className: 'flex justify-between items-center mb-4' },
+          el('h3', { className: 'font-black text-gray-900 text-sm' }, `Assign shift — ${name}`),
+          el('button', { className: 'text-gray-400 text-2xl', onClick: () => overlay.remove() }, '×')
+        ),
+        el('p', { className: 'text-xs text-gray-500 mb-3' }, dateStr),
+        el('div', { className: 'mb-4' }, el('label', { className: 'text-xs font-bold text-gray-500 block mb-1' }, 'Shift'), shiftSel),
+        el('div', { className: 'flex justify-end gap-2' },
+          el('button', { className: 'text-sm text-gray-500 px-3 py-2', onClick: () => overlay.remove() }, 'Cancel'),
+          saveBtn
+        )
+      ));
+      overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+      document.body.append(overlay);
+    }
+
+    function showAssignmentModal(asgn, shifts, employees, onDone) {
+      const emp = employees.find(e => e.id === asgn.employeeId);
+      const name = emp ? `${emp.user?.firstName || ''} ${emp.user?.lastName || ''}`.trim() : 'Employee';
+      const overlay = el('div', { className: 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4' });
+      const statusSel = el('select', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none mb-3' });
+      ['SCHEDULED','COMPLETED','ABSENT','LATE','CANCELLED'].forEach(s => {
+        const opt = el('option', { value: s }, s);
+        if (asgn.status === s) opt.selected = true;
+        statusSel.append(opt);
+      });
+      overlay.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl' },
+        el('div', { className: 'flex justify-between items-center mb-4' },
+          el('h3', { className: 'font-black text-gray-900 text-sm' }, name + ' — ' + asgn.date?.slice(0,10)),
+          el('button', { className: 'text-gray-400 text-2xl', onClick: () => overlay.remove() }, '×')
+        ),
+        el('p', { className: 'text-xs text-gray-500 mb-3' }, asgn.shift?.name || ''),
+        el('label', { className: 'text-xs font-bold text-gray-500 block mb-1' }, 'Status'),
+        statusSel,
+        el('div', { className: 'flex justify-between gap-2 mt-2' },
+          el('button', { className: 'text-xs text-red-400 font-bold hover:underline', onClick: async () => {
+            try { await api.employees.deleteAssignment(asgn.id); overlay.remove(); onDone(); }
+            catch(e) { alert('Error: ' + e.message); }
+          }}, 'Remove'),
+          el('div', { className: 'flex gap-2' },
+            el('button', { className: 'text-sm text-gray-500 px-3 py-1', onClick: () => overlay.remove() }, 'Cancel'),
+            el('button', { className: 'bg-brand text-white font-bold px-4 py-1 rounded-xl text-sm hover:opacity-90', onClick: async () => {
+              try { await api.employees.updateAssignment(asgn.id, { status: statusSel.value }); overlay.remove(); onDone(); }
+              catch(e) { alert('Error: ' + e.message); }
+            }}, 'Save')
+          )
+        )
+      ));
+      overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+      document.body.append(overlay);
+    }
+
+    const prevBtn = el('button', { className: 'p-1.5 rounded hover:bg-gray-100 text-gray-500', onClick: () => { weekStart.setDate(weekStart.getDate() - 7); loadSchedule(); }}, '←');
+    const nextBtn = el('button', { className: 'p-1.5 rounded hover:bg-gray-100 text-gray-500', onClick: () => { weekStart.setDate(weekStart.getDate() + 7); loadSchedule(); }}, '→');
+
+    const controls = el('div', { className: 'flex items-center justify-between mb-4' },
+      el('div', { className: 'flex items-center gap-2' }, prevBtn, weekLabel, nextBtn),
+      el('div', { className: 'flex gap-2' })
+    );
+    host.append(
+      el('div', { className: 'flex items-center justify-between mb-4' },
+        el('h2', { className: 'text-2xl font-black text-gray-900' }, '📅 Schedule'),
+      ),
+      controls,
+      gridEl
+    );
+    await loadSchedule();
+  })();
+}
+
+function renderLeaveTab(container) {
+  const host = el('div', { className: 'p-0 max-w-4xl' });
+  container.append(host);
+  (async () => {
+    host.innerHTML = '<div class="text-gray-400 text-sm p-4">Loading…</div>';
+    let leaveList = [], employees = [];
+    try { [leaveList, employees] = await Promise.all([api.employees.listLeave(), api.employees.list({ status: 'ACTIVE' })]); }
+    catch(e) { host.innerHTML = `<p class="text-red-500 text-sm p-4">Failed to load: ${e.message}</p>`; return; }
+    host.innerHTML = '';
+
+    const reload = async () => {
+      host.innerHTML = '';
+      try { leaveList = await api.employees.listLeave(); }
+      catch(e) {}
+      renderList();
+    };
+
+    const hdr = el('div', { className: 'flex items-center justify-between mb-6' },
+      el('h2', { className: 'text-2xl font-black text-gray-900' }, '🌴 Leave Requests'),
+      el('button', { className: 'bg-brand text-white font-bold px-4 py-2 rounded-xl text-sm hover:opacity-90', onClick: () => showLeaveModal() }, '+ New Request')
+    );
+    const listEl = el('div', { className: 'space-y-3' });
+    host.append(hdr, listEl);
+
+    function renderList() {
+      listEl.innerHTML = '';
+      if (!leaveList.length) { listEl.append(el('p', { className: 'text-gray-400 text-center py-8' }, 'No leave requests.')); return; }
+      const STATUS_COLOR = { PENDING:'#D97706', APPROVED:'#059669', REJECTED:'#DC2626', CANCELLED:'#6B7280' };
+      leaveList.forEach(req => {
+        const name = `${req.employee?.user?.firstName || ''} ${req.employee?.user?.lastName || ''}`.trim();
+        const sc = STATUS_COLOR[req.status] || '#6B7280';
+        const card = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-4 flex items-center gap-4' },
+          el('div', { className: 'flex-1' },
+            el('div', { className: 'flex items-center gap-2 mb-1' },
+              el('p', { className: 'font-bold text-gray-900' }, name),
+              el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full', style: { backgroundColor: sc+'20', color: sc } }, req.status),
+              el('span', { className: 'text-xs bg-gray-100 px-2 py-0.5 rounded-full' }, req.type),
+            ),
+            el('p', { className: 'text-xs text-gray-500' }, `${req.fromDate?.slice(0,10)} → ${req.toDate?.slice(0,10)} (${req.days} day${req.days !== 1 ? 's' : ''})`),
+            req.reason ? el('p', { className: 'text-xs text-gray-400 mt-1' }, req.reason) : null,
+          ),
+          req.status === 'PENDING' ? el('div', { className: 'flex gap-2 flex-shrink-0' },
+            el('button', { className: 'text-xs text-green-600 font-bold hover:underline', onClick: async () => { try { await api.employees.approveLeave(req.id); await reload(); toast('Approved', 'success'); } catch(e) { toast(e.message, 'error'); } }}, 'Approve'),
+            el('button', { className: 'text-xs text-red-400 font-bold hover:underline', onClick: async () => { try { await api.employees.rejectLeave(req.id); await reload(); toast('Rejected', 'success'); } catch(e) { toast(e.message, 'error'); } }}, 'Reject'),
+          ) : null
+        );
+        listEl.append(card);
+      });
+    }
+    renderList();
+
+    function showLeaveModal() {
+      const overlay = el('div', { className: 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4' });
+      const empSel = el('select', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none' });
+      employees.forEach(e => empSel.append(el('option', { value: e.id }, `${e.user?.firstName || ''} ${e.user?.lastName || ''}`.trim() || e.jobTitle)));
+      const typeSel = el('select', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none' });
+      ['ANNUAL','SICK','FAMILY','UNPAID','OTHER'].forEach(t => typeSel.append(el('option', { value: t }, t)));
+      const fromInp = el('input', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none', type: 'date' });
+      const toInp = el('input', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none', type: 'date' });
+      const reasonInp = el('textarea', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none resize-none', rows: 2, placeholder: 'Reason (optional)' });
+      const saveBtn = el('button', { className: 'bg-brand text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90', onClick: async () => {
+        if (!empSel.value || !fromInp.value || !toInp.value) { alert('Employee, from and to dates are required'); return; }
+        try {
+          await api.employees.createLeave({ employeeId: empSel.value, type: typeSel.value, fromDate: fromInp.value, toDate: toInp.value, reason: reasonInp.value || undefined });
+          overlay.remove(); await reload(); toast('Leave request submitted', 'success');
+        } catch(e) { toast(e.message, 'error'); }
+      }}, 'Submit Request');
+      overlay.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl' },
+        el('div', { className: 'flex justify-between items-center mb-5' }, el('h3', { className: 'font-black text-gray-900' }, 'New Leave Request'), el('button', { className: 'text-gray-400 text-2xl', onClick: () => overlay.remove() }, '×')),
+        el('div', { className: 'space-y-3' },
+          el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 block mb-1' }, 'Employee'), empSel),
+          el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 block mb-1' }, 'Type'), typeSel),
+          el('div', { className: 'grid grid-cols-2 gap-3' },
+            el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 block mb-1' }, 'From'), fromInp),
+            el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 block mb-1' }, 'To'), toInp),
+          ),
+          el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 block mb-1' }, 'Reason'), reasonInp),
+        ),
+        el('div', { className: 'flex justify-end gap-3 mt-5' },
+          el('button', { className: 'text-sm text-gray-500 px-4 py-2', onClick: () => overlay.remove() }, 'Cancel'),
+          saveBtn
+        )
+      ));
+      overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+      document.body.append(overlay);
+    }
+  })();
+}
+
+function renderPayrollTab(container) {
+  const host = el('div', { className: 'p-0 max-w-4xl' });
+  container.append(host);
+  (async () => {
+    host.innerHTML = '<div class="text-gray-400 text-sm p-4">Loading…</div>';
+    let runs = [];
+    try { runs = await api.employees.listPayroll(); }
+    catch(e) { host.innerHTML = `<p class="text-red-500 text-sm p-4">Failed to load: ${e.message}</p>`; return; }
+    host.innerHTML = '';
+
+    const reload = async () => {
+      host.innerHTML = '';
+      try { runs = await api.employees.listPayroll(); }
+      catch(e) {}
+      renderRuns();
+    };
+
+    const periodInp = el('input', { className: 'border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none', type: 'month', value: new Date().toISOString().slice(0,7) });
+    const genBtn = el('button', { className: 'bg-brand text-white font-bold px-4 py-2 rounded-xl text-sm hover:opacity-90', onClick: async () => {
+      if (!periodInp.value) { alert('Select a period'); return; }
+      try { await api.employees.generatePayroll(periodInp.value); await reload(); toast('Payroll generated', 'success'); }
+      catch(e) { toast(e.message, 'error'); }
+    }}, 'Generate');
+
+    const hdr = el('div', { className: 'flex items-center justify-between mb-6' },
+      el('h2', { className: 'text-2xl font-black text-gray-900' }, '💰 Payroll'),
+      el('div', { className: 'flex items-center gap-2' }, periodInp, genBtn)
+    );
+    const listEl = el('div', { className: 'space-y-4' });
+    host.append(hdr, listEl);
+
+    function renderRuns() {
+      listEl.innerHTML = '';
+      if (!runs.length) { listEl.append(el('p', { className: 'text-gray-400 text-center py-8' }, 'No payroll runs yet.')); return; }
+      const STATUS_COLOR = { DRAFT:'#D97706', APPROVED:'#2563EB', PAID:'#059669' };
+      runs.forEach(run => {
+        const sc = STATUS_COLOR[run.status] || '#6B7280';
+        const card = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-5' },
+          el('div', { className: 'flex items-center justify-between mb-3' },
+            el('div', {},
+              el('p', { className: 'font-black text-gray-900' }, `Payroll ${run.period}`),
+              el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full', style: { backgroundColor: sc+'20', color: sc } }, run.status)
+            ),
+            el('div', { className: 'text-right' },
+              el('p', { className: 'text-xl font-black text-gray-900' }, `R${Number(run.totalNet).toLocaleString()}`),
+              el('p', { className: 'text-xs text-gray-400' }, `${run.items?.length || 0} employees`)
+            )
+          ),
+          el('div', { className: 'space-y-1 mb-3 max-h-48 overflow-y-auto' },
+            ...(run.items || []).map(item => {
+              const name = `${item.employee?.user?.firstName || ''} ${item.employee?.user?.lastName || ''}`.trim();
+              return el('div', { className: 'flex items-center justify-between py-1 text-sm border-b border-gray-50' },
+                el('span', { className: 'text-gray-700' }, name),
+                el('div', { className: 'flex gap-4 text-xs text-gray-500' },
+                  el('span', {}, `${item.hoursWorked}h`),
+                  el('span', { className: 'font-medium text-gray-900' }, `R${Number(item.netPay).toFixed(2)}`)
+                )
+              );
+            })
+          ),
+          el('div', { className: 'flex gap-2 pt-3 border-t border-gray-100' },
+            run.status === 'DRAFT' ? el('button', { className: 'btn-primary text-xs px-3 py-1.5', onClick: async () => {
+              try { await api.employees.approvePayroll(run.id); await reload(); toast('Payroll approved', 'success'); }
+              catch(e) { toast(e.message, 'error'); }
+            }}, 'Approve') : null,
+            run.status === 'APPROVED' ? el('button', { className: 'btn-primary text-xs px-3 py-1.5', onClick: async () => {
+              try { await api.employees.processPayroll(run.id); await reload(); toast('Payroll processed & recorded in Finance', 'success'); }
+              catch(e) { toast(e.message, 'error'); }
+            }}, 'Process & Record Expense') : null,
+            run.status === 'PAID' && run.processedAt ? el('span', { className: 'text-xs text-gray-400' }, `Paid ${new Date(run.processedAt).toLocaleDateString('en-ZA')}`) : null,
+          )
+        );
+        listEl.append(card);
+      });
+    }
+    renderRuns();
+  })();
 }
 
 // ── AI STRATEGY MODULE ────────────────────────────────────────────────────────

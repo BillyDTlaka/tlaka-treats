@@ -24,6 +24,8 @@ import uomRoutes         from './modules/uom/uom.routes'
 import reportsRoutes     from './modules/reports/reports.routes'
 import boardRoutes       from './modules/board/board.routes'
 import employeeRoutes    from './modules/employees/employees.routes'
+import companyRoutes    from './modules/employees/company.routes'
+import departmentRoutes from './modules/employees/departments.routes'
 import taskRoutes        from './modules/tasks/tasks.routes'
 import strategyRoutes   from './modules/strategy/strategy.routes'
 import chatRoutes       from './modules/chat/chat.routes'
@@ -83,6 +85,8 @@ export async function buildApp() {
   await app.register(reportsRoutes,      { prefix: '/reports' })
   await app.register(boardRoutes,        { prefix: '/board' })
   await app.register(employeeRoutes,     { prefix: '/employees' })
+  await app.register(companyRoutes,      { prefix: '/company' })
+  await app.register(departmentRoutes,   { prefix: '/departments' })
   await app.register(taskRoutes,         { prefix: '/tasks' })
   await app.register(strategyRoutes,    { prefix: '/strategy' })
   await app.register(chatRoutes,        { prefix: '/chat' })

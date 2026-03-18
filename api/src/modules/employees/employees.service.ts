@@ -7,6 +7,9 @@ export class EmployeeService {
   private employeeInclude = {
     user: { select: { id: true, firstName: true, lastName: true, email: true, phone: true, status: true } },
     qualifications: { orderBy: { createdAt: 'desc' as const } },
+    departmentRel: { select: { id: true, name: true } },
+    reportsTo: { select: { id: true, jobTitle: true, user: { select: { firstName: true, lastName: true } } } },
+    directReports: { select: { id: true, jobTitle: true, user: { select: { firstName: true, lastName: true } } } },
   }
 
   // ── Employees ────────────────────────────────────────────────────────────────
@@ -41,6 +44,8 @@ export class EmployeeService {
     password: string
     jobTitle: string
     department?: string
+    departmentId?: string
+    reportsToId?: string
     employmentType?: string
     startDate: string
     hourlyRate?: number
@@ -91,6 +96,8 @@ export class EmployeeService {
           employeeCode,
           jobTitle: empData.jobTitle,
           department: empData.department,
+          departmentId: empData.departmentId || null,
+          reportsToId: empData.reportsToId || null,
           employmentType: (empData.employmentType as any) || 'FULL_TIME',
           startDate: new Date(empData.startDate),
           hourlyRate: empData.hourlyRate,
@@ -109,6 +116,8 @@ export class EmployeeService {
   async update(id: string, data: Partial<{
     jobTitle: string
     department: string
+    departmentId: string | null
+    reportsToId: string | null
     employmentType: string
     startDate: string
     endDate: string

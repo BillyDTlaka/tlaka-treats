@@ -677,6 +677,36 @@ model DiscountRule {
   updatedAt   DateTime @updatedAt
 }
 
+// ─── Company & Departments ────────────────────────────────────────────────────
+
+model Company {
+  id             String   @id @default(cuid())
+  name           String   @default("Tlaka Treats")
+  tradingName    String?
+  registrationNo String?
+  vatNo          String?
+  address        String?
+  city           String?
+  province       String?
+  postalCode     String?
+  phone          String?
+  email          String?
+  website        String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Department {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  description String?
+  managerId   String?
+  manager     Employee?  @relation("DeptManager", fields: [managerId], references: [id], onDelete: SetNull)
+  employees   Employee[] @relation("EmpDepartment")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
 // ─── Employees ────────────────────────────────────────────────────────────────
 
 enum EmploymentType {
@@ -743,6 +773,12 @@ model Employee {
   employeeCode   String         @unique
   jobTitle       String
   department     String?
+  departmentId   String?
+  departmentRel  Department?    @relation("EmpDepartment", fields: [departmentId], references: [id], onDelete: SetNull)
+  reportsToId    String?
+  reportsTo      Employee?      @relation("ReportingLine", fields: [reportsToId], references: [id], onDelete: SetNull)
+  directReports  Employee[]     @relation("ReportingLine")
+  managedDepts   Department[]   @relation("DeptManager")
   employmentType EmploymentType @default(FULL_TIME)
   startDate      DateTime       @db.Date
   endDate        DateTime?      @db.Date
