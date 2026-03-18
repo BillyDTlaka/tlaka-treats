@@ -331,6 +331,20 @@ const api = {
     update: (id, d)  => req('PATCH',  `/departments/${id}`, d),
     remove: (id)     => req('DELETE', `/departments/${id}`),
   },
+  users: {
+    list:              (p)        => req('GET',    '/users' + (p ? '?' + new URLSearchParams(p) : '')),
+    create:            (d)        => req('POST',   '/users', d),
+    update:            (id, d)    => req('PATCH',  `/users/${id}`, d),
+    remove:            (id)       => req('DELETE', `/users/${id}`),
+    assignRole:        (id, d)    => req('POST',   `/users/${id}/roles`, d),
+    removeRole:        (id, rid)  => req('DELETE', `/users/${id}/roles/${rid}`),
+    listRoles:         ()         => req('GET',    '/users/roles'),
+    createRole:        (d)        => req('POST',   '/users/roles', d),
+    updateRole:        (id, d)    => req('PATCH',  `/users/roles/${id}`, d),
+    deleteRole:        (id)       => req('DELETE', `/users/roles/${id}`),
+    addPermission:     (id, d)    => req('POST',   `/users/roles/${id}/permissions`, d),
+    removePermission:  (id, pid)  => req('DELETE', `/users/roles/${id}/permissions/${pid}`),
+  },
   employees: {
     list:               (p)        => req('GET',  '/employees' + (p ? '?' + new URLSearchParams(p) : '')),
     create:             (d)        => req('POST',  '/employees', d),
@@ -3001,6 +3015,7 @@ const ADMIN_NAV = [
   { id: 'people',      label: 'People',     icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2|M9 11a4 4 0 100-8 4 4 0 000 8z|M23 21v-2a4 4 0 00-3-3.87|M16 3.13a4 4 0 010 7.75',                                                                                                                                          soon: false },
   { id: 'bohlale',     label: 'Bohlale',    icon: 'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',                                                   soon: false },
   { id: 'settings',    label: 'Settings',   icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z|M15 12a3 3 0 11-6 0 3 3 0 016 0z', soon: false, separator: true },
+  { id: 'users',       label: 'Users',      icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z', soon: false },
 ];
 
 const MODULE_META = {
@@ -3013,6 +3028,7 @@ const MODULE_META = {
   people:      { title: 'People',      subtitle: 'Employees, tasks & scheduling' },
   bohlale:     { title: 'Bohlale',     subtitle: 'AI intelligence — board meetings, strategy & chat' },
   settings:    { title: 'Settings',    subtitle: 'Configure your store' },
+  users:       { title: 'Users',       subtitle: 'Manage users, roles & permissions' },
 };
 
 function AdminOverviewPage() {
@@ -3181,6 +3197,7 @@ function renderAdminModule(module, data, container, reload, navigate) {
     case 'people':     renderAdminPeople(container);                            break;
     case 'bohlale':    renderAdminBohlale(container);                           break;
     case 'settings':   renderAdminSettings(data, container, reload);            break;
+    case 'users':      renderAdminUsers(container);                             break;
     default:           renderAdminSoon(module, container);                      break;
   }
 }
@@ -14984,6 +15001,471 @@ function renderPage(page) {
 
 // ─── INIT ─────────────────────────────────────────────────────────
 _routerListeners.push(renderPage);
+
+// ── USER MANAGEMENT ───────────────────────────────────────────────────────────
+function renderAdminUsers(container) {
+  container.innerHTML = '';
+  const layout = el('div', { className: 'flex min-h-screen bg-gray-50' });
+  container.append(layout);
+
+  const SECTIONS = [
+    { id: 'users', icon: '👤', label: 'Users' },
+    { id: 'roles', icon: '🛡', label: 'Roles & Permissions' },
+  ];
+  let activeSection = 'users';
+
+  const sidebar = el('div', { className: 'w-52 flex-shrink-0 bg-white border-r border-gray-100 min-h-screen p-4' });
+  sidebar.append(el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-widest mb-4 px-2' }, 'User Management'));
+  const mainArea = el('div', { className: 'flex-1 p-6 overflow-auto' });
+  layout.append(sidebar, mainArea);
+
+  function renderSidebar() {
+    sidebar.querySelectorAll('.um-nav').forEach(b => b.remove());
+    SECTIONS.forEach(s => {
+      const btn = el('button', {
+        className: `um-nav w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold mb-1 transition ${activeSection === s.id ? 'bg-brand/10 text-brand' : 'text-gray-600 hover:bg-gray-50'}`,
+        onClick: () => { activeSection = s.id; renderSidebar(); renderSection(); }
+      }, el('span', {}, s.icon), s.label);
+      sidebar.append(btn);
+    });
+  }
+
+  function renderSection() {
+    mainArea.innerHTML = '';
+    if (activeSection === 'users') renderUsersSection();
+    else renderRolesSection();
+  }
+
+  // ── USERS SECTION ──────────────────────────────────────────────────────────
+  function renderUsersSection() {
+    const STATUS_COLOR = { ACTIVE: '#059669', INACTIVE: '#D97706', SUSPENDED: '#DC2626' };
+    const ROLE_COLOR   = { ADMIN: '#7C3AED', AMBASSADOR: '#2563EB', CUSTOMER: '#059669' };
+
+    const page = el('div', { className: 'max-w-5xl' });
+    mainArea.append(page);
+
+    const searchInput = el('input', {
+      className: 'border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30 w-64',
+      placeholder: 'Search by name or email…',
+    });
+    let searchTimer = null;
+
+    page.append(
+      el('div', { className: 'flex items-center justify-between mb-6' },
+        el('h2', { className: 'text-2xl font-black text-gray-900' }, '👤 Users'),
+        el('div', { className: 'flex items-center gap-3' },
+          searchInput,
+          el('button', {
+            className: 'bg-brand text-white font-bold px-4 py-2 rounded-xl text-sm hover:opacity-90',
+            onClick: () => openUserModal(null, loadUsers),
+          }, '+ Invite User')
+        )
+      )
+    );
+
+    const tableWrap = el('div', { className: 'bg-white rounded-2xl border border-gray-100 overflow-hidden' });
+    page.append(tableWrap);
+
+    const tbl = el('table', { className: 'w-full text-sm' });
+    tableWrap.append(tbl);
+    tbl.append(el('thead', {},
+      el('tr', { className: 'bg-gray-50 border-b border-gray-100 text-xs text-gray-500 uppercase tracking-wide' },
+        el('th', { className: 'text-left px-5 py-3 font-bold' }, 'User'),
+        el('th', { className: 'text-left px-5 py-3 font-bold' }, 'Roles'),
+        el('th', { className: 'text-left px-5 py-3 font-bold' }, 'Status'),
+        el('th', { className: 'text-left px-5 py-3 font-bold' }, 'Joined'),
+        el('th', { className: 'px-5 py-3' })
+      )
+    ));
+    const tbody = el('tbody');
+    tbl.append(tbody);
+
+    function loadUsers(search) {
+      tbody.innerHTML = '';
+      const loadingRow = el('tr', {}, el('td', { colSpan: 5, className: 'px-5 py-8 text-center text-gray-400 text-sm' }, 'Loading…'));
+      tbody.append(loadingRow);
+      const params = search ? { search } : {};
+      api.users.list(params).then(users => {
+        tbody.innerHTML = '';
+        if (!users.length) {
+          tbody.append(el('tr', {}, el('td', { colSpan: 5, className: 'px-5 py-10 text-center text-gray-400' }, 'No users found.')));
+          return;
+        }
+        users.forEach(u => {
+          const name = `${u.firstName} ${u.lastName}`.trim();
+          const sc = STATUS_COLOR[u.status] || '#6B7280';
+          const row = el('tr', { className: 'border-b border-gray-50 last:border-0 hover:bg-gray-50 transition' },
+            el('td', { className: 'px-5 py-3' },
+              el('div', { className: 'flex items-center gap-3' },
+                el('div', { className: 'w-8 h-8 rounded-full bg-brand/10 text-brand text-xs font-black flex items-center justify-center flex-shrink-0' },
+                  name.slice(0,1).toUpperCase()),
+                el('div', {},
+                  el('p', { className: 'font-semibold text-gray-900 text-sm' }, name),
+                  el('p', { className: 'text-xs text-gray-400' }, u.email)
+                )
+              )
+            ),
+            el('td', { className: 'px-5 py-3' },
+              el('div', { className: 'flex flex-wrap gap-1' },
+                ...(u.roles || []).map(ur => {
+                  const rc = ROLE_COLOR[ur.role.name] || '#6B7280';
+                  return el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full', style: { backgroundColor: rc + '18', color: rc } }, ur.role.name);
+                }),
+                u.roles?.length === 0 ? el('span', { className: 'text-xs text-gray-300' }, 'No roles') : null
+              )
+            ),
+            el('td', { className: 'px-5 py-3' },
+              el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full', style: { backgroundColor: sc + '18', color: sc } }, u.status)
+            ),
+            el('td', { className: 'px-5 py-3 text-xs text-gray-400' },
+              new Date(u.createdAt).toLocaleDateString('en-ZA')
+            ),
+            el('td', { className: 'px-5 py-3 text-right' },
+              el('div', { className: 'flex items-center justify-end gap-2' },
+                el('button', {
+                  className: 'text-xs text-brand font-bold hover:underline',
+                  onClick: () => openUserModal(u, loadUsers),
+                }, 'Edit'),
+                el('button', {
+                  className: 'text-xs text-red-400 font-bold hover:underline',
+                  onClick: async () => {
+                    if (!confirm(`Delete ${name}? This cannot be undone.`)) return;
+                    try { await api.users.remove(u.id); loadUsers(); }
+                    catch(e) { alert(e.message); }
+                  },
+                }, 'Delete')
+              )
+            )
+          );
+          tbody.append(row);
+        });
+      }).catch(e => {
+        tbody.innerHTML = '';
+        tbody.append(el('tr', {}, el('td', { colSpan: 5, className: 'px-5 py-6 text-center text-red-400 text-sm' }, 'Error: ' + e.message)));
+      });
+    }
+
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => loadUsers(searchInput.value.trim() || null), 350);
+    });
+
+    loadUsers();
+  }
+
+  // ── USER MODAL (create / edit) ─────────────────────────────────────────────
+  function openUserModal(user, onSave) {
+    const isNew = !user;
+    const overlay = el('div', { className: 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4' });
+
+    const fld = (label, node) => el('div', {},
+      el('label', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide block mb-1' }, label),
+      node
+    );
+    const inp = (placeholder, type = 'text', val = '') => el('input', {
+      className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30',
+      placeholder, type, value: val,
+    });
+
+    const firstNameInp = inp('First name', 'text', user?.firstName || '');
+    const lastNameInp  = inp('Last name',  'text', user?.lastName  || '');
+    const emailInp     = inp('Email address', 'email', user?.email || '');
+    const passwordInp  = inp(isNew ? 'Password (min 8 chars)' : 'New password (leave blank to keep)', 'password');
+    const phoneInp     = inp('Phone (optional)', 'tel', user?.phone || '');
+
+    const statusSel = el('select', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none' });
+    ['ACTIVE','INACTIVE','SUSPENDED'].forEach(s => {
+      const opt = el('option', { value: s }, s);
+      if ((user?.status || 'ACTIVE') === s) opt.selected = true;
+      statusSel.append(opt);
+    });
+
+    // Role assignment
+    const roleCheckboxes = {};
+    const rolesWrap = el('div', { className: 'space-y-2 mt-1' },
+      el('p', { className: 'text-xs text-gray-400' }, 'Loading roles…')
+    );
+    api.users.listRoles().then(roles => {
+      rolesWrap.innerHTML = '';
+      roles.forEach(r => {
+        const checked = (user?.roles || []).some(ur => ur.role.id === r.id);
+        const cb = el('input', { type: 'checkbox' });
+        cb.checked = checked;
+        roleCheckboxes[r.id] = cb;
+        const ROLE_COLOR = { ADMIN: '#7C3AED', AMBASSADOR: '#2563EB', CUSTOMER: '#059669' };
+        const rc = ROLE_COLOR[r.name] || '#6B7280';
+        rolesWrap.append(el('label', { className: 'flex items-center gap-3 p-2 rounded-xl hover:bg-gray-50 cursor-pointer' },
+          cb,
+          el('div', {},
+            el('span', { className: 'text-sm font-bold px-2 py-0.5 rounded-full', style: { backgroundColor: rc + '18', color: rc } }, r.name),
+            r.description ? el('span', { className: 'text-xs text-gray-400 ml-2' }, r.description) : null
+          )
+        ));
+      });
+    });
+
+    const saveBtn = el('button', {
+      className: 'bg-brand text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90',
+      onClick: async () => {
+        const firstName = firstNameInp.value.trim();
+        const email     = emailInp.value.trim();
+        if (!firstName || !email) { alert('First name and email are required'); return; }
+        if (isNew && passwordInp.value.length < 8) { alert('Password must be at least 8 characters'); return; }
+
+        saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+        try {
+          const data = { firstName, lastName: lastNameInp.value.trim(), email, phone: phoneInp.value.trim() || null, status: statusSel.value };
+          if (passwordInp.value) data.password = passwordInp.value;
+
+          let userId;
+          if (isNew) {
+            const created = await api.users.create(data);
+            userId = created.id;
+          } else {
+            await api.users.update(user.id, data);
+            userId = user.id;
+          }
+
+          // Sync roles
+          const allRoles = await api.users.listRoles();
+          for (const r of allRoles) {
+            const cb = roleCheckboxes[r.id];
+            if (!cb) continue;
+            const hadRole = (user?.roles || []).some(ur => ur.role.id === r.id);
+            if (cb.checked && !hadRole) await api.users.assignRole(userId, { roleId: r.id });
+            if (!cb.checked && hadRole) await api.users.removeRole(userId, r.id);
+          }
+
+          overlay.remove();
+          onSave();
+        } catch(e) {
+          alert('Error: ' + e.message);
+          saveBtn.disabled = false; saveBtn.textContent = isNew ? 'Create User' : 'Save Changes';
+        }
+      }
+    }, isNew ? 'Create User' : 'Save Changes');
+
+    overlay.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl' },
+      el('div', { className: 'flex items-center justify-between mb-5' },
+        el('h3', { className: 'font-black text-gray-900' }, isNew ? 'Invite User' : 'Edit User'),
+        el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl', onClick: () => overlay.remove() }, '×')
+      ),
+      el('div', { className: 'space-y-4' },
+        el('div', { className: 'grid grid-cols-2 gap-3' },
+          fld('First Name *', firstNameInp),
+          fld('Last Name',    lastNameInp),
+        ),
+        fld('Email *',    emailInp),
+        fld('Password',   passwordInp),
+        fld('Phone',      phoneInp),
+        fld('Status',     statusSel),
+        el('div', {},
+          el('p', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide mb-2' }, 'Roles'),
+          rolesWrap
+        )
+      ),
+      el('div', { className: 'flex justify-end gap-3 mt-6' },
+        el('button', { className: 'text-sm text-gray-500 px-4 py-2', onClick: () => overlay.remove() }, 'Cancel'),
+        saveBtn
+      )
+    ));
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.append(overlay);
+  }
+
+  // ── ROLES & PERMISSIONS SECTION ────────────────────────────────────────────
+  function renderRolesSection() {
+    const ACTIONS   = ['manage', 'create', 'read', 'update', 'delete'];
+    const SUBJECTS  = ['order', 'product', 'user', 'ambassador', 'commission', 'payout', 'employee', 'strategy'];
+    const ACT_COLOR = { manage: '#7C3AED', create: '#059669', read: '#2563EB', update: '#D97706', delete: '#DC2626' };
+
+    const page = el('div', { className: 'max-w-5xl' });
+    mainArea.append(page);
+
+    page.append(
+      el('div', { className: 'flex items-center justify-between mb-6' },
+        el('h2', { className: 'text-2xl font-black text-gray-900' }, '🛡 Roles & Permissions'),
+        el('button', {
+          className: 'bg-brand text-white font-bold px-4 py-2 rounded-xl text-sm hover:opacity-90',
+          onClick: () => openRoleModal(null, () => { mainArea.innerHTML = ''; renderRolesSection(); }),
+        }, '+ New Role')
+      )
+    );
+
+    const rolesWrap = el('div', { className: 'space-y-4' });
+    page.append(rolesWrap);
+
+    api.users.listRoles().then(roles => {
+      if (!roles.length) {
+        rolesWrap.append(el('p', { className: 'text-center text-gray-400 py-12' }, 'No roles found.'));
+        return;
+      }
+      roles.forEach(role => renderRoleCard(role));
+    }).catch(e => rolesWrap.append(el('p', { className: 'text-red-400 text-sm' }, 'Error: ' + e.message)));
+
+    function renderRoleCard(role) {
+      const ROLE_COLOR = { ADMIN: '#7C3AED', AMBASSADOR: '#2563EB', CUSTOMER: '#059669' };
+      const rc = ROLE_COLOR[role.name] || '#6B7280';
+
+      const card = el('div', { className: 'bg-white rounded-2xl border border-gray-100 overflow-hidden' });
+      rolesWrap.append(card);
+
+      // Header
+      const header = el('div', { className: 'flex items-center justify-between px-5 py-4 border-b border-gray-50' },
+        el('div', { className: 'flex items-center gap-3' },
+          el('div', { className: 'w-9 h-9 rounded-xl flex items-center justify-center text-white font-black text-sm', style: { backgroundColor: rc } }, role.name.slice(0,1)),
+          el('div', {},
+            el('p', { className: 'font-black text-gray-900' }, role.name),
+            el('p', { className: 'text-xs text-gray-400' }, role.description || `${role._count?.users || 0} user(s)`)
+          )
+        ),
+        el('div', { className: 'flex items-center gap-2' },
+          el('span', { className: 'text-xs text-gray-400 mr-2' }, `${role._count?.users || 0} user(s)`),
+          el('button', {
+            className: 'text-xs text-brand font-bold hover:underline',
+            onClick: () => openRoleModal(role, () => { mainArea.innerHTML = ''; renderRolesSection(); }),
+          }, 'Edit'),
+          el('button', {
+            className: 'text-xs text-red-400 font-bold hover:underline',
+            onClick: async () => {
+              if (!confirm(`Delete role "${role.name}"?`)) return;
+              try { await api.users.deleteRole(role.id); card.remove(); }
+              catch(e) { alert(e.message); }
+            },
+          }, 'Delete')
+        )
+      );
+      card.append(header);
+
+      // Permissions matrix
+      const body = el('div', { className: 'p-5' });
+      card.append(body);
+
+      const existingPerms = role.permissions || [];
+
+      // Grid: subjects as rows, actions as columns
+      const grid = el('div', { className: 'overflow-x-auto' });
+      const tbl = el('table', { className: 'w-full text-xs' });
+      grid.append(tbl);
+      body.append(grid);
+
+      // Header row
+      tbl.append(el('thead', {},
+        el('tr', {},
+          el('th', { className: 'text-left py-2 pr-4 font-bold text-gray-500 uppercase w-32' }, 'Subject'),
+          ...ACTIONS.map(a => el('th', { className: 'text-center py-2 px-3 font-bold uppercase', style: { color: ACT_COLOR[a] } }, a))
+        )
+      ));
+
+      const tbody = el('tbody');
+      tbl.append(tbody);
+
+      SUBJECTS.forEach(subject => {
+        const row = el('tr', { className: 'border-t border-gray-50' },
+          el('td', { className: 'py-2 pr-4 font-semibold text-gray-700 capitalize' }, subject)
+        );
+        ACTIONS.forEach(action => {
+          const existing = existingPerms.find(p => p.action === action && p.subject === subject);
+          const cell = el('td', { className: 'text-center py-2 px-3' });
+          const toggle = el('button', {
+            className: `w-7 h-7 rounded-lg border-2 flex items-center justify-center mx-auto transition text-xs font-black`,
+            title: `${action}:${subject}`,
+          });
+
+          function setGranted(granted) {
+            toggle.style.backgroundColor = granted ? ACT_COLOR[action] : '';
+            toggle.style.borderColor     = granted ? ACT_COLOR[action] : '#E5E7EB';
+            toggle.style.color           = granted ? '#fff' : '#D1D5DB';
+            toggle.textContent           = granted ? '✓' : '';
+          }
+
+          let permId = existing?.id || null;
+          let granted = !!existing;
+          setGranted(granted);
+
+          toggle.addEventListener('click', async () => {
+            toggle.disabled = true;
+            try {
+              if (granted) {
+                await api.users.removePermission(role.id, permId);
+                permId = null; granted = false;
+              } else {
+                const p = await api.users.addPermission(role.id, { action, subject });
+                permId = p.id; granted = true;
+              }
+              setGranted(granted);
+            } catch(e) { alert(e.message); }
+            finally { toggle.disabled = false; }
+          });
+
+          cell.append(toggle);
+          row.append(cell);
+        });
+        tbody.append(row);
+      });
+
+      body.append(el('p', { className: 'text-xs text-gray-400 mt-3' }, '💡 Click any cell to grant or revoke that permission for this role. Changes take effect immediately.'));
+    }
+  }
+
+  // ── ROLE MODAL ─────────────────────────────────────────────────────────────
+  function openRoleModal(role, onSave) {
+    const isNew = !role;
+    const overlay = el('div', { className: 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4' });
+    const nameInp = el('input', {
+      className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30',
+      placeholder: 'e.g. MANAGER, BAKER, SUPERVISOR',
+      value: role?.name || '',
+    });
+    const descInp = el('textarea', {
+      className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none resize-none focus:ring-2 focus:ring-brand/30',
+      placeholder: 'What can this role do? (optional)',
+      rows: 2,
+      value: role?.description || '',
+    });
+    const saveBtn = el('button', {
+      className: 'bg-brand text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90',
+      onClick: async () => {
+        const name = nameInp.value.trim();
+        if (!name) { nameInp.focus(); return; }
+        saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+        try {
+          const data = { name, description: descInp.value.trim() || null };
+          if (isNew) await api.users.createRole(data);
+          else await api.users.updateRole(role.id, data);
+          overlay.remove();
+          onSave();
+        } catch(e) { alert(e.message); saveBtn.disabled = false; saveBtn.textContent = isNew ? 'Create Role' : 'Save'; }
+      }
+    }, isNew ? 'Create Role' : 'Save');
+    overlay.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl' },
+      el('div', { className: 'flex items-center justify-between mb-5' },
+        el('h3', { className: 'font-black text-gray-900' }, isNew ? 'New Role' : 'Edit Role'),
+        el('button', { className: 'text-gray-400 text-2xl hover:text-gray-600', onClick: () => overlay.remove() }, '×')
+      ),
+      el('div', { className: 'space-y-4' },
+        el('div', {},
+          el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Role Name *'),
+          nameInp
+        ),
+        el('div', {},
+          el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Description'),
+          descInp
+        )
+      ),
+      el('div', { className: 'flex justify-end gap-3 mt-5' },
+        el('button', { className: 'text-sm text-gray-500 px-4 py-2', onClick: () => overlay.remove() }, 'Cancel'),
+        saveBtn
+      )
+    ));
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.body.append(overlay);
+    nameInp.focus();
+  }
+
+  renderSidebar();
+  renderSection();
+}
 
 // Initial route
 if (!store.user) {
