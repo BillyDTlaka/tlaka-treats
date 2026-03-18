@@ -3317,66 +3317,116 @@ function renderAdminPeople(container) {
   function renderCompanySection() {
     const page = el('div', { className: 'max-w-2xl' });
     mainArea.append(page);
-    page.append(el('h2', { className: 'text-2xl font-black text-gray-900 mb-6' }, '🏢 Company Profile'));
+
+    const FIELDS = [
+      { key: 'name',           label: 'Company Name',     span: 2,  required: true },
+      { key: 'tradingName',    label: 'Trading Name',     span: 1 },
+      { key: 'registrationNo', label: 'Registration No.', span: 1 },
+      { key: 'vatNo',          label: 'VAT No.',          span: 1 },
+      { key: 'phone',          label: 'Phone',            span: 1 },
+      { key: 'email',          label: 'Email',            span: 1 },
+      { key: 'website',        label: 'Website',          span: 1 },
+      { key: 'address',        label: 'Street Address',   span: 2 },
+      { key: 'city',           label: 'City',             span: 1 },
+      { key: 'province',       label: 'Province',         span: 1 },
+      { key: 'postalCode',     label: 'Postal Code',      span: 1 },
+    ];
 
     api.company.get().then(co => {
       let editing = false;
-      const fields = [
-        { key: 'name',           label: 'Company Name',        required: true },
-        { key: 'tradingName',    label: 'Trading Name'         },
-        { key: 'registrationNo', label: 'Registration No.'     },
-        { key: 'vatNo',          label: 'VAT No.'              },
-        { key: 'address',        label: 'Street Address'       },
-        { key: 'city',           label: 'City'                 },
-        { key: 'province',       label: 'Province'             },
-        { key: 'postalCode',     label: 'Postal Code'          },
-        { key: 'phone',          label: 'Phone'                },
-        { key: 'email',          label: 'Email'                },
-        { key: 'website',        label: 'Website'              },
-      ];
+      const inputs = {};
 
+      // ── Header ───────────────────────────────────────────────────────────
+      const editBtn   = el('button', { className: 'bg-brand text-white font-bold px-4 py-2 rounded-xl text-sm hover:opacity-90' }, '✏️ Edit');
+      const saveBtn   = el('button', { className: 'bg-green-600 text-white font-bold px-4 py-2 rounded-xl text-sm hover:opacity-90 hidden' }, 'Save Changes');
+      const cancelBtn = el('button', { className: 'text-sm text-gray-500 px-4 py-2 hover:text-gray-700 hidden' }, 'Cancel');
+
+      page.append(
+        el('div', { className: 'flex items-center justify-between mb-6' },
+          el('h2', { className: 'text-2xl font-black text-gray-900' }, '🏢 Company Profile'),
+          el('div', { className: 'flex items-center gap-2' }, cancelBtn, editBtn, saveBtn)
+        )
+      );
+
+      // ── Form card ─────────────────────────────────────────────────────────
       const card = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-6' });
       page.append(card);
 
-      const inputs = {};
       const grid = el('div', { className: 'grid grid-cols-2 gap-4' });
-
-      fields.forEach(f => {
-        const input = el('input', {
-          className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30 disabled:bg-gray-50 disabled:text-gray-500',
-          value: co[f.key] || '',
-          disabled: true,
-        });
-        inputs[f.key] = input;
-        grid.append(el('div', {},
-          el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, f.label),
-          input
-        ));
-      });
       card.append(grid);
 
-      const editBtn = el('button', {
-        className: 'mt-5 bg-brand text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90',
-        onClick: async () => {
-          if (!editing) {
-            editing = true;
-            editBtn.textContent = 'Save Changes';
-            editBtn.className = 'mt-5 bg-green-600 text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90';
-            Object.values(inputs).forEach(inp => { inp.disabled = false; });
-          } else {
-            const data = {};
-            fields.forEach(f => { data[f.key] = inputs[f.key].value.trim() || null; });
-            data.name = inputs.name.value.trim() || 'Tlaka Treats';
-            await api.company.update(data);
-            editing = false;
-            editBtn.textContent = '✏️ Edit';
-            editBtn.className = 'mt-5 bg-brand text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90';
-            Object.values(inputs).forEach(inp => { inp.disabled = true; });
-          }
+      FIELDS.forEach(f => {
+        const input = el('input', {
+          className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30 bg-gray-50 text-gray-600 cursor-default',
+          value: co[f.key] || '',
+          readOnly: true,
+        });
+        inputs[f.key] = input;
+        const wrapper = el('div', { className: f.span === 2 ? 'col-span-2' : '' },
+          el('label', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide block mb-1' }, f.label + (f.required ? ' *' : '')),
+          input
+        );
+        grid.append(wrapper);
+      });
+
+      // ── Status message ────────────────────────────────────────────────────
+      const statusMsg = el('p', { className: 'text-xs text-green-600 font-medium mt-4 hidden' }, '✓ Saved successfully');
+      card.append(statusMsg);
+
+      // ── Edit mode toggle ──────────────────────────────────────────────────
+      function enterEdit() {
+        editing = true;
+        editBtn.classList.add('hidden');
+        saveBtn.classList.remove('hidden');
+        cancelBtn.classList.remove('hidden');
+        statusMsg.classList.add('hidden');
+        Object.values(inputs).forEach(inp => {
+          inp.readOnly = false;
+          inp.className = 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30 bg-white text-gray-900';
+        });
+        inputs.name.focus();
+      }
+
+      function exitEdit(restore) {
+        editing = false;
+        editBtn.classList.remove('hidden');
+        saveBtn.classList.add('hidden');
+        cancelBtn.classList.add('hidden');
+        if (restore) {
+          FIELDS.forEach(f => { inputs[f.key].value = co[f.key] || ''; });
         }
-      }, '✏️ Edit');
-      card.append(editBtn);
-    }).catch(e => mainArea.append(el('p', { className: 'text-red-500 text-sm' }, 'Error: ' + e.message)));
+        Object.values(inputs).forEach(inp => {
+          inp.readOnly = true;
+          inp.className = 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30 bg-gray-50 text-gray-600 cursor-default';
+        });
+      }
+
+      editBtn.addEventListener('click', enterEdit);
+      cancelBtn.addEventListener('click', () => exitEdit(true));
+
+      saveBtn.addEventListener('click', async () => {
+        const name = inputs.name.value.trim();
+        if (!name) { inputs.name.focus(); inputs.name.style.borderColor = '#DC2626'; return; }
+        inputs.name.style.borderColor = '';
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving…';
+        try {
+          const data = {};
+          FIELDS.forEach(f => { data[f.key] = inputs[f.key].value.trim() || null; });
+          data.name = name;
+          Object.assign(co, await api.company.update(data));
+          exitEdit(false);
+          statusMsg.classList.remove('hidden');
+          setTimeout(() => statusMsg.classList.add('hidden'), 3000);
+        } catch(e) {
+          alert('Save failed: ' + e.message);
+        } finally {
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Save Changes';
+        }
+      });
+
+    }).catch(e => page.append(el('p', { className: 'text-red-500 text-sm mt-4' }, 'Failed to load company: ' + e.message)));
   }
 
   // ── DEPARTMENTS ───────────────────────────────────────────────────────────
