@@ -761,6 +761,7 @@ model Employee {
   leaveRequests  LeaveRequest[]
   payrollItems   PayrollItem[]
   qualifications EmployeeQualification[]
+  tasks          Task[]
 }
 
 model EmployeeQualification {
@@ -867,6 +868,7 @@ enum TaskPriority {
 enum TaskSource {
   MANUAL
   BOARD_MEETING
+  STRATEGY
 }
 
 model Task {
@@ -877,6 +879,10 @@ model Task {
   status      TaskStatus   @default(OPEN)
   dueDate     DateTime?    @db.Date
   owner       String?
+  employeeId  String?
+  employee    Employee?    @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  strategyId  String?
+  strategy    Strategy?    @relation(fields: [strategyId], references: [id], onDelete: SetNull)
   source      TaskSource   @default(MANUAL)
   sourceId    String?
   createdAt   DateTime     @default(now())
@@ -905,8 +911,10 @@ model Strategy {
   currentVersion Int            @default(0)
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
+  progressJson   Json              @default("{}")
   revisions      StrategyRevision[]
   comments       StrategyComment[]
+  tasks          Task[]
 }
 
 model StrategyRevision {

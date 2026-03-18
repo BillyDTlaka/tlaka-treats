@@ -317,6 +317,9 @@ const api = {
     resolveComment: (id, cid)    => req('PATCH', `/strategy/${id}/comments/${cid}`, { resolved: true }),
     delete:         (id)         => req('DELETE', `/strategy/${id}`),
     pdfUrl:         (id)         => `${API_BASE}/strategy/${id}/pdf`,
+    generateTasks:  (id, d)      => req('POST',  `/strategy/${id}/generate-tasks`, d),
+    getProgress:    (id)         => req('GET',    `/strategy/${id}/progress`),
+    updateProgress: (id, d)      => req('PATCH',  `/strategy/${id}/progress`, d),
   },
   employees: {
     list:               (p)        => req('GET',  '/employees' + (p ? '?' + new URLSearchParams(p) : '')),
@@ -12559,8 +12562,8 @@ function renderAdminStrategy(container) {
     }
 
     // ── Tabs ─────────────────────────────────────────────────────────────────
-    const tabs = ['content', 'history', 'comments'];
-    const tabLabels = { content: '📄 Strategy', history: '🕐 History', comments: '💬 Comments' };
+    const tabs = ['content', 'progress', 'history', 'comments'];
+    const tabLabels = { content: '📄 Strategy', progress: '📊 Progress', history: '🕐 History', comments: '💬 Comments' };
     const tabBar = el('div', { className: 'flex border-b border-gray-100 mb-5' });
     tabs.forEach(t => {
       const btn = el('button', {
@@ -12699,16 +12702,87 @@ function renderAdminStrategy(container) {
           });
 
         } else if (sec.type === 'action-plan' && val?.length) {
-          val.forEach(week => {
-            const w = el('div', { className: 'mb-4' },
-              el('div', { className: 'flex items-center gap-2 mb-2' },
+          // Load employees for assignment dropdowns
+          const empMap = {};
+          api.employees.list().then(list => {
+            list.forEach(e => {
+              empMap[e.id] = `${e.user?.firstName || ''} ${e.user?.lastName || ''}`.trim() || e.jobTitle;
+            });
+            refreshEmpDropdowns();
+          }).catch(() => {});
+
+          const weekAssignments = {}; // { weekIndex_actionIndex: employeeId }
+          const empDropdowns = [];
+
+          function refreshEmpDropdowns() {
+            empDropdowns.forEach(({ sel, key }) => {
+              if (sel.dataset.populated) return;
+              sel.dataset.populated = 'true';
+              Object.entries(empMap).forEach(([eid, name]) => {
+                const opt = document.createElement('option');
+                opt.value = eid; opt.textContent = name;
+                sel.append(opt);
+              });
+              if (weekAssignments[key]) sel.value = weekAssignments[key];
+            });
+          }
+
+          val.forEach((week, wi) => {
+            const w = el('div', { className: 'mb-5 border border-gray-100 rounded-xl p-4' },
+              el('div', { className: 'flex items-center gap-2 mb-3' },
                 el('span', { className: 'text-xs font-black bg-brand text-white px-2.5 py-1 rounded-full' }, week.week),
-                el('span', { className: 'text-xs text-gray-400' }, 'Owner: ' + (week.owner || '—'))
+                el('span', { className: 'text-xs text-gray-400' }, 'Default owner: ' + (week.owner || '—'))
               )
             );
-            (week.actions || []).forEach(a => w.append(el('p', { className: 'text-sm text-gray-700 flex gap-2 mb-1 pl-2' }, el('span', { className: 'text-brand' }, '→'), el('span', {}, a))));
+            (week.actions || []).forEach((a, ai) => {
+              const key = `${wi}_${ai}`;
+              const sel = el('select', {
+                className: 'text-xs border border-gray-200 rounded-lg px-2 py-1 ml-auto flex-shrink-0',
+                onChange: (e) => { weekAssignments[key] = e.target.value || null; },
+              });
+              sel.append(el('option', { value: '' }, 'Assign employee…'));
+              empDropdowns.push({ sel, key });
+
+              w.append(el('div', { className: 'flex items-center gap-2 mb-2 pl-2' },
+                el('span', { className: 'text-brand text-sm flex-shrink-0' }, '→'),
+                el('span', { className: 'text-sm text-gray-700 flex-1' }, a),
+                canEdit ? sel : null
+              ));
+            });
             sectionCard.append(w);
           });
+
+          if (canEdit) {
+            const genBtn = el('button', {
+              className: 'mt-3 w-full bg-indigo-600 text-white text-sm font-bold py-2 rounded-xl hover:bg-indigo-700',
+              onClick: async () => {
+                genBtn.disabled = true;
+                genBtn.textContent = 'Creating tasks…';
+                try {
+                  const actions = [];
+                  val.forEach((week, wi) => {
+                    (week.actions || []).forEach((a, ai) => {
+                      const key = `${wi}_${ai}`;
+                      actions.push({
+                        title: a,
+                        description: `${week.week} action plan item`,
+                        week: week.week,
+                        employeeId: weekAssignments[key] || null,
+                      });
+                    });
+                  });
+                  const result = await api.strategy.generateTasks(s.id, { actions });
+                  genBtn.textContent = `✓ ${result.created} task(s) created`;
+                  setTimeout(() => { genBtn.disabled = false; genBtn.textContent = '⚡ Generate Tasks from Plan'; }, 3000);
+                } catch(e) {
+                  alert('Failed: ' + e.message);
+                  genBtn.disabled = false;
+                  genBtn.textContent = '⚡ Generate Tasks from Plan';
+                }
+              }
+            }, '⚡ Generate Tasks from Plan');
+            sectionCard.append(genBtn);
+          }
 
         } else if (sec.type === 'fin-targets' && val?.length) {
           const tbl = el('div', { className: 'overflow-x-auto' });
@@ -12889,6 +12963,195 @@ function renderAdminStrategy(container) {
 
       mainPanel.append(commentsEl);
       loadComments();
+    }
+
+    // ── TAB: Progress ─────────────────────────────────────────────────────────
+    if (currentTab === 'progress') {
+      const progWrap = el('div', { className: 'space-y-5' });
+      mainPanel.append(progWrap);
+
+      progWrap.append(el('div', { className: 'text-sm text-gray-400 bg-blue-50 rounded-xl px-4 py-3 border border-blue-100' },
+        '📊 Track your strategy KPIs here. Some metrics are auto-calculated from live data; others you update manually each month.'
+      ));
+
+      api.strategy.getProgress(s.id).then(prog => {
+        const content = prog.strategy.contentJson || {};
+        const actuals = prog.progressJson || {};
+        const auto = prog.autoActuals || {};
+        const tasks = prog.tasks || [];
+
+        // ── Auto metrics banner ──────────────────────────────────────────────
+        const autoCard = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-5' },
+          el('h3', { className: 'font-black text-gray-900 mb-4' }, '⚡ Live Business Metrics (Last 30 days)')
+        );
+        const autoGrid = el('div', { className: 'grid grid-cols-3 gap-4' });
+        [
+          { label: 'Revenue', val: `R${auto.revenue30d?.toLocaleString('en-ZA', { minimumFractionDigits: 2 }) || '0.00'}`, icon: '💰' },
+          { label: 'Orders', val: auto.orders30d || 0, icon: '📦' },
+          { label: 'Production Runs', val: auto.production30d || 0, icon: '🏭' },
+        ].forEach(m => {
+          autoGrid.append(el('div', { className: 'text-center p-4 bg-gray-50 rounded-xl' },
+            el('p', { className: 'text-2xl font-black text-gray-900' }, String(m.val)),
+            el('p', { className: 'text-xs text-gray-500 mt-1' }, m.icon + ' ' + m.label)
+          ));
+        });
+        autoCard.append(autoGrid);
+        progWrap.append(autoCard);
+
+        // ── Strategic Goals KPIs ─────────────────────────────────────────────
+        const goals = content.strategicGoals || [];
+        if (goals.length) {
+          const goalsCard = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-5' },
+            el('h3', { className: 'font-black text-gray-900 mb-4' }, '🎯 Strategic Goals — KPI Progress')
+          );
+
+          goals.forEach((goal, gi) => {
+            const goalBlock = el('div', { className: 'mb-5 border-b border-gray-50 last:border-0 pb-4 last:pb-0' });
+            const PRIORITY_COLOR = { HIGH: '#DC2626', MEDIUM: '#D97706', LOW: '#059669' };
+            const pc = PRIORITY_COLOR[goal.priority] || '#6B7280';
+            goalBlock.append(
+              el('div', { className: 'flex items-center gap-2 mb-3' },
+                el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full', style: { backgroundColor: pc + '20', color: pc } }, goal.priority),
+                el('p', { className: 'font-semibold text-gray-800 text-sm' }, goal.goal),
+                el('span', { className: 'text-xs text-gray-400 ml-auto' }, goal.timeframe)
+              )
+            );
+
+            (goal.kpis || []).forEach((kpi, ki) => {
+              const kpiKey = `goal_${gi}_kpi_${ki}`;
+              const currentActual = actuals[kpiKey];
+              const hasActual = currentActual !== undefined && currentActual !== null && currentActual !== '';
+
+              const actualInput = el('input', {
+                className: 'w-32 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center outline-none focus:ring-2 focus:ring-brand/30',
+                placeholder: 'Enter actual',
+                value: hasActual ? String(currentActual) : '',
+              });
+              const saveActualBtn = el('button', {
+                className: 'text-xs text-brand font-bold hover:underline',
+                onClick: async () => {
+                  const newActuals = { ...actuals, [kpiKey]: actualInput.value };
+                  await api.strategy.updateProgress(s.id, { progressJson: newActuals });
+                  actuals[kpiKey] = actualInput.value;
+                  saveActualBtn.textContent = '✓ Saved';
+                  setTimeout(() => saveActualBtn.textContent = 'Save', 2000);
+                }
+              }, 'Save');
+
+              goalBlock.append(el('div', { className: 'flex items-center gap-3 py-2 pl-3 border-l-2 border-gray-100 mb-2' },
+                el('div', { className: 'flex-1' },
+                  el('p', { className: 'text-sm font-medium text-gray-700' }, kpi.metric),
+                  el('div', { className: 'flex items-center gap-4 mt-1 text-xs text-gray-500' },
+                    el('span', {}, `Baseline: ${kpi.current || '—'}`),
+                    el('span', { className: 'font-bold text-green-600' }, `Target: ${kpi.target || '—'}`)
+                  )
+                ),
+                el('div', { className: 'flex items-center gap-2' },
+                  el('p', { className: 'text-xs text-gray-400 mr-1' }, 'Actual:'),
+                  actualInput,
+                  saveActualBtn
+                )
+              ));
+            });
+            goalsCard.append(goalBlock);
+          });
+          progWrap.append(goalsCard);
+        }
+
+        // ── Financial Targets ────────────────────────────────────────────────
+        const finTargets = content.financialTargets || [];
+        if (finTargets.length) {
+          const finCard = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-5' },
+            el('h3', { className: 'font-black text-gray-900 mb-4' }, '💰 Financial Targets')
+          );
+          const tbl = el('table', { className: 'w-full text-sm' });
+          tbl.append(el('thead', {},
+            el('tr', { className: 'text-xs text-gray-400 border-b border-gray-100' },
+              el('th', { className: 'text-left py-2 font-bold' }, 'Metric'),
+              el('th', { className: 'text-center py-2 font-bold' }, 'Baseline'),
+              el('th', { className: 'text-center py-2 font-bold text-blue-600' }, 'Actual'),
+              el('th', { className: 'text-center py-2 font-bold text-green-600' }, 'Target'),
+              el('th', { className: 'text-center py-2 font-bold' }, 'By'),
+            )
+          ));
+          const ftbody = el('tbody');
+          finTargets.forEach((ft, fi) => {
+            const ftKey = `fin_${fi}`;
+            const ftActual = actuals[ftKey] || '';
+            const actualFtInput = el('input', {
+              className: 'w-24 border border-gray-200 rounded-lg px-2 py-1 text-sm text-center outline-none',
+              placeholder: '—',
+              value: ftActual,
+            });
+            const saveFtBtn = el('button', {
+              className: 'text-xs text-brand font-bold hover:underline ml-1',
+              onClick: async () => {
+                const newActuals = { ...actuals, [ftKey]: actualFtInput.value };
+                await api.strategy.updateProgress(s.id, { progressJson: newActuals });
+                actuals[ftKey] = actualFtInput.value;
+                saveFtBtn.textContent = '✓';
+                setTimeout(() => saveFtBtn.textContent = 'Save', 2000);
+              }
+            }, 'Save');
+            ftbody.append(el('tr', { className: 'border-b border-gray-50' },
+              el('td', { className: 'py-2 font-medium text-gray-700' }, ft.metric),
+              el('td', { className: 'py-2 text-center text-gray-500' }, ft.current),
+              el('td', { className: 'py-2 text-center' }, el('div', { className: 'flex items-center justify-center gap-1' }, actualFtInput, saveFtBtn)),
+              el('td', { className: 'py-2 text-center font-bold text-green-600' }, ft.target),
+              el('td', { className: 'py-2 text-center text-gray-400' }, ft.by),
+            ));
+          });
+          tbl.append(ftbody);
+          finCard.append(tbl);
+          progWrap.append(finCard);
+        }
+
+        // ── Linked Tasks ─────────────────────────────────────────────────────
+        const tasksCard = el('div', { className: 'bg-white rounded-2xl border border-gray-100 p-5' },
+          el('div', { className: 'flex items-center justify-between mb-4' },
+            el('h3', { className: 'font-black text-gray-900' }, '✅ Action Plan Tasks'),
+            el('span', { className: 'text-xs text-gray-400' }, `${tasks.filter(t => t.status === 'DONE').length}/${tasks.length} done`)
+          )
+        );
+        if (!tasks.length) {
+          tasksCard.append(el('p', { className: 'text-sm text-gray-400 text-center py-4' },
+            'No tasks yet. Go to the Strategy tab → 90-Day Action Plan → Generate Tasks.'
+          ));
+        } else {
+          const STATUS_COLOR = { OPEN: '#2563EB', IN_PROGRESS: '#7C3AED', DONE: '#059669', CANCELLED: '#6B7280' };
+          tasks.forEach(t => {
+            const sc = STATUS_COLOR[t.status] || '#6B7280';
+            const empName = t.employee ? `${t.employee.user?.firstName || ''} ${t.employee.user?.lastName || ''}`.trim() || t.employee.jobTitle : null;
+            const statusSel = el('select', {
+              className: 'text-xs border border-gray-200 rounded-lg px-2 py-1',
+            });
+            ['OPEN','IN_PROGRESS','DONE','CANCELLED'].forEach(st => {
+              const opt = el('option', { value: st }, st.replace('_',' '));
+              if (t.status === st) opt.selected = true;
+              statusSel.append(opt);
+            });
+            statusSel.addEventListener('change', async (e) => {
+              await req('PATCH', `/tasks/${t.id}`, { status: e.target.value });
+              t.status = e.target.value;
+            });
+            tasksCard.append(el('div', { className: 'flex items-center gap-3 py-2.5 border-b border-gray-50 last:border-0' },
+              el('div', { className: 'w-2 h-2 rounded-full flex-shrink-0', style: { backgroundColor: sc } }),
+              el('div', { className: 'flex-1 min-w-0' },
+                el('p', { className: `text-sm font-medium ${t.status === 'DONE' ? 'line-through text-gray-400' : 'text-gray-800'}` }, t.title),
+                el('div', { className: 'flex items-center gap-3 mt-0.5 text-xs text-gray-400' },
+                  t.owner ? el('span', {}, t.owner) : null,
+                  empName ? el('span', { className: 'bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-medium' }, '👤 ' + empName) : null,
+                )
+              ),
+              statusSel
+            ));
+          });
+        }
+        progWrap.append(tasksCard);
+
+      }).catch(err => {
+        progWrap.append(el('p', { className: 'text-sm text-red-500' }, 'Failed to load progress: ' + err.message));
+      });
     }
   }
 

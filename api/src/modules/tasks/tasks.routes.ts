@@ -6,8 +6,8 @@ const taskRoutes: FastifyPluginAsync = async (fastify) => {
   const svc = new TaskService(fastify.prisma)
 
   fastify.get('/', { preHandler: [authenticate] }, async (req) => {
-    const { status, priority } = req.query as { status?: string; priority?: string }
-    return svc.list({ status, priority })
+    const { status, priority, strategyId } = req.query as { status?: string; priority?: string; strategyId?: string }
+    return svc.list({ status, priority, strategyId })
   })
 
   fastify.get('/counts', { preHandler: [authenticate] }, async () => svc.counts())

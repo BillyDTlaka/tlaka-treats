@@ -8,6 +8,7 @@ import {
   validateTransition,
 } from './strategy.service'
 import { generateStrategyPdf } from '../../shared/services/pdf.service'
+import { TaskService } from '../tasks/tasks.service'
 
 const strategyRoutes: FastifyPluginAsync = async (fastify) => {
   const db = fastify.prisma as any
@@ -180,6 +181,74 @@ const strategyRoutes: FastifyPluginAsync = async (fastify) => {
     reply.header('Content-Type', 'application/pdf')
     reply.header('Content-Disposition', `attachment; filename="strategy-${date}.pdf"`)
     return reply.send(buf)
+  })
+
+  // ── POST /strategy/:id/generate-tasks ─── Create tasks from action plan
+  fastify.post('/:id/generate-tasks', { preHandler: auth }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const { actions } = req.body as {
+      actions: { title: string; description?: string; week?: string; employeeId?: string }[]
+    }
+    if (!actions?.length) throw new AppError('No actions provided', 400, 'INVALID_BODY')
+
+    const svc = new TaskService(db)
+    const result = await svc.createFromStrategy(id, actions)
+    return reply.code(201).send(result)
+  })
+
+  // ── GET /strategy/:id/progress ─── KPI progress data
+  fastify.get('/:id/progress', { preHandler: auth }, async (req) => {
+    const { id } = req.params as { id: string }
+    const s = await db.strategy.findUnique({ where: { id } })
+    if (!s) throw new AppError('Strategy not found', 404, 'NOT_FOUND')
+
+    // Load linked tasks
+    const tasks = await db.task.findMany({
+      where:   { strategyId: id },
+      include: { employee: { select: { id: true, jobTitle: true, user: { select: { firstName: true, lastName: true } } } } },
+      orderBy: { createdAt: 'asc' },
+    })
+
+    // Auto-pull some actuals from live data (last 30 days)
+    const thirtyDaysAgo = new Date()
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+
+    const [revenueResult, orderCount, productionCount] = await Promise.all([
+      db.order.aggregate({
+        where:  { status: { in: ['COMPLETED', 'DELIVERED'] }, createdAt: { gte: thirtyDaysAgo } },
+        _sum:   { total: true },
+        _count: true,
+      }).catch(() => ({ _sum: { total: 0 }, _count: 0 })),
+      db.order.count({ where: { status: { notIn: ['CANCELLED'] }, createdAt: { gte: thirtyDaysAgo } } }).catch(() => 0),
+      db.productionRun.count({ where: { status: 'COMPLETED', createdAt: { gte: thirtyDaysAgo } } }).catch(() => 0),
+    ])
+
+    const autoActuals = {
+      revenue30d:    Number(revenueResult._sum?.total || 0),
+      orders30d:     orderCount,
+      production30d: productionCount,
+    }
+
+    return {
+      strategy:    { id: s.id, title: s.title, status: s.status, contentJson: s.contentJson },
+      progressJson: s.progressJson || {},
+      autoActuals,
+      tasks,
+    }
+  })
+
+  // ── PATCH /strategy/:id/progress ─── Update manual KPI actuals
+  fastify.patch('/:id/progress', { preHandler: auth }, async (req) => {
+    const { id } = req.params as { id: string }
+    const { progressJson } = req.body as { progressJson: any }
+
+    const s = await db.strategy.findUnique({ where: { id } })
+    if (!s) throw new AppError('Strategy not found', 404, 'NOT_FOUND')
+
+    return db.strategy.update({
+      where: { id },
+      data:  { progressJson: progressJson || {} },
+    })
   })
 
   // ── DELETE /strategy/:id ─── Archive / hard delete

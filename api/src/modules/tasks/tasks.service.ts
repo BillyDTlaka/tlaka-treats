@@ -1,15 +1,23 @@
 import { PrismaClient } from '@prisma/client'
 import { AppError } from '../../shared/errors'
 
+const EMPLOYEE_SELECT = {
+  id: true,
+  jobTitle: true,
+  user: { select: { firstName: true, lastName: true } },
+}
+
 export class TaskService {
   constructor(private prisma: PrismaClient) {}
 
-  async list(filters?: { status?: string; priority?: string }) {
+  async list(filters?: { status?: string; priority?: string; strategyId?: string }) {
     return this.prisma.task.findMany({
       where: {
-        ...(filters?.status   ? { status:   filters.status   as any } : {}),
-        ...(filters?.priority ? { priority: filters.priority as any } : {}),
+        ...(filters?.status     ? { status:     filters.status     as any } : {}),
+        ...(filters?.priority   ? { priority:   filters.priority   as any } : {}),
+        ...(filters?.strategyId ? { strategyId: filters.strategyId }        : {}),
       },
+      include: { employee: { select: EMPLOYEE_SELECT } },
       orderBy: [
         { status: 'asc' },
         { priority: 'asc' },
@@ -19,7 +27,10 @@ export class TaskService {
   }
 
   async getById(id: string) {
-    const task = await this.prisma.task.findUnique({ where: { id } })
+    const task = await this.prisma.task.findUnique({
+      where: { id },
+      include: { employee: { select: EMPLOYEE_SELECT } },
+    })
     if (!task) throw new AppError('Task not found', 404, 'NOT_FOUND')
     return task
   }
@@ -30,6 +41,8 @@ export class TaskService {
     priority?: string
     dueDate?: string
     owner?: string
+    employeeId?: string
+    strategyId?: string
     source?: string
     sourceId?: string
   }) {
@@ -40,9 +53,12 @@ export class TaskService {
         priority:    (data.priority as any) || 'MEDIUM',
         dueDate:     data.dueDate ? new Date(data.dueDate) : null,
         owner:       data.owner,
+        employeeId:  data.employeeId || null,
+        strategyId:  data.strategyId || null,
         source:      (data.source as any) || 'MANUAL',
         sourceId:    data.sourceId,
       },
+      include: { employee: { select: EMPLOYEE_SELECT } },
     })
   }
 
@@ -53,17 +69,22 @@ export class TaskService {
     status: string
     dueDate: string
     owner: string
+    employeeId: string | null
   }>) {
     const task = await this.prisma.task.findUnique({ where: { id } })
     if (!task) throw new AppError('Task not found', 404, 'NOT_FOUND')
     return this.prisma.task.update({
       where: { id },
       data: {
-        ...data,
-        priority: data.priority as any,
-        status:   data.status   as any,
-        dueDate:  data.dueDate  ? new Date(data.dueDate) : undefined,
+        ...(data.title       !== undefined ? { title:       data.title }                      : {}),
+        ...(data.description !== undefined ? { description: data.description }                : {}),
+        ...(data.priority    !== undefined ? { priority:    data.priority as any }            : {}),
+        ...(data.status      !== undefined ? { status:      data.status   as any }            : {}),
+        ...(data.dueDate     !== undefined ? { dueDate:     data.dueDate ? new Date(data.dueDate) : null } : {}),
+        ...(data.owner       !== undefined ? { owner:       data.owner }                      : {}),
+        ...(data.employeeId  !== undefined ? { employeeId:  data.employeeId }                 : {}),
       },
+      include: { employee: { select: EMPLOYEE_SELECT } },
     })
   }
 
@@ -93,6 +114,31 @@ export class TaskService {
             source:      'BOARD_MEETING',
             sourceId:    meetingId,
           },
+          include: { employee: { select: EMPLOYEE_SELECT } },
+        })
+      )
+    )
+    return { created: tasks.length, tasks }
+  }
+
+  async createFromStrategy(
+    strategyId: string,
+    actions: { title: string; description?: string; week?: string; employeeId?: string }[]
+  ) {
+    const tasks = await Promise.all(
+      actions.map(a =>
+        this.prisma.task.create({
+          data: {
+            title:       a.title,
+            description: a.description,
+            priority:    'MEDIUM',
+            owner:       a.week || undefined,
+            employeeId:  a.employeeId || null,
+            strategyId,
+            source:      'STRATEGY',
+            sourceId:    strategyId,
+          },
+          include: { employee: { select: EMPLOYEE_SELECT } },
         })
       )
     )
