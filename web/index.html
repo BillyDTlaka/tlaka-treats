@@ -10570,15 +10570,14 @@ function renderAdminPricing(container) {
         row.append(
           el('div', { className: 'flex items-center gap-2' },
             el('button', {
-              className: `w-9 h-5 rounded-full transition-colors flex-shrink-0 relative ${s.isActive ? 'bg-brand' : 'bg-gray-200'}`,
-              onClick: async function() {
+              className: `w-9 h-5 rounded-full transition-colors flex-shrink-0 ${s.isActive ? 'bg-brand' : 'bg-gray-200'}`,
+              onClick: async () => {
                 await api.pricing.updateStore(s.id, { isActive: !s.isActive });
                 s.isActive = !s.isActive;
-                this.className = `w-9 h-5 rounded-full transition-colors flex-shrink-0 relative ${s.isActive ? 'bg-brand' : 'bg-gray-200'}`;
-                this.querySelector('span').style.transform = s.isActive ? 'translateX(16px)' : 'translateX(2px)';
+                renderStoreList();
               },
             },
-              el('span', { className: 'block w-4 h-4 bg-white rounded-full shadow absolute top-0.5', style: `transform: ${s.isActive ? 'translateX(16px)' : 'translateX(2px)'}` })
+              el('span', { className: `block w-4 h-4 bg-white rounded-full shadow transition-transform mx-0.5 ${s.isActive ? 'translate-x-4' : 'translate-x-0'}` })
             ),
             el('div', {},
               el('p', { className: `text-sm font-semibold ${s.isActive ? 'text-gray-900' : 'text-gray-400'}` }, s.name),
