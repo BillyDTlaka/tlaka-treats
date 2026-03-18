@@ -10782,10 +10782,10 @@ function renderAdminPricing(container) {
 
     for (const [name, data] of Object.entries(byItem)) {
       const priceByStore = {};
-      for (const p of data.prices) priceByStore[p.source] = Number(p.pricePerUnit);
-      const values = Object.values(priceByStore).filter(v => v > 0);
+      for (const p of data.prices) priceByStore[p.source] = { ppu: Number(p.pricePerUnit), unit: p.unitLabel || '', snippet: p.rawSnippet || '', url: p.url || '' };
+      const values = Object.values(priceByStore).map(v => v.ppu).filter(v => v > 0);
       const best = values.length ? Math.min(...values) : null;
-      const bestStore = best ? Object.entries(priceByStore).find(([, v]) => v === best)?.[0] : null;
+      const bestStore = best ? Object.entries(priceByStore).find(([, v]) => v.ppu === best)?.[0] : null;
       const unit = data.prices[0]?.unitLabel || data.stockItem?.uom?.abbreviation || '';
 
       tbody.append(el('tr', { className: 'border-b border-gray-50 last:border-0 hover:bg-gray-50' },
@@ -10794,21 +10794,21 @@ function renderAdminPricing(container) {
           data.stockItem?.costPerUnit ? el('p', { className: 'text-xs text-gray-400' }, `Current cost: R${Number(data.stockItem.costPerUnit).toFixed(2)}/${unit}`) : null
         ),
         ...allStores.map(s => {
-          const ppu = priceByStore[s];
+          const entry = priceByStore[s];
           const isBest = s === bestStore;
-          const p = data.prices.find(x => x.source === s);
           return el('td', { className: `px-4 py-3 text-right ${isBest ? 'bg-green-50' : ''}` },
-            ppu ? el('div', {},
-              el('p', { className: `font-bold ${isBest ? 'text-green-700' : 'text-gray-700'}` }, `R${ppu.toFixed(2)}`),
-              unit ? el('p', { className: 'text-xs text-gray-400' }, `/${unit}`) : null,
-              p?.url ? el('a', { href: p.url, target: '_blank', className: 'text-xs text-brand hover:underline' }, 'View') : null
+            entry ? el('div', {},
+              el('p', { className: `font-bold ${isBest ? 'text-green-700' : 'text-gray-700'}` }, `R${entry.ppu.toFixed(2)}`),
+              entry.unit ? el('p', { className: 'text-xs text-gray-400' }, `per ${entry.unit}`) : null,
+              entry.snippet ? el('p', { className: 'text-xs text-gray-400 truncate max-w-24', title: entry.snippet }, entry.snippet) : null,
+              entry.url ? el('a', { href: entry.url, target: '_blank', className: 'text-xs text-brand hover:underline' }, 'View') : null
             ) : el('span', { className: 'text-gray-300 text-xs' }, '—')
           );
         }),
         el('td', { className: 'px-4 py-3 text-right' },
           best ? el('div', {},
             el('p', { className: 'font-black text-green-700' }, `R${best.toFixed(2)}`),
-            el('p', { className: 'text-xs text-green-500' }, bestStore)
+            el('p', { className: 'text-xs text-green-500' }, `${bestStore} · per ${priceByStore[bestStore]?.unit || unit}`)
           ) : el('span', { className: 'text-gray-300 text-xs' }, '—')
         )
       ));
@@ -12895,7 +12895,12 @@ function renderAdminStrategy(container) {
   // ── Section editor modal ──────────────────────────────────────────────────────
   function openSectionEditor(sec, currentVal, strategyId, onSave) {
     const overlay = el('div', { className: 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4' });
-    const valStr = typeof currentVal === 'string' ? currentVal : JSON.stringify(currentVal, null, 2);
+    const isText = sec.type === 'text';
+    // Resolve a safe default if the section has no content yet
+    const resolved = (currentVal !== undefined && currentVal !== null)
+      ? currentVal
+      : (isText ? '' : (sec.type === 'swot' ? {} : []));
+    const valStr = isText ? String(resolved) : JSON.stringify(resolved, null, 2);
     const textarea = el('textarea', {
       className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-mono resize-y outline-none focus:ring-2 focus:ring-brand/30',
       rows: 14,
@@ -12906,8 +12911,8 @@ function renderAdminStrategy(container) {
     saveBtn.addEventListener('click', async () => {
       let parsed;
       try {
-        parsed = typeof currentVal === 'string' ? textarea.value : JSON.parse(textarea.value);
-      } catch { alert('Invalid JSON'); return; }
+        parsed = isText ? textarea.value : JSON.parse(textarea.value);
+      } catch { alert('Invalid JSON — please check the structure and try again.'); return; }
       await api.strategy.updateContent(strategyId, { section: sec.key, data: parsed, changeNote: `Edited: ${sec.label}` });
       overlay.remove();
       onSave();
@@ -12919,7 +12924,7 @@ function renderAdminStrategy(container) {
           el('h3', { className: 'font-black text-gray-900' }, 'Edit: ' + sec.label),
           el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: () => overlay.remove() }, '×')
         ),
-        el('p', { className: 'text-xs text-gray-400 mb-3' }, typeof currentVal !== 'string' ? 'Edit as JSON — keep the array/object structure.' : ''),
+        el('p', { className: 'text-xs text-gray-400 mb-3' }, isText ? '' : 'Edit as JSON — keep the array/object structure.'),
         textarea,
         el('div', { className: 'flex justify-end gap-3 mt-4' },
           el('button', { className: 'text-sm text-gray-500 px-4 py-2', onClick: () => overlay.remove() }, 'Cancel'),

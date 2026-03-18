@@ -67,18 +67,25 @@ ${results.map((r, i) => `${i + 1}. ${r.title}\n${r.snippet}\nURL: ${r.url}`).joi
 Return a JSON array. For each price found:
 {
   "storeName": "exact store name from the known stores list, or domain if unknown",
-  "pricePerUnit": number (price per single unit — calculate if pack price given),
-  "packSize": number or null (e.g. 5 for a 5kg bag),
-  "packPrice": number or null (total pack price in Rand),
+  "pricePerUnit": number,
+  "packSize": number or null,
+  "packPrice": number or null,
   "unitLabel": "kg/L/unit/etc",
   "url": "source URL",
   "rawSnippet": "relevant price text"
 }
 
-Rules:
-- Only include prices you are confident about (actual Rand amounts)
-- Normalise to price per unit (e.g. R149 for 12.5kg = R11.92/kg)
-- If the same store appears multiple times, keep the lowest price
+CRITICAL normalization rules — all prices MUST be comparable:
+- "pricePerUnit" MUST always be the price for exactly 1 base unit (1 kg, 1 L, 1 item)
+  - NEVER return the pack price as pricePerUnit
+  - Example: R149 for 12.5kg flour → pricePerUnit: 11.92, unitLabel: "kg", packSize: 12.5, packPrice: 149
+  - Example: R25 for 250g butter → pricePerUnit: 100, unitLabel: "kg", packSize: 0.25, packPrice: 25
+  - Example: R15.99 for 1kg sugar → pricePerUnit: 15.99, unitLabel: "kg", packSize: 1, packPrice: 15.99
+  - Example: R55 for 5L oil → pricePerUnit: 11, unitLabel: "L", packSize: 5, packPrice: 55
+- "unitLabel" must be the BASE unit (kg, L, unit) — NEVER the pack size (e.g. not "12.5kg bag")
+- All stores for the same product MUST use the same unitLabel so they are directly comparable
+- If the same store appears multiple times, keep the lowest pricePerUnit
+- Only include prices you are confident about (actual Rand amounts from the snippets)
 - Return [] if no clear prices found
 - Return ONLY valid JSON array, no explanation.`
 

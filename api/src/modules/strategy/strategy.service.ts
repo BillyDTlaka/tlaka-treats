@@ -254,7 +254,7 @@ export async function saveStrategyContent(
       version:     newVersion,
       contentJson: newContent,
       changeType:  'MANUAL_EDIT',
-      changeNote:  changeNote || patch.section ? `Edited: ${patch.section}` : 'Manual edit',
+      changeNote:  changeNote ?? (patch.section ? `Edited: ${patch.section}` : 'Manual edit'),
     },
   })
 
