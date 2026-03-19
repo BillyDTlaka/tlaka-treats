@@ -1,105 +1,98 @@
-import { useState } from 'react'
+import React, { useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity,
-  StyleSheet, Alert, KeyboardAvoidingView, Platform, ActivityIndicator
-} from 'react-native'
-import { router } from 'expo-router'
-import { authApi } from '../../services/api'
-import { useAuthStore } from '../../store/auth.store'
+  View, Text, TextInput, TouchableOpacity, StyleSheet,
+  KeyboardAvoidingView, Platform, ActivityIndicator, Alert, ScrollView,
+} from 'react-native';
+import { useAuth } from '../../context/AuthContext';
+import { COLORS, BRAND } from '../../lib/theme';
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [loading, setLoading] = useState(false)
-  const { setAuth } = useAuthStore()
+  const { login } = useAuth();
+  const [email, setEmail]       = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading]   = useState(false);
 
-  const handleLogin = async () => {
-    if (!email.trim() || !password) return Alert.alert('Error', 'Please fill in all fields')
-    setLoading(true)
+  async function handleLogin() {
+    if (!email.trim() || !password) {
+      Alert.alert('Error', 'Please enter your email and password.');
+      return;
+    }
+    setLoading(true);
     try {
-      const { token, user } = await authApi.login(email.trim().toLowerCase(), password)
-      await setAuth(token, user)
-      // Root layout will redirect based on role
-    } catch (err: any) {
-      // Distinguish network errors (no response) from server errors (e.g. 401)
-      if (!err?.response) {
-        Alert.alert(
-          'Cannot Reach Server',
-          'Check that the API is running and your phone is on the same WiFi network as your computer.'
-        )
-      } else {
-        Alert.alert('Login Failed', err.response.data?.message || 'Invalid email or password')
-      }
+      await login(email.trim().toLowerCase(), password);
+    } catch (e: any) {
+      Alert.alert('Login Failed', e?.response?.data?.message || 'Invalid credentials');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={styles.root}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.inner}>
-        <Text style={styles.logo}>🍪</Text>
-        <Text style={styles.title}>Tlaka Treats</Text>
-        <Text style={styles.subtitle}>Welcome back</Text>
+      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <View style={styles.header}>
+          <View style={styles.logo}>
+            <Text style={styles.logoText}>TT</Text>
+          </View>
+          <Text style={styles.title}>Tlaka Treats</Text>
+          <Text style={styles.subtitle}>Admin Portal</Text>
+        </View>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Email"
-          placeholderTextColor="#999"
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          placeholderTextColor="#999"
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          value={password}
-          onChangeText={setPassword}
-        />
+        <View style={styles.form}>
+          <Text style={styles.label}>Email</Text>
+          <TextInput
+            style={styles.input}
+            value={email}
+            onChangeText={setEmail}
+            placeholder="admin@tlakatreats.co.za"
+            placeholderTextColor={COLORS.gray400}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
 
-        <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading}>
-          {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Sign In</Text>}
-        </TouchableOpacity>
+          <Text style={styles.label}>Password</Text>
+          <TextInput
+            style={styles.input}
+            value={password}
+            onChangeText={setPassword}
+            placeholder="••••••••"
+            placeholderTextColor={COLORS.gray400}
+            secureTextEntry
+            onSubmitEditing={handleLogin}
+          />
 
-        <TouchableOpacity onPress={() => router.push('/(auth)/register')}>
-          <Text style={styles.link}>Don't have an account? <Text style={styles.linkBold}>Register</Text></Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={[styles.btn, loading && styles.btnDisabled]}
+            onPress={handleLogin}
+            disabled={loading}
+          >
+            {loading
+              ? <ActivityIndicator color="#fff" />
+              : <Text style={styles.btnText}>Sign In</Text>
+            }
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
     </KeyboardAvoidingView>
-  )
+  );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#8B3A3A' },
-  inner: { flex: 1, justifyContent: 'center', padding: 24 },
-  logo: { fontSize: 64, textAlign: 'center', marginBottom: 8 },
-  title: { fontSize: 32, fontWeight: '800', color: '#fff', textAlign: 'center' },
-  subtitle: { fontSize: 16, color: '#f5d0d0', textAlign: 'center', marginBottom: 40 },
-  input: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    marginBottom: 16,
-    color: '#1a1a1a',
-  },
-  button: {
-    backgroundColor: '#5C1A1A',
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  link: { textAlign: 'center', color: '#f5d0d0', fontSize: 14 },
-  linkBold: { fontWeight: '700', color: '#fff' },
-})
+  root:     { flex: 1, backgroundColor: COLORS.white },
+  scroll:   { flexGrow: 1, justifyContent: 'center', padding: 28 },
+  header:   { alignItems: 'center', marginBottom: 40 },
+  logo:     { width: 72, height: 72, borderRadius: 20, backgroundColor: BRAND, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  logoText: { color: '#fff', fontSize: 24, fontWeight: '900' },
+  title:    { fontSize: 26, fontWeight: '900', color: COLORS.gray900, marginBottom: 4 },
+  subtitle: { fontSize: 14, color: COLORS.gray500 },
+  form:     { gap: 8 },
+  label:    { fontSize: 12, fontWeight: '700', color: COLORS.gray500, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4, marginTop: 8 },
+  input:    { borderWidth: 1, borderColor: COLORS.gray200, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: COLORS.gray900, backgroundColor: COLORS.gray50 },
+  btn:      { backgroundColor: BRAND, borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 24 },
+  btnDisabled: { opacity: 0.7 },
+  btnText:  { color: '#fff', fontSize: 16, fontWeight: '800' },
+});

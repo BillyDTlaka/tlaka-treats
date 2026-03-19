@@ -1,38 +1,30 @@
 {
   "expo": {
-    "name": "Tlaka Treats",
-    "slug": "tlaka-treats",
+    "name": "Tlaka Treats Admin",
+    "slug": "tlaka-treats-admin",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "scheme": "ttadmin",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
       "backgroundColor": "#8B3A3A"
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "za.co.tlakatreats.app"
+      "bundleIdentifier": "co.za.tlakatreats.admin"
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#8B3A3A"
       },
-      "package": "za.co.tlakatreats.app"
+      "package": "co.za.tlakatreats.admin"
     },
     "plugins": [
       "expo-router",
       "expo-secure-store"
     ],
-    "scheme": "tlakatreats",
-    "extra": {
-      "apiUrl": "https://tlaka-treats-production.up.railway.app",
-      "router": {},
-      "eas": {
-        "projectId": "82c9a857-c74b-4ead-bf67-02306c03885a"
-      }
+    "experiments": {
+      "typedRoutes": true
     }
   }
 }

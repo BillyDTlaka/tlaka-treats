@@ -1,33 +1,40 @@
-import { useEffect } from 'react'
-import { Stack, router } from 'expo-router'
-import { useAuthStore, isAdmin, isAmbassador } from '../store/auth.store'
+import { useEffect } from 'react';
+import { Stack, useRouter, useSegments } from 'expo-router';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { StatusBar } from 'expo-status-bar';
+import { AuthProvider, useAuth } from '../context/AuthContext';
 
-export default function RootLayout() {
-  const { isLoading, user } = useAuthStore()
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { staleTime: 30000, retry: 1 } },
+});
 
-  // This effect runs whenever auth state changes (login, logout, token expiry).
-  // Because _layout.tsx is ALWAYS mounted, it will catch logout from any screen.
+function RootLayoutNav() {
+  const { user, isLoading } = useAuth();
+  const router  = useRouter();
+  const segments = useSegments();
+
   useEffect(() => {
-    if (isLoading) return
-
-    if (!user) {
-      router.replace('/(auth)/login')
-    } else if (isAdmin(user)) {
-      router.replace('/(admin)/overview')
-    } else if (isAmbassador(user)) {
-      router.replace('/(ambassador)/dashboard')
-    } else {
-      router.replace('/(customer)/home')
-    }
-  }, [isLoading, user])
+    if (isLoading) return;
+    const inAuth = segments[0] === '(auth)';
+    if (!user && !inAuth) router.replace('/(auth)/login');
+    if (user  &&  inAuth) router.replace('/(tabs)');
+  }, [user, isLoading, segments]);
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="index" />
       <Stack.Screen name="(auth)" />
-      <Stack.Screen name="(customer)" />
-      <Stack.Screen name="(ambassador)" />
-      <Stack.Screen name="(admin)" />
+      <Stack.Screen name="(tabs)" />
     </Stack>
-  )
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <StatusBar style="dark" />
+        <RootLayoutNav />
+      </AuthProvider>
+    </QueryClientProvider>
+  );
 }
