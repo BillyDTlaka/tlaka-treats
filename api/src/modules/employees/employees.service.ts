@@ -114,6 +114,10 @@ export class EmployeeService {
   }
 
   async update(id: string, data: Partial<{
+    firstName: string
+    lastName: string
+    email: string
+    phone: string
     jobTitle: string
     department: string
     departmentId: string | null
@@ -133,14 +137,21 @@ export class EmployeeService {
     const emp = await this.prisma.employee.findUnique({ where: { id } })
     if (!emp) throw new AppError('Employee not found', 404, 'NOT_FOUND')
 
+    const { firstName, lastName, email, phone, ...empData } = data
+
+    const userUpdate = (firstName !== undefined || lastName !== undefined || email !== undefined || phone !== undefined)
+      ? { user: { update: { ...(firstName !== undefined && { firstName }), ...(lastName !== undefined && { lastName }), ...(email !== undefined && { email }), ...(phone !== undefined && { phone }) } } }
+      : {}
+
     return this.prisma.employee.update({
       where: { id },
       data: {
-        ...data,
-        employmentType: data.employmentType as any,
-        status: data.status as any,
-        startDate: data.startDate ? new Date(data.startDate) : undefined,
-        endDate: data.endDate ? new Date(data.endDate) : undefined,
+        ...empData,
+        ...userUpdate,
+        employmentType: empData.employmentType as any,
+        status: empData.status as any,
+        startDate: empData.startDate ? new Date(empData.startDate) : undefined,
+        endDate: empData.endDate ? new Date(empData.endDate) : undefined,
       },
       include: this.employeeInclude,
     })
