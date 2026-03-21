@@ -489,4 +489,286 @@ export class EmployeeService {
       data: { status: 'PAID', processedAt: new Date(), financeTransactionId: finTx.id },
     })
   }
+
+  // ── Contracts ─────────────────────────────────────────────────────────────────
+
+  async listContracts(employeeId?: string) {
+    return this.prisma.employeeContract.findMany({
+      where: employeeId ? { employeeId } : undefined,
+      include: { employee: { include: { user: { select: { firstName: true, lastName: true } } } } },
+      orderBy: { startDate: 'desc' },
+    })
+  }
+
+  async createContract(employeeId: string, data: {
+    contractType: string
+    title: string
+    startDate: string
+    endDate?: string
+    grossSalary?: number
+    hourlyRate?: number
+    hoursPerWeek?: number
+    documentUrl?: string
+    notes?: string
+  }) {
+    // Auto-expire previous active contracts of same type
+    await this.prisma.employeeContract.updateMany({
+      where: { employeeId, status: 'ACTIVE' },
+      data: { status: 'EXPIRED' },
+    })
+    return this.prisma.employeeContract.create({
+      data: {
+        employeeId,
+        contractType: data.contractType as any,
+        title: data.title,
+        startDate: new Date(data.startDate),
+        endDate: data.endDate ? new Date(data.endDate) : null,
+        grossSalary: data.grossSalary ?? null,
+        hourlyRate: data.hourlyRate ?? null,
+        hoursPerWeek: data.hoursPerWeek ?? null,
+        documentUrl: data.documentUrl ?? null,
+        notes: data.notes ?? null,
+        status: 'ACTIVE',
+      },
+      include: { employee: { include: { user: { select: { firstName: true, lastName: true } } } } },
+    })
+  }
+
+  async updateContract(id: string, data: Partial<{
+    contractType: string
+    title: string
+    startDate: string
+    endDate: string | null
+    grossSalary: number | null
+    hourlyRate: number | null
+    hoursPerWeek: number | null
+    status: string
+    documentUrl: string | null
+    notes: string | null
+  }>) {
+    return this.prisma.employeeContract.update({
+      where: { id },
+      data: {
+        ...(data.contractType && { contractType: data.contractType as any }),
+        ...(data.title && { title: data.title }),
+        ...(data.startDate && { startDate: new Date(data.startDate) }),
+        ...(data.endDate !== undefined && { endDate: data.endDate ? new Date(data.endDate) : null }),
+        ...(data.grossSalary !== undefined && { grossSalary: data.grossSalary }),
+        ...(data.hourlyRate !== undefined && { hourlyRate: data.hourlyRate }),
+        ...(data.hoursPerWeek !== undefined && { hoursPerWeek: data.hoursPerWeek }),
+        ...(data.status && { status: data.status as any }),
+        ...(data.documentUrl !== undefined && { documentUrl: data.documentUrl }),
+        ...(data.notes !== undefined && { notes: data.notes }),
+      },
+      include: { employee: { include: { user: { select: { firstName: true, lastName: true } } } } },
+    })
+  }
+
+  async deleteContract(id: string) {
+    return this.prisma.employeeContract.delete({ where: { id } })
+  }
+
+  // ── Timesheets ────────────────────────────────────────────────────────────────
+
+  private getWeekBounds(weekStart: string) {
+    const ws = new Date(weekStart)
+    const we = new Date(ws)
+    we.setDate(ws.getDate() + 6)
+    return { ws, we }
+  }
+
+  async listTimesheets(filters: { employeeId?: string; status?: string; weekStart?: string }) {
+    return this.prisma.timesheet.findMany({
+      where: {
+        ...(filters.employeeId && { employeeId: filters.employeeId }),
+        ...(filters.status && { status: filters.status as any }),
+        ...(filters.weekStart && { weekStart: new Date(filters.weekStart) }),
+      },
+      include: {
+        employee: { include: { user: { select: { firstName: true, lastName: true } } } },
+        entries: { orderBy: { date: 'asc' } },
+      },
+      orderBy: { weekStart: 'desc' },
+    })
+  }
+
+  async getTimesheet(id: string) {
+    const ts = await this.prisma.timesheet.findUnique({
+      where: { id },
+      include: {
+        employee: { include: { user: { select: { firstName: true, lastName: true } } } },
+        entries: { orderBy: { date: 'asc' } },
+      },
+    })
+    if (!ts) throw new AppError('Timesheet not found', 404, 'NOT_FOUND')
+    return ts
+  }
+
+  async getOrCreateTimesheet(employeeId: string, weekStart: string) {
+    const { ws, we } = this.getWeekBounds(weekStart)
+    const existing = await this.prisma.timesheet.findUnique({
+      where: { employeeId_weekStart: { employeeId, weekStart: ws } },
+      include: { employee: { include: { user: { select: { firstName: true, lastName: true } } } }, entries: { orderBy: { date: 'asc' } } },
+    })
+    if (existing) return existing
+
+    // Auto-populate from completed shift assignments for that week
+    const assignments = await this.prisma.shiftAssignment.findMany({
+      where: { employeeId, date: { gte: ws, lte: we }, status: { in: ['COMPLETED', 'SCHEDULED'] } },
+      include: { shift: true },
+    })
+
+    const entries = assignments.map(a => {
+      const hours = Number(a.hoursWorked || 0) || this.calcHoursFromShift(a.shift)
+      return {
+        date: a.date,
+        hoursWorked: hours,
+        startTime: a.shift?.startTime ?? null,
+        endTime: a.shift?.endTime ?? null,
+        breakMins: a.shift?.breakMins ?? 0,
+        shiftAssignmentId: a.id,
+        description: a.shift?.name ?? null,
+      }
+    })
+
+    const totalHours = entries.reduce((s, e) => s + e.hoursWorked, 0)
+
+    return this.prisma.timesheet.create({
+      data: {
+        employeeId,
+        weekStart: ws,
+        weekEnd: we,
+        totalHours,
+        entries: { create: entries },
+      },
+      include: {
+        employee: { include: { user: { select: { firstName: true, lastName: true } } } },
+        entries: { orderBy: { date: 'asc' } },
+      },
+    })
+  }
+
+  private calcHoursFromShift(shift: { startTime: string; endTime: string; breakMins: number } | null) {
+    if (!shift) return 0
+    const [sh, sm] = shift.startTime.split(':').map(Number)
+    const [eh, em] = shift.endTime.split(':').map(Number)
+    const mins = (eh * 60 + em) - (sh * 60 + sm) - (shift.breakMins || 0)
+    return Math.max(0, Math.round(mins / 60 * 100) / 100)
+  }
+
+  async upsertTimesheetEntry(timesheetId: string, data: {
+    date: string
+    hoursWorked: number
+    startTime?: string
+    endTime?: string
+    breakMins?: number
+    description?: string
+  }) {
+    const ts = await this.prisma.timesheet.findUnique({ where: { id: timesheetId } })
+    if (!ts) throw new AppError('Timesheet not found', 404, 'NOT_FOUND')
+    if (ts.status === 'APPROVED') throw new AppError('Cannot edit an approved timesheet', 400, 'INVALID_STATE')
+
+    const date = new Date(data.date)
+    await this.prisma.timesheetEntry.upsert({
+      where: { timesheetId_date: { timesheetId, date } },
+      create: { timesheetId, date, hoursWorked: data.hoursWorked, startTime: data.startTime, endTime: data.endTime, breakMins: data.breakMins ?? 0, description: data.description },
+      update: { hoursWorked: data.hoursWorked, startTime: data.startTime, endTime: data.endTime, breakMins: data.breakMins ?? 0, description: data.description },
+    })
+
+    // Recalculate total
+    const entries = await this.prisma.timesheetEntry.findMany({ where: { timesheetId } })
+    const totalHours = entries.reduce((s, e) => s + Number(e.hoursWorked), 0)
+    return this.prisma.timesheet.update({
+      where: { id: timesheetId },
+      data: { totalHours },
+      include: { employee: { include: { user: { select: { firstName: true, lastName: true } } } }, entries: { orderBy: { date: 'asc' } } },
+    })
+  }
+
+  async submitTimesheet(id: string) {
+    const ts = await this.prisma.timesheet.findUnique({ where: { id } })
+    if (!ts) throw new AppError('Timesheet not found', 404, 'NOT_FOUND')
+    if (ts.status !== 'DRAFT') throw new AppError('Only DRAFT timesheets can be submitted', 400, 'INVALID_STATE')
+    return this.prisma.timesheet.update({ where: { id }, data: { status: 'SUBMITTED', submittedAt: new Date() } })
+  }
+
+  async approveTimesheet(id: string, approverId: string) {
+    const ts = await this.prisma.timesheet.findUnique({ where: { id } })
+    if (!ts) throw new AppError('Timesheet not found', 404, 'NOT_FOUND')
+    if (ts.status !== 'SUBMITTED') throw new AppError('Only SUBMITTED timesheets can be approved', 400, 'INVALID_STATE')
+    return this.prisma.timesheet.update({ where: { id }, data: { status: 'APPROVED', approvedAt: new Date(), approvedBy: approverId } })
+  }
+
+  async rejectTimesheet(id: string) {
+    const ts = await this.prisma.timesheet.findUnique({ where: { id } })
+    if (!ts) throw new AppError('Timesheet not found', 404, 'NOT_FOUND')
+    if (ts.status !== 'SUBMITTED') throw new AppError('Only SUBMITTED timesheets can be rejected', 400, 'INVALID_STATE')
+    return this.prisma.timesheet.update({ where: { id }, data: { status: 'DRAFT' } })
+  }
+
+  // Updated generatePayroll: prefers approved timesheets, falls back to shift assignments
+  async generatePayrollFromTimesheets(period: string) {
+    const [year, month] = period.split('-').map(Number)
+    const from = new Date(year, month - 1, 1)
+    const to = new Date(year, month, 0)
+
+    // Get approved timesheets that overlap this period
+    const timesheets = await this.prisma.timesheet.findMany({
+      where: {
+        status: 'APPROVED',
+        weekStart: { lte: to },
+        weekEnd: { gte: from },
+      },
+      include: { employee: true, entries: true },
+    })
+
+    const byEmployee: Record<string, { emp: any; hours: number }> = {}
+    for (const ts of timesheets) {
+      // Only count entries within the period
+      for (const entry of ts.entries) {
+        const d = new Date(entry.date)
+        if (d < from || d > to) continue
+        if (!byEmployee[ts.employeeId]) byEmployee[ts.employeeId] = { emp: ts.employee, hours: 0 }
+        byEmployee[ts.employeeId].hours += Number(entry.hoursWorked)
+      }
+    }
+
+    // Fallback: completed shifts for employees without approved timesheets
+    const assignments = await this.prisma.shiftAssignment.findMany({
+      where: { date: { gte: from, lte: to }, status: 'COMPLETED', hoursWorked: { not: null } },
+      include: { employee: true },
+    })
+    for (const a of assignments) {
+      if (byEmployee[a.employeeId]) continue // already covered by timesheet
+      if (!byEmployee[a.employeeId]) byEmployee[a.employeeId] = { emp: a.employee, hours: 0 }
+      byEmployee[a.employeeId].hours += Number(a.hoursWorked || 0)
+    }
+
+    const items: { employeeId: string; hoursWorked: number; grossPay: number; deductions: number; netPay: number }[] = []
+
+    for (const { emp, hours } of Object.values(byEmployee)) {
+      const rate = Number(emp.hourlyRate || 0)
+      const gross = Math.round(hours * rate * 100) / 100
+      if (gross > 0) items.push({ employeeId: emp.id, hoursWorked: hours, grossPay: gross, deductions: 0, netPay: gross })
+    }
+
+    // Salaried employees
+    const salaried = await this.prisma.employee.findMany({
+      where: { status: 'ACTIVE', monthlyRate: { not: null }, hourlyRate: null },
+    })
+    for (const emp of salaried) {
+      if (!byEmployee[emp.id]) {
+        const gross = Number(emp.monthlyRate || 0)
+        items.push({ employeeId: emp.id, hoursWorked: 0, grossPay: gross, deductions: 0, netPay: gross })
+      }
+    }
+
+    const totalGross = items.reduce((s, i) => s + i.grossPay, 0)
+    const totalNet   = items.reduce((s, i) => s + i.netPay, 0)
+
+    return this.prisma.payrollRun.create({
+      data: { period, totalGross, totalNet, items: { create: items } },
+      include: { items: { include: { employee: { include: { user: { select: { firstName: true, lastName: true } } } } } } },
+    })
+  }
 }

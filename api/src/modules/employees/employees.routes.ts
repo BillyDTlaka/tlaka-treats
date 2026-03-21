@@ -132,7 +132,7 @@ const employeeRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post('/payroll', { preHandler: [authenticate, authorize('manage', 'employee')] }, async (req, reply) => {
     const { period } = req.body as { period: string }
-    const run = await svc.generatePayroll(period)
+    const run = await svc.generatePayrollFromTimesheets(period)
     return reply.code(201).send(run)
   })
 
@@ -150,6 +150,69 @@ const employeeRoutes: FastifyPluginAsync = async (fastify) => {
     const { id } = req.params as { id: string }
     const { wagesAccountId } = (req.body as any) || {}
     return svc.processPayroll(id, wagesAccountId)
+  })
+
+  // ── Contracts ────────────────────────────────────────────────────────────────
+
+  fastify.get('/contracts', { preHandler: [authenticate] }, async (req) => {
+    const { employeeId } = req.query as { employeeId?: string }
+    return svc.listContracts(employeeId)
+  })
+
+  fastify.post('/:id/contracts', { preHandler: [authenticate, authorize('manage', 'employee')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const contract = await svc.createContract(id, req.body as any)
+    return reply.code(201).send(contract)
+  })
+
+  fastify.patch('/contracts/:id', { preHandler: [authenticate, authorize('manage', 'employee')] }, async (req) => {
+    const { id } = req.params as { id: string }
+    return svc.updateContract(id, req.body as any)
+  })
+
+  fastify.delete('/contracts/:id', { preHandler: [authenticate, authorize('manage', 'employee')] }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    await svc.deleteContract(id)
+    return reply.code(204).send()
+  })
+
+  // ── Timesheets ───────────────────────────────────────────────────────────────
+
+  fastify.get('/timesheets', { preHandler: [authenticate] }, async (req) => {
+    const { employeeId, status, weekStart } = req.query as { employeeId?: string; status?: string; weekStart?: string }
+    return svc.listTimesheets({ employeeId, status, weekStart })
+  })
+
+  fastify.post('/timesheets', { preHandler: [authenticate] }, async (req, reply) => {
+    const { employeeId, weekStart } = req.body as { employeeId: string; weekStart: string }
+    const ts = await svc.getOrCreateTimesheet(employeeId, weekStart)
+    return reply.code(201).send(ts)
+  })
+
+  fastify.get('/timesheets/:id', { preHandler: [authenticate] }, async (req) => {
+    const { id } = req.params as { id: string }
+    return svc.getTimesheet(id)
+  })
+
+  fastify.post('/timesheets/:id/entries', { preHandler: [authenticate] }, async (req) => {
+    const { id } = req.params as { id: string }
+    return svc.upsertTimesheetEntry(id, req.body as any)
+  })
+
+  fastify.post('/timesheets/:id/submit', { preHandler: [authenticate] }, async (req) => {
+    const { id } = req.params as { id: string }
+    return svc.submitTimesheet(id)
+  })
+
+  fastify.post('/timesheets/:id/approve', { preHandler: [authenticate, authorize('manage', 'employee')] }, async (req) => {
+    const { id } = req.params as { id: string }
+    const user = (req as any).user
+    return svc.approveTimesheet(id, user?.id)
+  })
+
+  fastify.post('/timesheets/:id/reject', { preHandler: [authenticate, authorize('manage', 'employee')] }, async (req) => {
+    const { id } = req.params as { id: string }
+    return svc.rejectTimesheet(id)
   })
 }
 

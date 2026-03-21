@@ -766,6 +766,27 @@ enum QualificationStatus {
   REVOKED
 }
 
+enum ContractType {
+  PERMANENT
+  FIXED_TERM
+  CASUAL
+  INDEPENDENT_CONTRACTOR
+}
+
+enum ContractStatus {
+  ACTIVE
+  PENDING
+  EXPIRED
+  TERMINATED
+}
+
+enum TimesheetStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
 model Employee {
   id             String         @id @default(cuid())
   userId         String         @unique
@@ -797,6 +818,8 @@ model Employee {
   leaveRequests  LeaveRequest[]
   payrollItems   PayrollItem[]
   qualifications EmployeeQualification[]
+  contracts      EmployeeContract[]
+  timesheets     Timesheet[]
   tasks          Task[]
 }
 
@@ -814,6 +837,60 @@ model EmployeeQualification {
   notes       String?
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
+}
+
+model EmployeeContract {
+  id           String         @id @default(cuid())
+  employeeId   String
+  employee     Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  contractType ContractType
+  title        String
+  startDate    DateTime       @db.Date
+  endDate      DateTime?      @db.Date
+  grossSalary  Decimal?       @db.Decimal(10, 2)
+  hourlyRate   Decimal?       @db.Decimal(10, 2)
+  hoursPerWeek Int?
+  status       ContractStatus @default(ACTIVE)
+  documentUrl  String?
+  notes        String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
+model Timesheet {
+  id          String          @id @default(cuid())
+  employeeId  String
+  employee    Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  weekStart   DateTime        @db.Date
+  weekEnd     DateTime        @db.Date
+  totalHours  Decimal         @default(0) @db.Decimal(5, 2)
+  status      TimesheetStatus @default(DRAFT)
+  submittedAt DateTime?
+  approvedAt  DateTime?
+  approvedBy  String?
+  notes       String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  entries TimesheetEntry[]
+
+  @@unique([employeeId, weekStart])
+}
+
+model TimesheetEntry {
+  id                String    @id @default(cuid())
+  timesheetId       String
+  timesheet         Timesheet @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+  date              DateTime  @db.Date
+  hoursWorked       Decimal   @db.Decimal(5, 2)
+  startTime         String?
+  endTime           String?
+  breakMins         Int       @default(0)
+  shiftAssignmentId String?
+  description       String?
+  createdAt         DateTime  @default(now())
+
+  @@unique([timesheetId, date])
 }
 
 model Shift {
