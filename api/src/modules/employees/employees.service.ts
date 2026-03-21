@@ -139,15 +139,24 @@ export class EmployeeService {
 
     const { firstName, lastName, email, phone, ...empData } = data
 
-    const userUpdate = (firstName !== undefined || lastName !== undefined || email !== undefined || phone !== undefined)
-      ? { user: { update: { ...(firstName !== undefined && { firstName }), ...(lastName !== undefined && { lastName }), ...(email !== undefined && { email }), ...(phone !== undefined && { phone }) } } }
-      : {}
+    // Update user fields separately to avoid Prisma type conflict between
+    // relational (user.update) and scalar FK (departmentId: null) inputs
+    if (firstName !== undefined || lastName !== undefined || email !== undefined || phone !== undefined) {
+      await this.prisma.user.update({
+        where: { id: emp.userId },
+        data: {
+          ...(firstName !== undefined && { firstName }),
+          ...(lastName !== undefined && { lastName }),
+          ...(email !== undefined && { email }),
+          ...(phone !== undefined && { phone }),
+        },
+      })
+    }
 
     return this.prisma.employee.update({
       where: { id },
       data: {
         ...empData,
-        ...userUpdate,
         employmentType: empData.employmentType as any,
         status: empData.status as any,
         startDate: empData.startDate ? new Date(empData.startDate) : undefined,
