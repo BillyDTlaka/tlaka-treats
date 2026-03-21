@@ -3849,6 +3849,30 @@ function renderAdminPeople(container) {
     }
   }
 
+  // shared overlay helper used by Contracts / Qualifications / Timesheets
+  function peopleOverlay(title, bodyEl, onSave, saveLabel) {
+    const ov = el('div', { className: 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto' });
+    const close = () => ov.remove();
+    const saveBtn = el('button', {
+      className: 'bg-brand text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90',
+      onClick: () => onSave(close),
+    }, saveLabel || 'Save');
+    ov.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl my-4' },
+      el('div', { className: 'flex justify-between items-center mb-5' },
+        el('h3', { className: 'font-black text-gray-900' }, title),
+        el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl leading-none', onClick: close }, '×')
+      ),
+      bodyEl,
+      el('div', { className: 'flex justify-end gap-3 mt-5' },
+        el('button', { className: 'text-sm text-gray-500 px-4 py-2 rounded-xl hover:bg-gray-50', onClick: close }, 'Cancel'),
+        saveBtn,
+      )
+    ));
+    ov.addEventListener('click', e => { if (e.target === ov) close(); });
+    document.body.append(ov);
+    return close;
+  }
+
   // ── CONTRACTS ──────────────────────────────────────────────────────────────
   function renderContractsSection() {
     const page = el('div', { className: 'max-w-4xl' });
@@ -3865,19 +3889,17 @@ function renderAdminPeople(container) {
     async function load() {
       page.innerHTML = '<div class="text-gray-400 text-sm">Loading…</div>';
       let contracts = [], employees = [];
-      try { [contracts, employees] = await Promise.all([api.employees.listContracts(), api.employees.list({ status: 'ACTIVE' })]); }
+      try { [contracts, employees] = await Promise.all([api.employees.listContracts(), api.employees.list()]); }
       catch(e) { page.innerHTML = `<p class="text-red-500 text-sm">${e.message}</p>`; return; }
 
       page.innerHTML = '';
-
-      const header = el('div', { className: 'flex justify-between items-center mb-4' },
+      page.append(el('div', { className: 'flex justify-between items-center mb-4' },
         el('h2', { className: 'text-lg font-bold text-gray-800' }, 'Contracts'),
         el('button', { className: 'btn-primary text-sm px-4 py-2', onClick: () => openContractModal(null, employees) }, '+ New Contract')
-      );
-      page.append(header);
+      ));
 
       if (!contracts.length) {
-        page.append(el('div', { className: 'text-center py-16 text-gray-400' }, 'No contracts yet. Add a contract to get started.'));
+        page.append(el('div', { className: 'text-center py-16 text-gray-400 text-sm' }, 'No contracts yet.'));
         return;
       }
 
@@ -3885,95 +3907,86 @@ function renderAdminPeople(container) {
       contracts.forEach(c => {
         const name = `${c.employee?.user?.firstName || ''} ${c.employee?.user?.lastName || ''}`.trim();
         const sc = CONTRACT_STATUS_COLOURS[c.status] || 'bg-gray-100 text-gray-600';
-        const endLabel = c.endDate ? new Date(c.endDate).toLocaleDateString('en-ZA') : 'No end date';
-        const card = el('div', { className: 'bg-white border border-gray-100 rounded-xl p-4 flex items-center justify-between gap-4' },
+        const endLabel = c.endDate ? new Date(c.endDate).toLocaleDateString('en-ZA') : 'Open-ended';
+        list.append(el('div', { className: 'bg-white border border-gray-100 rounded-xl p-4 flex items-center justify-between gap-4' },
           el('div', { className: 'flex-1 min-w-0' },
             el('div', { className: 'flex items-center gap-2 mb-1' },
               el('span', { className: 'font-semibold text-gray-900 text-sm' }, name),
               el('span', { className: `text-xs px-2 py-0.5 rounded-full font-medium ${sc}` }, c.status),
-              el('span', { className: 'text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 font-medium' }, c.contractType.replace('_', ' '))
+              el('span', { className: 'text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 font-medium' }, c.contractType.replace(/_/g,' '))
             ),
-            el('div', { className: 'text-sm text-gray-600 font-medium' }, c.title),
-            el('div', { className: 'text-xs text-gray-400 mt-1' },
+            el('div', { className: 'text-sm text-gray-700 font-medium' }, c.title),
+            el('div', { className: 'text-xs text-gray-400 mt-0.5' },
               `${new Date(c.startDate).toLocaleDateString('en-ZA')} → ${endLabel}` +
-              (c.grossSalary ? `  ·  R${Number(c.grossSalary).toLocaleString('en-ZA')} gross` : '') +
-              (c.hourlyRate ? `  ·  R${Number(c.hourlyRate).toFixed(2)}/hr` : '') +
+              (c.grossSalary ? `  ·  R${Number(c.grossSalary).toLocaleString('en-ZA')}/mo` : '') +
+              (c.hourlyRate  ? `  ·  R${Number(c.hourlyRate).toFixed(2)}/hr` : '') +
               (c.hoursPerWeek ? `  ·  ${c.hoursPerWeek}h/wk` : '')
             )
           ),
-          el('div', { className: 'flex gap-2' },
+          el('div', { className: 'flex gap-3' },
             el('button', { className: 'text-xs text-brand hover:underline', onClick: () => openContractModal(c, employees) }, 'Edit'),
             el('button', { className: 'text-xs text-red-400 hover:text-red-600', onClick: async () => {
               if (!confirm('Delete this contract?')) return;
-              try { await api.employees.deleteContract(c.id); load(); toast('Contract deleted', 'success'); }
-              catch(e) { toast(e.message, 'error'); }
+              try { await api.employees.deleteContract(c.id); load(); toast('Deleted', 'success'); }
+              catch(ex) { toast(ex.message, 'error'); }
             }}, 'Delete')
           )
-        );
-        list.append(card);
+        ));
       });
       page.append(list);
     }
 
     function openContractModal(c, employees) {
       const isNew = !c;
-      const fld = (label, key, type, val) => el('div', {},
-        el('label', { className: 'block text-xs font-medium text-gray-600 mb-1' }, label),
-        el('input', { id: 'cm_'+key, type: type||'text', value: val||'', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm' })
-      );
-      const v = (key) => document.getElementById('cm_'+key)?.value;
+      const inp = (lbl, type, val) => {
+        const i = el('input', { type: type || 'text', value: val != null ? val : '', className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30' });
+        return { wrap: el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, lbl), i), inp: i };
+      };
+      const sel = (lbl, opts, val) => {
+        const s = el('select', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none' });
+        opts.forEach(([v,t]) => s.append(el('option', { value: v }, t)));
+        if (val) s.value = val;
+        return { wrap: el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, lbl), s), sel: s };
+      };
 
-      const empSel = el('select', { id: 'cm_emp', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm' });
-      employees.forEach(e => { const o = document.createElement('option'); o.value = e.id; o.textContent = `${e.user?.firstName} ${e.user?.lastName}`; empSel.append(o); });
-      if (c) empSel.value = c.employeeId;
+      const empSel = sel('Employee', employees.map(e => [e.id, `${e.user?.firstName} ${e.user?.lastName}`]), c?.employeeId);
+      const typeSel = sel('Contract Type', CONTRACT_TYPES.map(t => [t, t.replace(/_/g,' ')]), c?.contractType);
+      const titleInp = inp('Job Title / Role', 'text', c?.title);
+      const startInp = inp('Start Date', 'date', c?.startDate ? c.startDate.slice(0,10) : '');
+      const endInp   = inp('End Date', 'date', c?.endDate ? c.endDate.slice(0,10) : '');
+      const salaryInp = inp('Gross Salary (R/month)', 'number', c?.grossSalary);
+      const rateInp   = inp('Hourly Rate (R)', 'number', c?.hourlyRate);
+      const hoursInp  = inp('Hours/Week', 'number', c?.hoursPerWeek);
+      const notesInp  = inp('Notes', 'text', c?.notes);
+      const statusSel = sel('Status', ['ACTIVE','PENDING','EXPIRED','TERMINATED'].map(s => [s,s]), c?.status || 'ACTIVE');
 
-      const typeSel = el('select', { id: 'cm_type', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm' });
-      CONTRACT_TYPES.forEach(t => { const o = document.createElement('option'); o.value = t; o.textContent = t.replace('_',' '); typeSel.append(o); });
-      if (c) typeSel.value = c.contractType;
-
-      const statusSel = el('select', { id: 'cm_status', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm' });
-      ['ACTIVE','PENDING','EXPIRED','TERMINATED'].forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; statusSel.append(o); });
-      if (c) statusSel.value = c.status;
-
-      const body = el('div', { className: 'space-y-3' },
-        el('div', {}, el('label', { className: 'block text-xs font-medium text-gray-600 mb-1' }, 'Employee'), empSel),
-        el('div', {}, el('label', { className: 'block text-xs font-medium text-gray-600 mb-1' }, 'Contract Type'), typeSel),
-        fld('Job Title / Role', 'title', 'text', c?.title),
-        el('div', { className: 'grid grid-cols-2 gap-3' },
-          fld('Start Date', 'start', 'date', c?.startDate ? c.startDate.split('T')[0] : ''),
-          fld('End Date', 'end', 'date', c?.endDate ? c.endDate.split('T')[0] : ''),
-        ),
-        el('div', { className: 'grid grid-cols-3 gap-3' },
-          fld('Gross Salary (R)', 'salary', 'number', c?.grossSalary),
-          fld('Hourly Rate (R)', 'rate', 'number', c?.hourlyRate),
-          fld('Hours/Week', 'hours', 'number', c?.hoursPerWeek),
-        ),
-        !isNew ? el('div', {}, el('label', { className: 'block text-xs font-medium text-gray-600 mb-1' }, 'Status'), statusSel) : null,
-        fld('Notes', 'notes', 'text', c?.notes),
+      const bodyEl = el('div', { className: 'space-y-3' },
+        empSel.wrap, typeSel.wrap, titleInp.wrap,
+        el('div', { className: 'grid grid-cols-2 gap-3' }, startInp.wrap, endInp.wrap),
+        el('div', { className: 'grid grid-cols-3 gap-3' }, salaryInp.wrap, rateInp.wrap, hoursInp.wrap),
+        statusSel.wrap, notesInp.wrap,
       );
 
-      openModal({ title: isNew ? 'New Contract' : 'Edit Contract', body, footer: el('div', { className: 'flex gap-2 justify-end' },
-        el('button', { className: 'btn-secondary', onClick: closeModal }, 'Cancel'),
-        el('button', { className: 'btn-primary', onClick: async () => {
-          const empId = empSel.value;
-          const data = {
-            contractType: typeSel.value,
-            title: v('title'),
-            startDate: v('start'),
-            endDate: v('end') || undefined,
-            grossSalary: v('salary') ? Number(v('salary')) : undefined,
-            hourlyRate: v('rate') ? Number(v('rate')) : undefined,
-            hoursPerWeek: v('hours') ? Number(v('hours')) : undefined,
-            notes: v('notes') || undefined,
-          };
-          if (!data.title || !data.startDate) { toast('Title and start date required', 'error'); return; }
-          try {
-            if (isNew) await api.employees.createContract(empId, data);
-            else await api.employees.updateContract(c.id, { ...data, status: statusSel.value });
-            closeModal(); load(); toast(isNew ? 'Contract created' : 'Contract updated', 'success');
-          } catch(e) { toast(e.message, 'error'); }
-        }}, isNew ? 'Create' : 'Save')
-      )});
+      peopleOverlay(isNew ? 'New Contract' : 'Edit Contract', bodyEl, async (close) => {
+        const data = {
+          contractType: typeSel.sel.value,
+          title: titleInp.inp.value.trim(),
+          startDate: startInp.inp.value,
+          endDate: endInp.inp.value || undefined,
+          grossSalary: salaryInp.inp.value ? Number(salaryInp.inp.value) : undefined,
+          hourlyRate: rateInp.inp.value ? Number(rateInp.inp.value) : undefined,
+          hoursPerWeek: hoursInp.inp.value ? Number(hoursInp.inp.value) : undefined,
+          notes: notesInp.inp.value || undefined,
+          status: statusSel.sel.value,
+        };
+        if (!data.title) { toast('Job title required', 'error'); return; }
+        if (!data.startDate) { toast('Start date required', 'error'); return; }
+        try {
+          if (isNew) await api.employees.createContract(empSel.sel.value, data);
+          else await api.employees.updateContract(c.id, data);
+          close(); load(); toast(isNew ? 'Contract created' : 'Contract updated', 'success');
+        } catch(ex) { toast(ex.message, 'error'); }
+      }, isNew ? 'Create Contract' : 'Save Changes');
     }
 
     load();
@@ -3992,64 +4005,69 @@ function renderAdminPeople(container) {
     };
     const QUAL_TYPES = ['QUALIFICATION','CERTIFICATION','LICENCE','TRAINING','OTHER'];
 
+    let allEmployees = [];
+    const listWrap = el('div');
+
     async function load() {
       page.innerHTML = '<div class="text-gray-400 text-sm">Loading…</div>';
-      let expiring = [], employees = [];
+      let expiring = [];
       try {
-        [expiring, employees] = await Promise.all([
+        [expiring, allEmployees] = await Promise.all([
           api.employees.expiringQuals(60),
-          api.employees.list({ status: 'ACTIVE' }),
+          api.employees.list(),
         ]);
       } catch(e) { page.innerHTML = `<p class="text-red-500 text-sm">${e.message}</p>`; return; }
 
       page.innerHTML = '';
 
-      // Expiring alert
       if (expiring.length) {
-        const alert = el('div', { className: 'mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800' },
-          el('strong', {}, `⚠️ ${expiring.length} qualification${expiring.length > 1 ? 's' : ''} expiring within 60 days`),
+        page.append(el('div', { className: 'mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800' },
+          el('strong', {}, `⚠️ ${expiring.length} qualification${expiring.length !== 1 ? 's' : ''} expiring within 60 days`),
           el('ul', { className: 'mt-2 space-y-1 list-disc list-inside text-xs' },
             ...expiring.map(q => el('li', {}, `${q.name} — ${q.employee?.user?.firstName} ${q.employee?.user?.lastName} (expires ${q.expiryDate ? new Date(q.expiryDate).toLocaleDateString('en-ZA') : 'soon'})`))
           )
-        );
-        page.append(alert);
+        ));
       }
 
-      const header = el('div', { className: 'flex justify-between items-center mb-4' },
-        el('h2', { className: 'text-lg font-bold text-gray-800' }, 'Qualifications & Certifications'),
-        el('div', { className: 'flex gap-2 items-center' },
-          el('select', { id: 'qual_emp_filter', className: 'border border-gray-200 rounded-lg px-2 py-1.5 text-sm', onChange: () => loadForEmployee() },
-            el('option', { value: '' }, 'All Employees'),
-            ...employees.map(e => { const o = document.createElement('option'); o.value = e.id; o.textContent = `${e.user?.firstName} ${e.user?.lastName}`; return o; })
-          ),
-          el('button', { className: 'btn-primary text-sm px-4 py-2', onClick: () => openQualModal(null, employees) }, '+ Add Qualification')
-        )
+      const empFilterSel = el('select', { className: 'border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none', onChange: () => loadList() });
+      empFilterSel.append(el('option', { value: '' }, 'All Employees'));
+      allEmployees.forEach(e => empFilterSel.append(el('option', { value: e.id }, `${e.user?.firstName} ${e.user?.lastName}`)));
+
+      page.append(
+        el('div', { className: 'flex justify-between items-center mb-4' },
+          el('h2', { className: 'text-lg font-bold text-gray-800' }, 'Qualifications & Certifications'),
+          el('div', { className: 'flex gap-2 items-center' },
+            empFilterSel,
+            el('button', { className: 'btn-primary text-sm px-4 py-2', onClick: () => openQualModal(null, null) }, '+ Add')
+          )
+        ),
+        listWrap
       );
-      page.append(header);
 
-      const listWrap = el('div');
-      page.append(listWrap);
+      loadList();
 
-      async function loadForEmployee() {
-        const empId = document.getElementById('qual_emp_filter')?.value || '';
-        listWrap.innerHTML = '<div class="text-gray-400 text-sm">Loading…</div>';
-        let emps = empId ? [employees.find(e => e.id === empId)].filter(Boolean) : employees;
-        // Fetch full employee details for qualifications
-        if (empId) {
-          try { const full = await api.employees.getById(empId); emps = [full]; } catch(_) {}
-        } else {
-          const all = await Promise.all(employees.map(e => api.employees.getById(e.id).catch(() => null)));
-          emps = all.filter(Boolean);
-        }
+      async function loadList() {
+        listWrap.innerHTML = '<div class="text-gray-400 text-sm py-4">Loading…</div>';
+        const empId = empFilterSel.value;
+        let emps;
+        try {
+          if (empId) {
+            emps = [await api.employees.getById(empId)];
+          } else {
+            emps = await Promise.all(allEmployees.map(e => api.employees.getById(e.id).catch(() => null)));
+            emps = emps.filter(Boolean);
+          }
+        } catch(ex) { listWrap.innerHTML = `<p class="text-red-500 text-sm">${ex.message}</p>`; return; }
+
+        const quals = emps.flatMap(e => (e.qualifications || []).map(q => ({ ...q, empName: `${e.user?.firstName} ${e.user?.lastName}`, empId: e.id })));
         listWrap.innerHTML = '';
-        const allQuals = emps.flatMap(e => (e.qualifications || []).map(q => ({ ...q, empName: `${e.user?.firstName} ${e.user?.lastName}`, empId: e.id })));
-        if (!allQuals.length) { listWrap.append(el('div', { className: 'text-center py-12 text-gray-400 text-sm' }, 'No qualifications found.')); return; }
+        if (!quals.length) { listWrap.append(el('div', { className: 'text-center py-12 text-gray-400 text-sm' }, 'No qualifications found.')); return; }
+        quals.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-        allQuals.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
         const list = el('div', { className: 'space-y-2' });
-        allQuals.forEach(q => {
-          const sc = QUAL_STATUS_COLOURS[q.status] || 'bg-gray-100 text-gray-600';
-          const row = el('div', { className: 'bg-white border border-gray-100 rounded-xl p-3 flex items-center justify-between gap-4' },
+        quals.forEach(q => {
+          const sc = QUAL_STATUS_COLOURS[q.status] || 'bg-gray-100';
+          list.append(el('div', { className: 'bg-white border border-gray-100 rounded-xl p-3 flex items-center justify-between gap-4' },
             el('div', { className: 'flex-1 min-w-0' },
               el('div', { className: 'flex items-center gap-2 flex-wrap' },
                 el('span', { className: 'font-medium text-sm text-gray-900' }, q.name),
@@ -4058,75 +4076,68 @@ function renderAdminPeople(container) {
               ),
               el('div', { className: 'text-xs text-gray-400 mt-0.5' },
                 q.empName +
-                (q.issuedBy ? ` · Issued by ${q.issuedBy}` : '') +
+                (q.issuedBy ? ` · ${q.issuedBy}` : '') +
                 (q.expiryDate ? ` · Expires ${new Date(q.expiryDate).toLocaleDateString('en-ZA')}` : '')
               )
             ),
-            el('div', { className: 'flex gap-2' },
-              el('button', { className: 'text-xs text-brand hover:underline', onClick: () => openQualModal(q, employees, q.empId) }, 'Edit'),
+            el('div', { className: 'flex gap-3' },
+              el('button', { className: 'text-xs text-brand hover:underline', onClick: () => openQualModal(q, q.empId) }, 'Edit'),
               el('button', { className: 'text-xs text-red-400 hover:text-red-600', onClick: async () => {
-                if (!confirm('Delete this qualification?')) return;
-                try { await api.employees.deleteQual(q.empId, q.id); loadForEmployee(); toast('Deleted', 'success'); }
-                catch(e) { toast(e.message, 'error'); }
+                if (!confirm('Delete?')) return;
+                try { await api.employees.deleteQual(q.empId, q.id); loadList(); toast('Deleted', 'success'); }
+                catch(ex) { toast(ex.message, 'error'); }
               }}, 'Delete')
             )
-          );
-          list.append(row);
+          ));
         });
         listWrap.append(list);
       }
-
-      loadForEmployee();
     }
 
-    function openQualModal(q, employees, preEmpId) {
+    function openQualModal(q, preEmpId) {
       const isNew = !q;
-      const fld = (label, key, type, val) => el('div', {},
-        el('label', { className: 'block text-xs font-medium text-gray-600 mb-1' }, label),
-        el('input', { id: 'qm_'+key, type: type||'text', value: val||'', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm' })
-      );
-      const v = (key) => document.getElementById('qm_'+key)?.value;
-
-      const empSel = el('select', { id: 'qm_emp', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm' });
-      employees.forEach(e => { const o = document.createElement('option'); o.value = e.id; o.textContent = `${e.user?.firstName} ${e.user?.lastName}`; empSel.append(o); });
+      const empSel = el('select', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none' });
+      allEmployees.forEach(e => empSel.append(el('option', { value: e.id }, `${e.user?.firstName} ${e.user?.lastName}`)));
       if (preEmpId) empSel.value = preEmpId;
 
-      const typeSel = el('select', { id: 'qm_type', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm' });
-      QUAL_TYPES.forEach(t => { const o = document.createElement('option'); o.value = t; o.textContent = t; typeSel.append(o); });
+      const typeSel = el('select', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none' });
+      QUAL_TYPES.forEach(t => typeSel.append(el('option', { value: t }, t)));
       if (q) typeSel.value = q.type;
 
-      const body = el('div', { className: 'space-y-3' },
-        el('div', {}, el('label', { className: 'block text-xs font-medium text-gray-600 mb-1' }, 'Employee'), empSel),
-        el('div', {}, el('label', { className: 'block text-xs font-medium text-gray-600 mb-1' }, 'Type'), typeSel),
-        fld('Name / Title', 'name', 'text', q?.name),
-        fld('Issued By', 'issuedBy', 'text', q?.issuedBy),
-        el('div', { className: 'grid grid-cols-2 gap-3' },
-          fld('Issue Date', 'issueDate', 'date', q?.issueDate ? q.issueDate.split('T')[0] : ''),
-          fld('Expiry Date', 'expiryDate', 'date', q?.expiryDate ? q.expiryDate.split('T')[0] : ''),
-        ),
-        fld('Notes', 'notes', 'text', q?.notes),
+      const inp = (lbl, type, val) => {
+        const i = el('input', { type: type||'text', value: val||'', className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30' });
+        return { wrap: el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, lbl), i), inp: i };
+      };
+      const nameInp     = inp('Name / Title', 'text', q?.name);
+      const issuedByInp = inp('Issued By', 'text', q?.issuedBy);
+      const issueDateInp = inp('Issue Date', 'date', q?.issueDate ? q.issueDate.slice(0,10) : '');
+      const expiryInp   = inp('Expiry Date', 'date', q?.expiryDate ? q.expiryDate.slice(0,10) : '');
+      const notesInp    = inp('Notes', 'text', q?.notes);
+
+      const bodyEl = el('div', { className: 'space-y-3' },
+        el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Employee'), empSel),
+        el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Type'), typeSel),
+        nameInp.wrap, issuedByInp.wrap,
+        el('div', { className: 'grid grid-cols-2 gap-3' }, issueDateInp.wrap, expiryInp.wrap),
+        notesInp.wrap,
       );
 
-      openModal({ title: isNew ? 'Add Qualification' : 'Edit Qualification', body, footer: el('div', { className: 'flex gap-2 justify-end' },
-        el('button', { className: 'btn-secondary', onClick: closeModal }, 'Cancel'),
-        el('button', { className: 'btn-primary', onClick: async () => {
-          const empId = empSel.value;
-          const data = {
-            type: typeSel.value,
-            name: v('name'),
-            issuedBy: v('issuedBy') || undefined,
-            issueDate: v('issueDate') || undefined,
-            expiryDate: v('expiryDate') || undefined,
-            notes: v('notes') || undefined,
-          };
-          if (!data.name) { toast('Name required', 'error'); return; }
-          try {
-            if (isNew) await api.employees.addQual(empId, data);
-            else await api.employees.updateQual(q.empId || empId, q.id, data);
-            closeModal(); load(); toast(isNew ? 'Qualification added' : 'Qualification updated', 'success');
-          } catch(e) { toast(e.message, 'error'); }
-        }}, isNew ? 'Add' : 'Save')
-      )});
+      peopleOverlay(isNew ? 'Add Qualification' : 'Edit Qualification', bodyEl, async (close) => {
+        const data = {
+          type: typeSel.value,
+          name: nameInp.inp.value.trim(),
+          issuedBy: issuedByInp.inp.value || undefined,
+          issueDate: issueDateInp.inp.value || undefined,
+          expiryDate: expiryInp.inp.value || undefined,
+          notes: notesInp.inp.value || undefined,
+        };
+        if (!data.name) { toast('Name required', 'error'); return; }
+        try {
+          if (isNew) await api.employees.addQual(empSel.value, data);
+          else await api.employees.updateQual(preEmpId, q.id, data);
+          close(); load(); toast(isNew ? 'Qualification added' : 'Updated', 'success');
+        } catch(ex) { toast(ex.message, 'error'); }
+      }, isNew ? 'Add Qualification' : 'Save Changes');
     }
 
     load();
@@ -4144,101 +4155,93 @@ function renderAdminPeople(container) {
       REJECTED: 'bg-red-100 text-red-600',
     };
     const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-
     let filterEmpId = '', filterStatus = '';
+    let allEmployees = [];
 
     async function load() {
       const listWrap = page.querySelector('#ts_list_wrap');
-      if (listWrap) listWrap.innerHTML = '<div class="text-gray-400 text-sm py-4">Loading…</div>';
+      if (!listWrap) return;
+      listWrap.innerHTML = '<div class="text-gray-400 text-sm py-4">Loading…</div>';
       const params = {};
       if (filterEmpId) params.employeeId = filterEmpId;
       if (filterStatus) params.status = filterStatus;
       let timesheets = [];
       try { timesheets = await api.employees.listTimesheets(Object.keys(params).length ? params : undefined); }
-      catch(e) { if (listWrap) listWrap.innerHTML = `<p class="text-red-500 text-sm">${e.message}</p>`; return; }
+      catch(e) { listWrap.innerHTML = `<p class="text-red-500 text-sm">${e.message}</p>`; return; }
 
-      if (!listWrap) return;
       listWrap.innerHTML = '';
       if (!timesheets.length) {
-        listWrap.append(el('div', { className: 'text-center py-12 text-gray-400 text-sm' }, 'No timesheets found.'));
+        listWrap.append(el('div', { className: 'text-center py-12 text-gray-400 text-sm' }, 'No timesheets found. Click "+ New Timesheet" to create one.'));
         return;
       }
 
       timesheets.forEach(ts => {
         const name = `${ts.employee?.user?.firstName || ''} ${ts.employee?.user?.lastName || ''}`.trim();
         const sc = TS_STATUS_COLOURS[ts.status] || 'bg-gray-100 text-gray-600';
-        const weekLabel = `${new Date(ts.weekStart).toLocaleDateString('en-ZA', { day:'numeric', month:'short' })} – ${new Date(ts.weekEnd).toLocaleDateString('en-ZA', { day:'numeric', month:'short', year:'numeric' })}`;
+        const ws = new Date(ts.weekStart), we = new Date(ts.weekEnd);
+        const weekLabel = `${ws.toLocaleDateString('en-ZA', { day:'numeric', month:'short' })} – ${we.toLocaleDateString('en-ZA', { day:'numeric', month:'short', year:'numeric' })}`;
 
         const card = el('div', { className: 'bg-white border border-gray-100 rounded-xl overflow-hidden mb-3' });
-        const header = el('div', { className: 'flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50', onClick: () => { body.classList.toggle('hidden'); } },
-          el('div', { className: 'flex items-center gap-3' },
+        const bodyPanel = el('div', { className: 'hidden px-4 pb-4 overflow-x-auto' });
+
+        const cardHeader = el('div', { className: 'flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50', onClick: () => bodyPanel.classList.toggle('hidden') },
+          el('div', { className: 'flex items-center gap-3 flex-wrap' },
             el('span', { className: 'font-semibold text-sm text-gray-900' }, name),
             el('span', { className: `text-xs px-2 py-0.5 rounded-full font-medium ${sc}` }, ts.status),
             el('span', { className: 'text-xs text-gray-500' }, weekLabel),
             el('span', { className: 'text-xs font-medium text-gray-700' }, `${Number(ts.totalHours).toFixed(1)}h total`)
           ),
-          el('div', { className: 'flex gap-2' },
-            ts.status === 'SUBMITTED' ? el('button', { className: 'text-xs bg-green-600 text-white px-3 py-1 rounded-lg hover:opacity-90', onClick: async (e) => {
-              e.stopPropagation();
-              try { await api.employees.approveTimesheet(ts.id); load(); toast('Timesheet approved', 'success'); }
-              catch(ex) { toast(ex.message, 'error'); }
-            }}, 'Approve') : null,
-            ts.status === 'SUBMITTED' ? el('button', { className: 'text-xs bg-red-100 text-red-600 px-3 py-1 rounded-lg hover:opacity-90', onClick: async (e) => {
-              e.stopPropagation();
-              try { await api.employees.rejectTimesheet(ts.id); load(); toast('Timesheet returned', 'success'); }
-              catch(ex) { toast(ex.message, 'error'); }
-            }}, 'Return') : null,
-            ts.status === 'DRAFT' ? el('button', { className: 'text-xs bg-blue-100 text-blue-600 px-3 py-1 rounded-lg hover:opacity-90', onClick: async (e) => {
-              e.stopPropagation();
-              try { await api.employees.submitTimesheet(ts.id); load(); toast('Submitted', 'success'); }
+          el('div', { className: 'flex gap-2', onClick: e => e.stopPropagation() },
+            ts.status === 'DRAFT' ? el('button', { className: 'text-xs bg-blue-100 text-blue-700 font-semibold px-3 py-1 rounded-lg hover:opacity-90', onClick: async () => {
+              try { await api.employees.submitTimesheet(ts.id); load(); toast('Submitted for approval', 'success'); }
               catch(ex) { toast(ex.message, 'error'); }
             }}, 'Submit') : null,
+            ts.status === 'SUBMITTED' ? el('button', { className: 'text-xs bg-green-600 text-white font-semibold px-3 py-1 rounded-lg hover:opacity-90', onClick: async () => {
+              try { await api.employees.approveTimesheet(ts.id); load(); toast('Approved', 'success'); }
+              catch(ex) { toast(ex.message, 'error'); }
+            }}, 'Approve') : null,
+            ts.status === 'SUBMITTED' ? el('button', { className: 'text-xs bg-red-100 text-red-600 font-semibold px-3 py-1 rounded-lg hover:opacity-90', onClick: async () => {
+              try { await api.employees.rejectTimesheet(ts.id); load(); toast('Returned to draft', 'success'); }
+              catch(ex) { toast(ex.message, 'error'); }
+            }}, 'Return') : null,
           )
         );
 
-        // Day-by-day breakdown table
-        const dayRow = el('div', { className: 'px-4 pb-4 overflow-x-auto' });
-        const table = el('table', { className: 'w-full text-sm border-collapse' },
+        const table = el('table', { className: 'w-full text-sm border-collapse mt-2' },
           el('thead', {},
             el('tr', { className: 'text-xs text-gray-400 border-b border-gray-100' },
-              el('th', { className: 'text-left py-1.5 w-24' }, 'Day'),
-              el('th', { className: 'text-center py-1.5 w-20' }, 'Start'),
-              el('th', { className: 'text-center py-1.5 w-20' }, 'End'),
-              el('th', { className: 'text-center py-1.5 w-16' }, 'Break'),
-              el('th', { className: 'text-center py-1.5 w-16' }, 'Hours'),
-              el('th', { className: 'text-left py-1.5' }, 'Description'),
-              ts.status === 'DRAFT' ? el('th', { className: 'w-16' }) : null,
+              el('th', { className: 'text-left py-1.5 pr-2' }, 'Day'),
+              el('th', { className: 'text-center py-1.5 px-1 w-20' }, 'Start'),
+              el('th', { className: 'text-center py-1.5 px-1 w-20' }, 'End'),
+              el('th', { className: 'text-center py-1.5 px-1 w-14' }, 'Break'),
+              el('th', { className: 'text-center py-1.5 px-1 w-14' }, 'Hours'),
+              el('th', { className: 'text-left py-1.5 px-1' }, 'Description'),
+              ts.status === 'DRAFT' ? el('th', { className: 'w-12' }) : null,
             )
           ),
-          el('tbody', { id: `ts_body_${ts.id}` },
+          el('tbody', {},
             ...DAYS.map((day, i) => {
-              const d = new Date(ts.weekStart);
-              d.setDate(d.getDate() + i);
+              const d = new Date(ts.weekStart); d.setDate(d.getDate() + i);
               const dateStr = d.toISOString().split('T')[0];
-              const entry = ts.entries?.find(e => e.date?.startsWith(dateStr));
-              return buildTsRow(ts, day, dateStr, entry, load);
+              const entry = (ts.entries || []).find(e => e.date && e.date.slice(0,10) === dateStr);
+              return buildTsRow(ts, `${day} ${d.getDate()}`, dateStr, entry, load);
             })
           )
         );
-        dayRow.append(table);
-
-        const body = el('div', { className: 'hidden' }, dayRow);
-        card.append(header, body);
+        bodyPanel.append(table);
+        card.append(cardHeader, bodyPanel);
         listWrap.append(card);
       });
     }
 
     function buildTsRow(ts, dayLabel, dateStr, entry, onReload) {
-      const canEdit = ts.status === 'DRAFT';
-      if (canEdit) {
-        // Editable inline row
-        const startInp = el('input', { type: 'time', value: entry?.startTime || '', className: 'w-full border border-gray-100 rounded px-1 py-0.5 text-xs text-center' });
-        const endInp   = el('input', { type: 'time', value: entry?.endTime || '', className: 'w-full border border-gray-100 rounded px-1 py-0.5 text-xs text-center' });
-        const breakInp = el('input', { type: 'number', value: entry?.breakMins || 0, min: 0, step: 5, className: 'w-full border border-gray-100 rounded px-1 py-0.5 text-xs text-center' });
-        const hrsInp   = el('input', { type: 'number', value: entry ? Number(entry.hoursWorked).toFixed(1) : '0', min: 0, max: 24, step: 0.5, className: 'w-full border border-gray-100 rounded px-1 py-0.5 text-xs text-center' });
-        const descInp  = el('input', { type: 'text', value: entry?.description || '', placeholder: 'e.g. Morning shift', className: 'w-full border border-gray-100 rounded px-1 py-0.5 text-xs' });
+      if (ts.status === 'DRAFT') {
+        const startInp = el('input', { type: 'time', value: entry?.startTime || '', className: 'w-full border border-gray-100 rounded px-1 py-0.5 text-xs text-center focus:border-brand outline-none' });
+        const endInp   = el('input', { type: 'time', value: entry?.endTime || '', className: 'w-full border border-gray-100 rounded px-1 py-0.5 text-xs text-center focus:border-brand outline-none' });
+        const breakInp = el('input', { type: 'number', value: entry?.breakMins ?? 0, min: 0, step: 5, className: 'w-full border border-gray-100 rounded px-1 py-0.5 text-xs text-center focus:border-brand outline-none' });
+        const hrsInp   = el('input', { type: 'number', value: entry ? Number(entry.hoursWorked).toFixed(1) : '0', min: 0, max: 24, step: 0.5, className: 'w-full border border-gray-100 rounded px-1 py-0.5 text-xs text-center focus:border-brand outline-none' });
+        const descInp  = el('input', { type: 'text', value: entry?.description || '', placeholder: 'e.g. Morning shift', className: 'w-full border border-gray-100 rounded px-1 py-0.5 text-xs focus:border-brand outline-none' });
 
-        // Auto-calc hours when times change
         const calcHours = () => {
           if (startInp.value && endInp.value) {
             const [sh, sm] = startInp.value.split(':').map(Number);
@@ -4247,32 +4250,29 @@ function renderAdminPeople(container) {
             if (mins > 0) hrsInp.value = (mins/60).toFixed(1);
           }
         };
-        startInp.onchange = calcHours;
-        endInp.onchange = calcHours;
-        breakInp.onchange = calcHours;
-
-        const saveBtn = el('button', { className: 'text-xs text-brand hover:underline whitespace-nowrap', onClick: async () => {
-          const hrs = Number(hrsInp.value);
-          if (hrs < 0 || hrs > 24) { toast('Invalid hours', 'error'); return; }
-          try {
-            await api.employees.saveEntry(ts.id, { date: dateStr, hoursWorked: hrs, startTime: startInp.value || undefined, endTime: endInp.value || undefined, breakMins: Number(breakInp.value)||0, description: descInp.value || undefined });
-            onReload(); toast('Saved', 'success');
-          } catch(e) { toast(e.message, 'error'); }
-        }}, 'Save');
+        startInp.onchange = endInp.onchange = breakInp.onchange = calcHours;
 
         return el('tr', { className: 'border-b border-gray-50' },
-          el('td', { className: 'py-1.5 text-xs font-medium text-gray-600' }, `${dayLabel} ${new Date(dateStr).getDate()}`),
+          el('td', { className: 'py-1.5 pr-2 text-xs font-medium text-gray-600 whitespace-nowrap' }, dayLabel),
           el('td', { className: 'py-1 px-1' }, startInp),
           el('td', { className: 'py-1 px-1' }, endInp),
           el('td', { className: 'py-1 px-1' }, breakInp),
           el('td', { className: 'py-1 px-1' }, hrsInp),
           el('td', { className: 'py-1 px-1' }, descInp),
-          el('td', { className: 'py-1 text-center' }, saveBtn),
+          el('td', { className: 'py-1 text-center' },
+            el('button', { className: 'text-xs text-brand font-semibold hover:underline whitespace-nowrap', onClick: async () => {
+              const hrs = Number(hrsInp.value);
+              if (hrs < 0 || hrs > 24) { toast('Invalid hours', 'error'); return; }
+              try {
+                await api.employees.saveEntry(ts.id, { date: dateStr, hoursWorked: hrs, startTime: startInp.value || undefined, endTime: endInp.value || undefined, breakMins: Number(breakInp.value)||0, description: descInp.value || undefined });
+                onReload(); toast('Saved', 'success');
+              } catch(ex) { toast(ex.message, 'error'); }
+            }}, 'Save')
+          ),
         );
       } else {
-        // Read-only row
         return el('tr', { className: 'border-b border-gray-50' },
-          el('td', { className: 'py-1.5 text-xs font-medium text-gray-600' }, `${dayLabel} ${new Date(dateStr).getDate()}`),
+          el('td', { className: 'py-1.5 pr-2 text-xs font-medium text-gray-600 whitespace-nowrap' }, dayLabel),
           el('td', { className: 'py-1.5 text-xs text-center text-gray-500' }, entry?.startTime || '—'),
           el('td', { className: 'py-1.5 text-xs text-center text-gray-500' }, entry?.endTime || '—'),
           el('td', { className: 'py-1.5 text-xs text-center text-gray-500' }, entry ? `${entry.breakMins}m` : '—'),
@@ -4282,56 +4282,51 @@ function renderAdminPeople(container) {
       }
     }
 
-    async function buildPage(employees) {
-      page.innerHTML = '';
-      const header = el('div', { className: 'flex flex-wrap items-center justify-between gap-3 mb-4' },
-        el('h2', { className: 'text-lg font-bold text-gray-800' }, 'Timesheets'),
-        el('div', { className: 'flex gap-2 flex-wrap' },
-          el('select', { className: 'border border-gray-200 rounded-lg px-2 py-1.5 text-sm', onChange: (e) => { filterEmpId = e.target.value; load(); } },
-            el('option', { value: '' }, 'All Employees'),
-            ...employees.map(e => { const o = document.createElement('option'); o.value = e.id; o.textContent = `${e.user?.firstName} ${e.user?.lastName}`; return o; })
-          ),
-          el('select', { className: 'border border-gray-200 rounded-lg px-2 py-1.5 text-sm', onChange: (e) => { filterStatus = e.target.value; load(); } },
-            el('option', { value: '' }, 'All Statuses'),
-            ...['DRAFT','SUBMITTED','APPROVED','REJECTED'].map(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; return o; })
-          ),
-          el('button', { className: 'btn-primary text-sm px-4 py-2', onClick: () => openCreateTimesheetModal(employees) }, '+ New Timesheet'),
-        )
-      );
-      page.append(header, el('div', { id: 'ts_list_wrap' }));
-      load();
-    }
+    function openCreateTimesheetModal() {
+      const empSel = el('select', { className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none' });
+      allEmployees.forEach(e => empSel.append(el('option', { value: e.id }, `${e.user?.firstName} ${e.user?.lastName}`)));
 
-    function openCreateTimesheetModal(employees) {
-      const empSel = el('select', { className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm' });
-      employees.forEach(e => { const o = document.createElement('option'); o.value = e.id; o.textContent = `${e.user?.firstName} ${e.user?.lastName}`; empSel.append(o); });
-
-      // Default to current week Monday
       const today = new Date();
       const monday = new Date(today);
       monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-      const weekInp = el('input', { type: 'date', value: monday.toISOString().split('T')[0], className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm' });
+      const weekInp = el('input', { type: 'date', value: monday.toISOString().split('T')[0], className: 'w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/30' });
 
-      const body = el('div', { className: 'space-y-4' },
-        el('div', {}, el('label', { className: 'block text-xs font-medium text-gray-600 mb-1' }, 'Employee'), empSel),
-        el('div', {}, el('label', { className: 'block text-xs font-medium text-gray-600 mb-1' }, 'Week Starting (Monday)'), weekInp),
-        el('p', { className: 'text-xs text-gray-400' }, 'Timesheet will be auto-populated from scheduled shifts for that week.')
+      const bodyEl = el('div', { className: 'space-y-4' },
+        el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Employee'), empSel),
+        el('div', {}, el('label', { className: 'text-xs font-bold text-gray-500 uppercase block mb-1' }, 'Week Starting (Monday)'), weekInp),
+        el('p', { className: 'text-xs text-gray-400 italic' }, 'Will auto-populate hours from scheduled shifts for that week.')
       );
 
-      openModal({ title: 'Create Timesheet', body, footer: el('div', { className: 'flex gap-2 justify-end' },
-        el('button', { className: 'btn-secondary', onClick: closeModal }, 'Cancel'),
-        el('button', { className: 'btn-primary', onClick: async () => {
-          try {
-            await api.employees.createTimesheet({ employeeId: empSel.value, weekStart: weekInp.value });
-            closeModal(); load(); toast('Timesheet created', 'success');
-          } catch(e) { toast(e.message, 'error'); }
-        }}, 'Create')
-      )});
+      peopleOverlay('New Timesheet', bodyEl, async (close) => {
+        if (!empSel.value) { toast('Select an employee', 'error'); return; }
+        try {
+          await api.employees.createTimesheet({ employeeId: empSel.value, weekStart: weekInp.value });
+          close(); load(); toast('Timesheet created', 'success');
+        } catch(ex) { toast(ex.message, 'error'); }
+      }, 'Create Timesheet');
     }
 
-    api.employees.list({ status: 'ACTIVE' }).then(emps => buildPage(emps)).catch(e => {
-      page.innerHTML = `<p class="text-red-500 text-sm">${e.message}</p>`;
-    });
+    api.employees.list().then(emps => {
+      allEmployees = emps;
+      page.innerHTML = '';
+      const empFilterSel = el('select', { className: 'border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none', onChange: e => { filterEmpId = e.target.value; load(); } });
+      empFilterSel.append(el('option', { value: '' }, 'All Employees'));
+      emps.forEach(e => empFilterSel.append(el('option', { value: e.id }, `${e.user?.firstName} ${e.user?.lastName}`)));
+      const statusSel = el('select', { className: 'border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none', onChange: e => { filterStatus = e.target.value; load(); } });
+      statusSel.append(el('option', { value: '' }, 'All Statuses'));
+      ['DRAFT','SUBMITTED','APPROVED','REJECTED'].forEach(s => statusSel.append(el('option', { value: s }, s)));
+
+      page.append(
+        el('div', { className: 'flex flex-wrap items-center justify-between gap-3 mb-4' },
+          el('h2', { className: 'text-lg font-bold text-gray-800' }, 'Timesheets'),
+          el('div', { className: 'flex gap-2 flex-wrap' }, empFilterSel, statusSel,
+            el('button', { className: 'btn-primary text-sm px-4 py-2', onClick: () => openCreateTimesheetModal() }, '+ New Timesheet')
+          )
+        ),
+        el('div', { id: 'ts_list_wrap' })
+      );
+      load();
+    }).catch(e => { page.innerHTML = `<p class="text-red-500 text-sm">${e.message}</p>`; });
   }
 
   // ── SCHEDULE ────────────────────────────────────────────────────────────
@@ -13383,25 +13378,35 @@ function renderAdminEmployees(container) {
       ),
     );
 
-    openModal({ title: 'Assign Shift', body, footer: el('div', { className: 'flex gap-2 justify-end' },
-      el('button', { className: 'btn-secondary', onClick: closeModal }, 'Cancel'),
-      el('button', { className: 'btn-primary', onClick: async () => {
-        const selectedEmps = checkboxes.filter(cb => cb.checked).map(cb => cb.value);
-        if (!selectedEmps.length) { toast('Select at least one employee', 'error'); return; }
-        const from = new Date(fromInp.value);
-        const to   = new Date(toInp.value);
-        if (to < from) { toast('To date must be after from date', 'error'); return; }
-        // Generate all dates in range
-        const dates = [];
-        const cur = new Date(from);
-        while (cur <= to) { dates.push(cur.toISOString().split('T')[0]); cur.setDate(cur.getDate() + 1); }
-        try {
-          const tasks = selectedEmps.flatMap(empId => dates.map(date => api.employees.assignShift({ employeeId: empId, shiftId: shiftSel.value, date })));
-          await Promise.all(tasks);
-          closeModal(); onDone(); toast(`${tasks.length} shift${tasks.length !== 1 ? 's' : ''} assigned`, 'success');
-        } catch(e) { toast(e.message, 'error'); }
-      }}, 'Assign')
-    )});
+    const ov = el('div', { className: 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4' });
+    const close = () => ov.remove();
+    const saveBtn = el('button', { className: 'bg-brand text-white font-bold px-5 py-2 rounded-xl text-sm hover:opacity-90', onClick: async () => {
+      const selectedEmps = checkboxes.filter(cb => cb.checked).map(cb => cb.value);
+      if (!selectedEmps.length) { toast('Select at least one employee', 'error'); return; }
+      const from = new Date(fromInp.value), to = new Date(toInp.value);
+      if (to < from) { toast('To date must be after from date', 'error'); return; }
+      const dates = [];
+      const cur = new Date(from);
+      while (cur <= to) { dates.push(cur.toISOString().split('T')[0]); cur.setDate(cur.getDate() + 1); }
+      try {
+        const tasks = selectedEmps.flatMap(empId => dates.map(date => api.employees.assignShift({ employeeId: empId, shiftId: shiftSel.value, date })));
+        await Promise.all(tasks);
+        close(); onDone(); toast(`${tasks.length} shift${tasks.length !== 1 ? 's' : ''} assigned`, 'success');
+      } catch(e) { toast(e.message, 'error'); }
+    }}, 'Assign');
+    ov.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl' },
+      el('div', { className: 'flex justify-between items-center mb-5' },
+        el('h3', { className: 'font-black text-gray-900' }, 'Assign Shift'),
+        el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl', onClick: close }, '×')
+      ),
+      body,
+      el('div', { className: 'flex justify-end gap-3 mt-5' },
+        el('button', { className: 'text-sm text-gray-500 px-4 py-2 rounded-xl hover:bg-gray-50', onClick: close }, 'Cancel'),
+        saveBtn,
+      )
+    ));
+    ov.addEventListener('click', e => { if (e.target === ov) close(); });
+    document.body.append(ov);
   }
 
   function showAssignmentModal(asgn, onDone) {
