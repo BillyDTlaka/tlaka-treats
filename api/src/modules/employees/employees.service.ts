@@ -708,6 +708,10 @@ export class EmployeeService {
 
   // Updated generatePayroll: prefers approved timesheets, falls back to shift assignments
   async generatePayrollFromTimesheets(period: string) {
+    // Guard against duplicate runs for the same period
+    const existing = await this.prisma.payrollRun.findFirst({ where: { period, status: { not: 'PAID' } } })
+    if (existing) throw new AppError(`A payroll run for ${period} already exists (status: ${existing.status})`, 400, 'DUPLICATE')
+
     const [year, month] = period.split('-').map(Number)
     const from = new Date(year, month - 1, 1)
     const to = new Date(year, month, 0)

@@ -46,6 +46,21 @@ export async function buildApp() {
   await app.register(jwt, { secret: config.jwtSecret })
   await app.register(prismaPlugin)
 
+  // ─── Ensure Admin has manage:employee permission ───────────────────────────
+  app.addHook('onReady', async () => {
+    try {
+      const db = (app as any).prisma
+      const adminRole = await db.role.findFirst({ where: { name: 'ADMIN' }, include: { permissions: true } })
+      if (adminRole) {
+        const has = adminRole.permissions.some((p: any) => p.action === 'manage' && p.subject === 'employee')
+        if (!has) {
+          await db.permission.create({ data: { action: 'manage', subject: 'employee', roleId: adminRole.id } })
+          app.log.info('Added manage:employee permission to ADMIN role')
+        }
+      }
+    } catch (_) { /* non-fatal */ }
+  })
+
   // ─── Global Error Handler ─────────────────────────────────────────────────
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AppError) {

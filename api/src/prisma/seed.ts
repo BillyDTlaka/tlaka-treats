@@ -48,6 +48,7 @@ async function main() {
         { action: 'manage', subject: 'commission' },
         { action: 'manage', subject: 'payout' },
         { action: 'manage', subject: 'ambassador' },
+        { action: 'manage', subject: 'employee' },
       ]},
     },
   })
