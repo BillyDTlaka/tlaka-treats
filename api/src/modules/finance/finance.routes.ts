@@ -244,11 +244,16 @@ export default async function financeRoutes(fastify: FastifyInstance) {
     if (allLines.length < 2) return reply.code(400).send({ message: 'CSV must have a header and at least one row' })
 
     // Skip leading metadata rows (e.g. "Balance brought forward:,3926.58") — find the first
-    // line that contains recognisable column names so the actual header row is always used.
-    const KNOWN_COLS = ['date', 'description', 'amount', 'debit', 'credit', 'balance', 'reference', 'narrative']
-    const headerLineIdx = allLines.findIndex(line =>
-      KNOWN_COLS.some(col => line.toLowerCase().includes(col))
-    )
+    // line that contains BOTH a date column AND a description/amount column as distinct fields.
+    // Splitting by comma and checking exact field values avoids false matches on lines like
+    // "Balance brought forward:,3926.58" which contain the word "balance" as a substring.
+    const DATE_NAMES = ['date', 'transaction date', 'txn date', 'value date']
+    const DESC_NAMES = ['description', 'narrative', 'details', 'amount', 'debit', 'credit']
+    const isHeaderRow = (line: string) => {
+      const fields = line.split(',').map(f => f.trim().toLowerCase().replace(/"/g, ''))
+      return fields.some(f => DATE_NAMES.includes(f)) && fields.some(f => DESC_NAMES.includes(f))
+    }
+    const headerLineIdx = allLines.findIndex(isHeaderRow)
     if (headerLineIdx < 0) return reply.code(400).send({ message: 'Could not find a header row. Ensure CSV has "Date" and "Description" columns.' })
 
     const lines = allLines.slice(headerLineIdx)
@@ -300,29 +305,43 @@ export default async function financeRoutes(fastify: FastifyInstance) {
 
     for (let i = 0; i < rows.length; i++) {
       try {
-        // Simple CSV split (handles quoted fields with commas)
-        const cols = rows[i].match(/(?:"([^"]*)")|([^,]+)|(?=,)|(?<=,)/g)?.map(c => c?.replace(/^"|"$/g, '').trim() ?? '') || rows[i].split(',')
+        // Parse a CSV row, correctly handling quoted fields that may contain commas
+        const cols: string[] = []
+        let pos = 0
+        const row = rows[i]
+        while (pos <= row.length) {
+          if (row[pos] === '"') {
+            const end = row.indexOf('"', pos + 1)
+            cols.push(end < 0 ? row.slice(pos + 1) : row.slice(pos + 1, end))
+            pos = end < 0 ? row.length + 1 : end + 2
+          } else {
+            const end = row.indexOf(',', pos)
+            cols.push(end < 0 ? row.slice(pos) : row.slice(pos, end))
+            pos = end < 0 ? row.length + 1 : end + 1
+          }
+        }
+        const trimmedCols = cols.map(c => c.trim())
 
-        const rawDate = cols[dateCol] || ''
-        const desc    = cols[descCol] || ''
+        const rawDate = trimmedCols[dateCol] || ''
+        const desc    = trimmedCols[descCol] || ''
         // Skip rows with no date (e.g. "Total:" summary rows)
         if (!rawDate || !desc) continue
 
         let amount: number
         if (amtCol >= 0) {
-          amount = parseAmt(cols[amtCol])
+          amount = parseAmt(trimmedCols[amtCol])
           // Add fees (e.g. bank service fees in a separate column) to the base amount
-          if (feesCol >= 0) amount += parseAmt(cols[feesCol])
+          if (feesCol >= 0) amount += parseAmt(trimmedCols[feesCol])
         } else if (debitCol >= 0 && creditCol >= 0) {
-          const debit  = parseAmt(cols[debitCol])
-          const credit = parseAmt(cols[creditCol])
+          const debit  = parseAmt(trimmedCols[debitCol])
+          const credit = parseAmt(trimmedCols[creditCol])
           amount = credit - debit // positive = credit, negative = debit
         } else {
           continue
         }
 
-        const balance = balCol >= 0 ? parseAmt(cols[balCol]) : null
-        const ref     = refCol >= 0 ? cols[refCol] : null
+        const balance = balCol >= 0 ? parseAmt(trimmedCols[balCol]) : null
+        const ref     = refCol >= 0 ? trimmedCols[refCol] : null
 
         // Duplicate guard — skip if an identical transaction already exists for this account
         const date = parseDate(rawDate)
