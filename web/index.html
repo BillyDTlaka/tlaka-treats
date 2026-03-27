@@ -10079,9 +10079,9 @@ function showCsvImport(bankAccountId, onDone) {
       el('h3', { className: 'font-black text-gray-900 text-lg' }, 'Import Bank Statement (CSV)'),
       el('button', { className: 'text-gray-400 text-2xl', onClick: () => overlay.remove() }, '×'),
     ),
-    el('p', { className: 'text-sm text-gray-500 mb-4' }, 'Paste your CSV content below or drag-and-drop a .csv file. The system auto-detects columns for Date, Description, Amount/Debit/Credit, Balance, and Reference.'),
+    el('p', { className: 'text-sm text-gray-500 mb-4' }, 'Paste your CSV content below or drag-and-drop a .csv file. Duplicate transactions are skipped automatically, so you can safely re-upload the same statement.'),
     el('div', { className: 'bg-gray-50 rounded-lg p-3 text-xs text-gray-400 font-mono mb-4' },
-      'Expected headers (any order): Date, Description, Amount (or Debit+Credit), Balance, Reference'
+      'Supported columns: Date, Description, Amount, Fees, Balance, Reference (any order). Leading metadata rows like "Balance brought forward" are ignored.'
     ),
   );
 
@@ -10112,7 +10112,9 @@ function showCsvImport(bankAccountId, onDone) {
         const result = await api.finance.importCsv(bankAccountId, { csv });
         overlay.remove();
         onDone();
-        toast(`Imported ${result.imported} transactions${result.errors?.length ? ` (${result.errors.length} errors)` : ''}`, 'success');
+        const skippedMsg = result.skipped > 0 ? `, ${result.skipped} duplicate(s) skipped` : ''
+        const errMsg = result.errors?.length ? ` (${result.errors.length} errors)` : ''
+        toast(`Imported ${result.imported} transactions${skippedMsg}${errMsg}`, 'success');
       } catch(e) { toast(e.message || 'Import failed'); importBtn.disabled = false; importBtn.textContent = 'Import'; }
     },
   }, 'Import');

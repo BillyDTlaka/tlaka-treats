@@ -240,10 +240,20 @@ export default async function financeRoutes(fastify: FastifyInstance) {
     const account = await db.bankAccount.findUnique({ where: { id } })
     if (!account) return reply.code(404).send({ message: 'Bank account not found' })
 
-    const lines = (csv as string).trim().split('\n').filter(Boolean)
-    if (lines.length < 2) return reply.code(400).send({ message: 'CSV must have a header and at least one row' })
+    const allLines = (csv as string).trim().split('\n').filter(Boolean)
+    if (allLines.length < 2) return reply.code(400).send({ message: 'CSV must have a header and at least one row' })
 
-    // Try to auto-detect header columns (case-insensitive)
+    // Skip leading metadata rows (e.g. "Balance brought forward:,3926.58") — find the first
+    // line that contains recognisable column names so the actual header row is always used.
+    const KNOWN_COLS = ['date', 'description', 'amount', 'debit', 'credit', 'balance', 'reference', 'narrative']
+    const headerLineIdx = allLines.findIndex(line =>
+      KNOWN_COLS.some(col => line.toLowerCase().includes(col))
+    )
+    if (headerLineIdx < 0) return reply.code(400).send({ message: 'Could not find a header row. Ensure CSV has "Date" and "Description" columns.' })
+
+    const lines = allLines.slice(headerLineIdx)
+
+    // Auto-detect header columns (case-insensitive)
     const header = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''))
 
     const colIdx = (names: string[]) => { for (const n of names) { const i = header.indexOf(n); if (i >= 0) return i } return -1 }
@@ -251,12 +261,13 @@ export default async function financeRoutes(fastify: FastifyInstance) {
     const dateCol   = colIdx(['date', 'transaction date', 'txn date', 'value date'])
     const descCol   = colIdx(['description', 'narrative', 'details', 'detail', 'particulars'])
     const amtCol    = colIdx(['amount', 'txn amount', 'transaction amount'])
+    const feesCol   = colIdx(['fees', 'fee', 'charges', 'bank charges', 'service fee'])
     const debitCol  = colIdx(['debit', 'debit amount', 'withdrawals'])
     const creditCol = colIdx(['credit', 'credit amount', 'deposits'])
     const balCol    = colIdx(['balance', 'closing balance', 'running balance'])
     const refCol    = colIdx(['reference', 'ref', 'cheque no', 'cheque number'])
 
-    if (dateCol < 0 || (descCol < 0)) return reply.code(400).send({ message: 'Could not detect date/description columns. Ensure CSV has "Date" and "Description" headers.' })
+    if (dateCol < 0 || descCol < 0) return reply.code(400).send({ message: 'Could not detect date/description columns. Ensure CSV has "Date" and "Description" headers.' })
 
     const parseAmt = (s: string) => {
       if (!s) return 0
@@ -284,6 +295,7 @@ export default async function financeRoutes(fastify: FastifyInstance) {
 
     const rows = lines.slice(1)
     const created: any[] = []
+    const skipped: number[] = []
     const errors: string[] = []
 
     for (let i = 0; i < rows.length; i++) {
@@ -293,11 +305,14 @@ export default async function financeRoutes(fastify: FastifyInstance) {
 
         const rawDate = cols[dateCol] || ''
         const desc    = cols[descCol] || ''
+        // Skip rows with no date (e.g. "Total:" summary rows)
         if (!rawDate || !desc) continue
 
         let amount: number
         if (amtCol >= 0) {
           amount = parseAmt(cols[amtCol])
+          // Add fees (e.g. bank service fees in a separate column) to the base amount
+          if (feesCol >= 0) amount += parseAmt(cols[feesCol])
         } else if (debitCol >= 0 && creditCol >= 0) {
           const debit  = parseAmt(cols[debitCol])
           const credit = parseAmt(cols[creditCol])
@@ -309,10 +324,17 @@ export default async function financeRoutes(fastify: FastifyInstance) {
         const balance = balCol >= 0 ? parseAmt(cols[balCol]) : null
         const ref     = refCol >= 0 ? cols[refCol] : null
 
+        // Duplicate guard — skip if an identical transaction already exists for this account
+        const date = parseDate(rawDate)
+        const existing = await db.bankTransaction.findFirst({
+          where: { bankAccountId: id, date, amount, description: desc },
+        })
+        if (existing) { skipped.push(i + 2); continue }
+
         created.push(await db.bankTransaction.create({
           data: {
             bankAccountId: id,
-            date: parseDate(rawDate),
+            date,
             description: desc,
             amount,
             balance: balance !== null ? balance : undefined,
@@ -325,7 +347,7 @@ export default async function financeRoutes(fastify: FastifyInstance) {
       }
     }
 
-    return { imported: created.length, errors }
+    return { imported: created.length, skipped: skipped.length, errors }
   })
 
   // ── BANK TRANSACTIONS ──────────────────────────────────────────────────────
