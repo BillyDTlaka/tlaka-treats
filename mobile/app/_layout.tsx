@@ -1,11 +1,25 @@
 import { useEffect } from 'react';
+import { AppState } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 
+// Tell React Query to refetch when the app comes back to the foreground
+AppState.addEventListener('change', (state) => {
+  focusManager.setFocused(state === 'active');
+});
+
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { staleTime: 30000, retry: 1 } },
+  defaultOptions: {
+    queries: {
+      staleTime: 0,          // always consider data stale — refetch on every mount
+      gcTime: 5 * 60 * 1000, // keep unused cache for 5 min so nav back is instant
+      retry: 1,
+      refetchOnMount: true,
+      refetchOnWindowFocus: true,
+    },
+  },
 });
 
 function getHomeRoute(user: any): string {
