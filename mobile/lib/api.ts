@@ -46,6 +46,12 @@ export const api = {
     createConversation: ()         => post('/chat/conversations'),
     getConversation: (id: string)  => get(`/chat/conversations/${id}`),
   },
+  ambassadors: {
+    list:         ()                                              => get('/ambassadors'),
+    updateStatus: (id: string, status: string, note?: string)    => patch(`/ambassadors/${id}/status`, { status, note }),
+    reviewKyc:    (id: string, kycStatus: string, kycNote?: string) => patch(`/ambassadors/${id}/kyc/review`, { kycStatus, kycNote }),
+    update:       (id: string, data: any)                        => patch(`/ambassadors/${id}`, data),
+  },
 };
 
 export { BASE_URL };

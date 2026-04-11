@@ -141,6 +141,15 @@ export default function DashboardScreen() {
           </>
         )}
 
+        {/* Quick links */}
+        <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Management</Text>
+        <Card padding={0}>
+          <TouchableOpacity style={[styles.orderRow, styles.orderBorder]} onPress={() => router.push('/(admin)/ambassadors' as any)}>
+            <Text style={styles.orderName}>🌟 Ambassador Applications</Text>
+            <Text style={styles.seeAll}>Review →</Text>
+          </TouchableOpacity>
+        </Card>
+
         <View style={{ height: 24 }} />
       </ScrollView>
     </SafeAreaView>

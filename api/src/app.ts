@@ -34,6 +34,12 @@ import leadsRoutes      from './modules/leads/leads.routes'
 import usersRoutes      from './modules/users/users.routes'
 import dashboardRoutes  from './modules/dashboard/dashboard.routes'
 import paymentsRoutes   from './modules/payments/payments.routes'
+import uploadsRoutes    from './modules/uploads/uploads.routes'
+import multipart        from '@fastify/multipart'
+import staticFiles      from '@fastify/static'
+import path             from 'path'
+
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads', 'kyc')
 
 export async function buildApp() {
   const app = Fastify({
@@ -46,6 +52,12 @@ export async function buildApp() {
   await app.register(cors, { origin: true })
   await app.register(jwt, { secret: config.jwtSecret })
   await app.register(prismaPlugin)
+  await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } }) // 10 MB
+  await app.register(staticFiles, {
+    root: path.join(process.cwd(), 'uploads'),
+    prefix: '/uploads/',
+    decorateReply: false,
+  })
 
   // ─── Ensure Admin has manage:employee permission ───────────────────────────
   app.addHook('onReady', async () => {
@@ -113,6 +125,7 @@ export async function buildApp() {
   await app.register(usersRoutes,       { prefix: '/users' })
   await app.register(dashboardRoutes,   { prefix: '/dashboard' })
   await app.register(paymentsRoutes,   { prefix: '/payments' })
+  await app.register(uploadsRoutes,    { prefix: '/uploads' })
 
   // Health check
   app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }))
