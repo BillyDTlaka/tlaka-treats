@@ -45,6 +45,14 @@ export const productsApi = {
 
 export const ordersApi = {
   create: (data: any) => api.post('/orders', data).then(r => r.data),
+  createForCustomer: (data: {
+    firstName: string
+    lastName: string
+    phone: string
+    address?: string
+    items: Array<{ variantId: string; quantity: number }>
+    notes?: string
+  }) => api.post('/orders/for-customer', data).then(r => r.data),
   getMy: () => api.get('/orders/my').then(r => r.data),
   getAmbassador: () => api.get('/orders/ambassador').then(r => r.data),
 }

@@ -96,8 +96,14 @@ export default function AmbassadorDashboard() {
             <Text style={styles.statValue}>{orders.length}</Text>
             <Text style={styles.statLabel}>Total Orders</Text>
           </View>
-          <View style={styles.statCard}>
-            <Text style={[styles.statValue, { color: '#8B3A3A' }]}>R{totalEarnings.toFixed(2)}</Text>
+          <View style={[styles.statCard, { flex: 1.6 }]}>
+            <Text
+              style={[styles.statValue, { color: '#8B3A3A', fontSize: 14 }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+            >
+              R{totalEarnings.toFixed(2)}
+            </Text>
             <Text style={styles.statLabel}>Total Earned</Text>
           </View>
           <View style={styles.statCard}>

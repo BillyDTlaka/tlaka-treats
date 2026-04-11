@@ -1,7 +1,8 @@
 import { FastifyPluginAsync } from 'fastify'
+import bcrypt from 'bcryptjs'
 import { OrderService } from './orders.service'
 import { authenticate, authorize } from '../../shared/middleware/auth'
-import { NotFoundError } from '../../shared/errors'
+import { AppError, NotFoundError } from '../../shared/errors'
 
 const orderRoutes: FastifyPluginAsync = async (fastify) => {
   const orderService = new OrderService(fastify.prisma)
@@ -22,6 +23,66 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
     if (!customer) throw new NotFoundError('Customer')
 
     const order = await orderService.create({ customerId, items, addressId, ambassadorCode, notes })
+    return reply.code(201).send(order)
+  })
+
+  // POST /orders/for-customer - ambassador places order on behalf of a customer
+  // Finds or creates the customer by phone, auto-applies ambassador's own code
+  fastify.post('/for-customer', { preHandler: [authenticate] }, async (request, reply) => {
+    const reqUser = request.user as { id: string }
+
+    const ambassador = await fastify.prisma.ambassador.findUnique({
+      where: { userId: reqUser.id },
+    })
+    if (!ambassador || ambassador.status !== 'ACTIVE') {
+      throw new AppError('Only active ambassadors can place orders for customers', 403)
+    }
+
+    const { firstName, lastName, phone, items, notes, address } = request.body as {
+      firstName: string
+      lastName: string
+      phone: string
+      items: Array<{ variantId: string; quantity: number }>
+      notes?: string
+      address?: string
+    }
+
+    if (!firstName?.trim() || !lastName?.trim() || !phone?.trim()) {
+      throw new AppError('Customer first name, last name, and phone are required', 400)
+    }
+    if (!items?.length) throw new AppError('At least one item is required', 400)
+
+    // Find existing customer by phone, or create a guest account
+    let customer = await fastify.prisma.user.findUnique({ where: { phone: phone.trim() } })
+    if (!customer) {
+      const digits = phone.trim().replace(/\D/g, '')
+      const guestEmail = `guest.${digits}@tlakatreats.local`
+      const passwordHash = await bcrypt.hash(Math.random().toString(36) + Date.now(), 10)
+      const customerRole = await fastify.prisma.role.findUnique({ where: { name: 'CUSTOMER' } })
+      customer = await fastify.prisma.user.create({
+        data: {
+          email: guestEmail,
+          phone: phone.trim(),
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          passwordHash,
+          ...(customerRole ? { roles: { create: { roleId: customerRole.id } } } : {}),
+        },
+      })
+    }
+
+    const orderNotes = [
+      address?.trim() ? `Delivery: ${address.trim()}` : null,
+      notes?.trim() || null,
+    ].filter(Boolean).join(' | ') || undefined
+
+    const order = await orderService.create({
+      customerId: customer.id,
+      items,
+      ambassadorCode: ambassador.code,
+      notes: orderNotes,
+    })
+
     return reply.code(201).send(order)
   })
 
