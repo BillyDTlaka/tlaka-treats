@@ -15,7 +15,8 @@ export default function AmbassadorProductDetail() {
   const [loading, setLoading] = useState(true)
   const [selectedVariant, setSelectedVariant] = useState<any>(null)
   const [quantity, setQuantity] = useState(1)
-  const { addItem, getItemCount } = useCartStore()
+  const addItem = useCartStore((s) => s.addItem)
+  const cartCount = useCartStore((s) => s.getItemCount())
 
   useEffect(() => {
     productsApi.getById(id).then((p) => {
@@ -44,8 +45,9 @@ export default function AmbassadorProductDetail() {
       variantName: selectedVariant.name,
       price,
     })
+    setQuantity(1)
     Alert.alert('Added! 🛍️', `${quantity}× ${product.name} added to your cart`, [
-      { text: 'Keep Shopping', style: 'cancel' },
+      { text: 'Keep Shopping', onPress: () => router.back() },
       { text: 'View Cart', onPress: () => router.push('/(ambassador)/checkout' as any) },
     ])
   }
@@ -54,7 +56,6 @@ export default function AmbassadorProductDetail() {
   if (!product) return <View style={styles.loading}><Text style={styles.errorText}>Product not found</Text></View>
 
   const price = selectedVariant ? getAmbassadorPrice(selectedVariant) : null
-  const cartCount = getItemCount()
 
   return (
     <View style={styles.container}>

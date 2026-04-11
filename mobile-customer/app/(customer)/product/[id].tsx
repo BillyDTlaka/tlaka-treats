@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Alert, Platform,
+  ActivityIndicator, Alert,
 } from 'react-native'
 import { useLocalSearchParams, router } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -15,7 +15,8 @@ export default function ProductDetailScreen() {
   const [loading, setLoading] = useState(true)
   const [selectedVariant, setSelectedVariant] = useState<any>(null)
   const [quantity, setQuantity] = useState(1)
-  const { addItem, getItemCount } = useCartStore()
+  const addItem = useCartStore((s) => s.addItem)
+  const cartCount = useCartStore((s) => s.getItemCount())
 
   useEffect(() => {
     productsApi.getById(id).then((p) => {
@@ -42,8 +43,9 @@ export default function ProductDetailScreen() {
       variantName: selectedVariant.name,
       price,
     })
+    setQuantity(1)
     Alert.alert('Added! 🛍️', `${quantity}× ${product.name} added to your cart`, [
-      { text: 'Keep Shopping', style: 'cancel' },
+      { text: 'Keep Shopping', onPress: () => router.back() },
       { text: 'View Cart', onPress: () => router.push('/(customer)/checkout') },
     ])
   }
@@ -65,7 +67,6 @@ export default function ProductDetailScreen() {
   }
 
   const price = selectedVariant ? getRetailPrice(selectedVariant) : null
-  const cartCount = getItemCount()
 
   return (
     <View style={styles.container}>
