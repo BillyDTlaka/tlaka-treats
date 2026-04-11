@@ -39,7 +39,7 @@ export class AuthService {
   async login(email: string, password: string) {
     const user = await this.prisma.user.findUnique({
       where: { email },
-      include: { roles: { include: { role: true } } },
+      include: { roles: { include: { role: { include: { permissions: true } } } } },
     })
 
     if (!user) throw new AppError('Invalid email or password', 401)

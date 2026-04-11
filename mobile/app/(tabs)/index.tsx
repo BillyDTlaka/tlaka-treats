@@ -19,6 +19,19 @@ function fmt(n: number) {
 export default function DashboardScreen() {
   const { user, logout } = useAuth();
   const router = useRouter();
+
+  // Non-admin staff (e.g. baker) — redirect to their first permitted tab
+  const isAdmin = (user?.roles ?? []).includes('ADMIN');
+  const perms: string[] = user?.permissions ?? [];
+  if (!isAdmin) {
+    const canOrders    = perms.some(p => p.includes(':order'));
+    const canInventory = perms.some(p => p.includes(':inventory'));
+    const canPeople    = perms.some(p => p.includes(':employee'));
+    if (canOrders)    { router.replace('/(tabs)/orders' as any); return null; }
+    if (canInventory) { router.replace('/(tabs)/stock'  as any); return null; }
+    if (canPeople)    { router.replace('/(tabs)/people' as any); return null; }
+  }
+
   const { data, isLoading, refetch, isRefetching } = useDashboard();
 
   if (isLoading) {

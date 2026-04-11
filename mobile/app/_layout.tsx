@@ -22,10 +22,18 @@ const queryClient = new QueryClient({
   },
 });
 
-function getHomeRoute(user: any): string {
+// Returns true if this user should land in the staff /(tabs) area.
+// Covers ADMIN role and any custom role that has at least one management permission.
+function isStaffUser(user: any): boolean {
   const roles: string[] = user?.roles ?? [];
-  if (roles.includes('ADMIN'))      return '/(tabs)';
-  if (roles.includes('AMBASSADOR')) return '/(ambassador)/dashboard';
+  if (roles.includes('ADMIN')) return true;
+  const permissions: string[] = user?.permissions ?? [];
+  return permissions.some(p => p.startsWith('manage:') || p.startsWith('create:') || p.startsWith('update:') || p.startsWith('delete:'));
+}
+
+function getHomeRoute(user: any): string {
+  if (isStaffUser(user))               return '/(tabs)';
+  if (user?.roles?.includes('AMBASSADOR')) return '/(ambassador)/dashboard';
   return '/(customer)/home';
 }
 
@@ -36,10 +44,8 @@ function RootLayoutNav() {
 
   useEffect(() => {
     if (isLoading) return;
-    const inAuth       = segments[0] === '(auth)';
-    const inAdmin      = segments[0] === '(tabs)';
-    const roles: string[] = user?.roles ?? [];
-    const isAdmin      = roles.includes('ADMIN');
+    const inAuth  = segments[0] === '(auth)';
+    const inAdmin = segments[0] === '(tabs)';
 
     if (!user && !inAuth) {
       router.replace('/(auth)/login');
@@ -49,8 +55,8 @@ function RootLayoutNav() {
       router.replace(getHomeRoute(user) as any);
       return;
     }
-    // Non-admin tried to access admin area — send them home
-    if (user && inAdmin && !isAdmin) {
+    // Non-staff trying to access admin tabs — send them home
+    if (user && inAdmin && !isStaffUser(user)) {
       router.replace(getHomeRoute(user) as any);
     }
   }, [user, isLoading, segments]);

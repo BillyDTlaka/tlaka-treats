@@ -23,24 +23,28 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/register', async (request, reply) => {
     const body = registerSchema.parse(request.body)
     const user = await authService.register(body)
-    const token = fastify.jwt.sign({
-      id: user.id,
-      email: user.email,
-      roles: user.roles.map(r => r.role.name),
+    const roles = user.roles.map((r: any) => r.role.name)
+    const permissions: string[] = [] // new accounts only get CUSTOMER role — no management permissions
+    const token = fastify.jwt.sign({ id: user.id, email: user.email, roles })
+    return reply.code(201).send({
+      token,
+      user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, roles, permissions },
     })
-    return reply.code(201).send({ token, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, roles: user.roles.map((r: any) => r.role.name) } })
   })
 
   // POST /auth/login
   fastify.post('/login', async (request, reply) => {
     const { email, password } = loginSchema.parse(request.body)
     const user = await authService.login(email, password)
-    const token = fastify.jwt.sign({
-      id: user.id,
-      email: user.email,
-      roles: user.roles.map(r => r.role.name),
-    })
-    return { token, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, roles: user.roles.map(r => r.role.name) } }
+    const roles = user.roles.map((r: any) => r.role.name)
+    // Flatten all permissions from all roles into "action:subject" strings
+    const permissions: string[] = Array.from(new Set(
+      user.roles.flatMap((ur: any) =>
+        (ur.role.permissions ?? []).map((p: any) => `${p.action}:${p.subject}`)
+      )
+    ))
+    const token = fastify.jwt.sign({ id: user.id, email: user.email, roles })
+    return { token, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, roles, permissions } }
   })
 
   // GET /auth/me
