@@ -1,23 +1,23 @@
 {
   "expo": {
-    "name": "Tlaka Treats Admin",
-    "slug": "tlaka-treats-admin",
+    "name": "Tlaka Treats",
+    "slug": "tlaka-treats",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "ttadmin",
+    "scheme": "tlakatreats",
     "userInterfaceStyle": "light",
     "splash": {
       "backgroundColor": "#8B3A3A"
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "co.za.tlakatreats.admin"
+      "bundleIdentifier": "co.za.tlakatreats"
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#8B3A3A"
       },
-      "package": "co.za.tlakatreats.admin"
+      "package": "co.za.tlakatreats"
     },
     "plugins": [
       "expo-router",
@@ -29,7 +29,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "97ef1f0a-07de-4205-9fa6-298aabee6135"
+        "projectId": ""
       }
     },
     "owner": "billydtlaka"

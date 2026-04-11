@@ -13,8 +13,12 @@ import Constants from 'expo-constants'
  * In production, falls back to the apiUrl in app.json extra.
  */
 const getBaseUrl = (): string => {
+  // Prefer the env var — set EXPO_PUBLIC_API_URL in .env to point at any backend
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL
+  }
   if (__DEV__) {
-    // Primary: Expo Go runtime config (physical device via Expo Go)
+    // Physical device via Expo Go — derive host from debugger connection
     const debuggerHost = (Constants as any).expoGoConfig?.debuggerHost
       ?? (Constants as any).manifest2?.extra?.expoClient?.hostUri
       ?? ''

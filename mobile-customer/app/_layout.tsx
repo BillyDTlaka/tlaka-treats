@@ -10,22 +10,18 @@ const queryClient = new QueryClient({
 
 function getHomeRoute(user: any): string {
   const roles: string[] = user?.roles ?? [];
-  if (roles.includes('ADMIN'))      return '/(tabs)';
   if (roles.includes('AMBASSADOR')) return '/(ambassador)/dashboard';
   return '/(customer)/home';
 }
 
 function RootLayoutNav() {
   const { user, isLoading } = useAuth();
-  const router  = useRouter();
+  const router   = useRouter();
   const segments = useSegments();
 
   useEffect(() => {
     if (isLoading) return;
-    const inAuth       = segments[0] === '(auth)';
-    const inAdmin      = segments[0] === '(tabs)';
-    const roles: string[] = user?.roles ?? [];
-    const isAdmin      = roles.includes('ADMIN');
+    const inAuth = segments[0] === '(auth)';
 
     if (!user && !inAuth) {
       router.replace('/(auth)/login');
@@ -33,18 +29,12 @@ function RootLayoutNav() {
     }
     if (user && inAuth) {
       router.replace(getHomeRoute(user) as any);
-      return;
-    }
-    // Non-admin tried to access admin area — send them home
-    if (user && inAdmin && !isAdmin) {
-      router.replace(getHomeRoute(user) as any);
     }
   }, [user, isLoading, segments]);
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(auth)" />
-      <Stack.Screen name="(tabs)" />
       <Stack.Screen name="(customer)" />
       <Stack.Screen name="(ambassador)" />
     </Stack>

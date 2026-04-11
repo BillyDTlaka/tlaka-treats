@@ -138,6 +138,71 @@ const ambassadorRoutes: FastifyPluginAsync = async (fastify) => {
     return ambassador
   })
 
+  // ── GET /ambassadors/me/earnings ─────────────────────────────────────────
+  // Ambassador: full commission + payout history with summary
+  fastify.get('/me/earnings', { preHandler: [authenticate] }, async (request) => {
+    const user = request.user as { id: string }
+    const ambassador = await fastify.prisma.ambassador.findUnique({
+      where: { userId: user.id },
+      include: {
+        commissions: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            order: { select: { id: true, createdAt: true, total: true } },
+            payout: { select: { id: true, createdAt: true, reference: true } },
+          },
+        },
+        payouts: { orderBy: { createdAt: 'desc' } },
+      },
+    })
+    if (!ambassador) throw new AppError('Not an ambassador', 404)
+
+    const commissions = ambassador.commissions
+    const totalEarned   = commissions.reduce((s, c) => s + Number(c.amount), 0)
+    const totalPaid     = commissions.filter(c => c.status === 'PAID').reduce((s, c) => s + Number(c.amount), 0)
+    const totalPending  = commissions.filter(c => c.status === 'PENDING').reduce((s, c) => s + Number(c.amount), 0)
+    const pendingCount  = commissions.filter(c => c.status === 'PENDING').length
+
+    return {
+      commissionRate: ambassador.commissionRate,
+      summary: { totalEarned, totalPaid, totalPending, pendingCount },
+      commissions: ambassador.commissions,
+      payouts: ambassador.payouts,
+    }
+  })
+
+  // ── POST /ambassadors/me/payout-request ───────────────────────────────────
+  // Ambassador: request withdrawal of all pending commissions
+  fastify.post('/me/payout-request', { preHandler: [authenticate] }, async (request, reply) => {
+    const user = request.user as { id: string }
+    const { method = 'bank_transfer', notes } = request.body as { method?: string; notes?: string }
+
+    const ambassador = await fastify.prisma.ambassador.findUnique({ where: { userId: user.id } })
+    if (!ambassador) throw new AppError('Not an ambassador', 404)
+    if (ambassador.status !== 'ACTIVE') throw new AppError('Your ambassador account must be active to request a payout', 403)
+
+    const pendingCommissions = await fastify.prisma.commission.findMany({
+      where: { ambassadorId: ambassador.id, status: 'PENDING' },
+    })
+    if (!pendingCommissions.length) throw new AppError('No pending earnings to withdraw', 400)
+
+    const total = pendingCommissions.reduce((s, c) => s + Number(c.amount), 0)
+    if (total < 50) throw new AppError(`Minimum payout is R50.00. Your balance is R${total.toFixed(2)}`, 400)
+
+    const payout = await fastify.prisma.payout.create({
+      data: {
+        ambassadorId: ambassador.id,
+        amount: total,
+        method,
+        notes: notes || null,
+        status: 'PENDING',
+        commissions: { connect: pendingCommissions.map(c => ({ id: c.id })) },
+      },
+    })
+
+    return reply.code(201).send({ payout, total, commissionCount: pendingCommissions.length })
+  })
+
   // ── PATCH /ambassadors/:id/status ─────────────────────────────────────────
   // Admin: ACTIVE / PENDING / SUSPENDED
   fastify.patch('/:id/status', {
