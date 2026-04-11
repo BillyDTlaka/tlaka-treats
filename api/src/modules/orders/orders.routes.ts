@@ -38,13 +38,14 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
       throw new AppError('Only active ambassadors can place orders for customers', 403)
     }
 
-    const { firstName, lastName, phone, items, notes, address } = request.body as {
+    const { firstName, lastName, phone, items, notes, address, paymentMethod } = request.body as {
       firstName: string
       lastName: string
       phone: string
       items: Array<{ variantId: string; quantity: number }>
       notes?: string
       address?: string
+      paymentMethod?: string
     }
 
     if (!firstName?.trim() || !lastName?.trim() || !phone?.trim()) {
@@ -83,7 +84,18 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
       notes: orderNotes,
     })
 
-    return reply.code(201).send(order)
+    // Store payment method on the created order
+    if (paymentMethod) {
+      await (fastify.prisma as any).order.update({
+        where: { id: order.id },
+        data: {
+          paymentMethod,
+          paymentStatus: paymentMethod === 'CARD' ? 'PENDING' : null,
+        },
+      })
+    }
+
+    return reply.code(201).send({ ...order, paymentMethod: paymentMethod ?? null })
   })
 
   // POST /orders - customer creates order
@@ -113,6 +125,32 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
     const ambassador = await fastify.prisma.ambassador.findUnique({ where: { userId: user.id } })
     if (!ambassador) return []
     return orderService.getForAmbassador(ambassador.id)
+  })
+
+  // GET /orders/ambassador/customers - unique customers linked to this ambassador
+  fastify.get('/ambassador/customers', { preHandler: [authenticate] }, async (request) => {
+    const user = request.user as { id: string }
+    const ambassador = await fastify.prisma.ambassador.findUnique({ where: { userId: user.id } })
+    if (!ambassador) return []
+
+    const orders = await fastify.prisma.order.findMany({
+      where: { ambassadorId: ambassador.id },
+      include: {
+        customer: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+
+    // Deduplicate — one entry per customer, most recent order first
+    const seen = new Set<string>()
+    const customers: any[] = []
+    for (const o of orders) {
+      if (o.customer && !seen.has(o.customerId)) {
+        seen.add(o.customerId)
+        customers.push(o.customer)
+      }
+    }
+    return customers
   })
 
   // GET /orders/:id - admin gets single order

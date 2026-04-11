@@ -260,6 +260,9 @@ model Order {
   deliveryFee  Decimal     @default(0) @db.Decimal(10, 2)
   total        Decimal     @db.Decimal(10, 2)
   notes          String?
+  paymentMethod  String?   // 'CASH' | 'EFT' | 'CARD'
+  paymentStatus  String?   // 'PENDING' | 'PAID' | 'FAILED'
+  payfastId      String?   // PayFast payment_id from ITN
   paymentRef     String?
   paidAt         DateTime?
   quoteId        String?

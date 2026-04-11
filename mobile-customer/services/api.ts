@@ -52,9 +52,17 @@ export const ordersApi = {
     address?: string
     items: Array<{ variantId: string; quantity: number }>
     notes?: string
+    paymentMethod?: 'CASH' | 'EFT' | 'CARD'
   }) => api.post('/orders/for-customer', data).then(r => r.data),
   getMy: () => api.get('/orders/my').then(r => r.data),
   getAmbassador: () => api.get('/orders/ambassador').then(r => r.data),
+  getAmbassadorCustomers: () => api.get('/orders/ambassador/customers').then(r => r.data),
+}
+
+export const paymentsApi = {
+  getEftDetails: () => api.get('/payments/eft-details').then(r => r.data),
+  initiatePayFast: (orderId: string) =>
+    api.post('/payments/payfast/initiate', { orderId }).then(r => r.data),
 }
 
 export const ambassadorsApi = {

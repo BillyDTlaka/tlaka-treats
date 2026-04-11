@@ -1,47 +1,168 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet,
-  Alert, ActivityIndicator,
+  Alert, ActivityIndicator, Modal, Linking,
 } from 'react-native'
 import { router } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useCartStore } from '../../store/cart.store'
-import { ordersApi } from '../../services/api'
+import { ordersApi, paymentsApi } from '../../services/api'
 import AddressAutocomplete from '../../components/AddressAutocomplete'
+
+type PaymentMethod = 'CASH' | 'EFT' | 'CARD'
+
+interface LinkedCustomer {
+  id: string
+  firstName: string
+  lastName: string
+  phone: string | null
+  email: string
+}
+
+interface EftDetails {
+  bankName: string
+  accountName: string
+  accountNumber: string
+  branchCode: string
+  accountType: string
+}
 
 export default function AmbassadorCheckout() {
   const insets = useSafeAreaInsets()
   const { items, notes, setNotes, removeItem, updateQuantity, getTotal, clearCart } = useCartStore()
 
-  const [placing, setPlacing] = useState(false)
+  // ── Customer state ──────────────────────────────────────────────────────────
+  const [linkedCustomers, setLinkedCustomers] = useState<LinkedCustomer[]>([])
+  const [customersLoading, setCustomersLoading] = useState(true)
+  const [showCustomerPicker, setShowCustomerPicker] = useState(false)
+  const [customerSearch, setCustomerSearch] = useState('')
+  const [selectedCustomer, setSelectedCustomer] = useState<LinkedCustomer | null>(null)
+  const [isNewCustomer, setIsNewCustomer] = useState(false)
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [phone, setPhone] = useState('')
+
+  // ── Delivery & payment state ────────────────────────────────────────────────
   const [deliveryAddress, setDeliveryAddress] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH')
+  const [placing, setPlacing] = useState(false)
+
+  // ── EFT confirmation modal ──────────────────────────────────────────────────
+  const [showEftModal, setShowEftModal] = useState(false)
+  const [eftDetails, setEftDetails] = useState<EftDetails | null>(null)
+  const [eftOrderRef, setEftOrderRef] = useState('')
+
+  const fetchLinkedCustomers = useCallback(async () => {
+    try {
+      const data = await ordersApi.getAmbassadorCustomers()
+      setLinkedCustomers(data)
+    } catch {
+      // non-fatal — ambassador may not have any customers yet
+    } finally {
+      setCustomersLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchLinkedCustomers() }, [fetchLinkedCustomers])
+
+  const filteredCustomers = linkedCustomers.filter((c) => {
+    if (!customerSearch.trim()) return true
+    const q = customerSearch.toLowerCase()
+    return (
+      c.firstName.toLowerCase().includes(q) ||
+      c.lastName.toLowerCase().includes(q) ||
+      c.phone?.includes(q)
+    )
+  })
+
+  const selectExistingCustomer = (c: LinkedCustomer) => {
+    setSelectedCustomer(c)
+    setIsNewCustomer(false)
+    setFirstName(c.firstName)
+    setLastName(c.lastName)
+    setPhone(c.phone ?? '')
+    setCustomerSearch('')
+    setShowCustomerPicker(false)
+  }
+
+  const switchToNewCustomer = () => {
+    setSelectedCustomer(null)
+    setIsNewCustomer(true)
+    setFirstName('')
+    setLastName('')
+    setPhone('')
+  }
 
   const handlePlaceOrder = async () => {
     if (items.length === 0) return Alert.alert('Empty Cart', 'Add some items first!')
-    if (!firstName.trim()) return Alert.alert('Missing Info', 'Please enter the customer\'s first name')
-    if (!lastName.trim()) return Alert.alert('Missing Info', 'Please enter the customer\'s last name')
-    if (!phone.trim()) return Alert.alert('Missing Info', 'Please enter the customer\'s contact number')
+
+    const fName = isNewCustomer || !selectedCustomer ? firstName.trim() : selectedCustomer.firstName
+    const lName = isNewCustomer || !selectedCustomer ? lastName.trim() : selectedCustomer.lastName
+    const pNumber = isNewCustomer || !selectedCustomer ? phone.trim() : (selectedCustomer.phone ?? '')
+
+    if (!fName) return Alert.alert('Missing Info', "Please enter the customer's first name")
+    if (!lName) return Alert.alert('Missing Info', "Please enter the customer's last name")
+    if (!pNumber) return Alert.alert('Missing Info', "Please enter the customer's contact number")
     if (!deliveryAddress.trim()) return Alert.alert('Delivery Address', 'Please enter the delivery address')
 
     setPlacing(true)
     try {
-      await ordersApi.createForCustomer({
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
-        phone: phone.trim(),
+      const order = await ordersApi.createForCustomer({
+        firstName: fName,
+        lastName: lName,
+        phone: pNumber,
         address: deliveryAddress.trim(),
         items: items.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
         notes: notes.trim() || undefined,
+        paymentMethod,
       })
+
+      const orderRef = `TT-${order.id.slice(-8).toUpperCase()}`
       clearCart()
-      Alert.alert(
-        'Order Placed! 🎉',
-        `Order placed for ${firstName.trim()} ${lastName.trim()}. Your commission will be applied once confirmed.`,
-        [{ text: 'View My Orders', onPress: () => router.replace('/(ambassador)/orders' as any) }]
-      )
+
+      if (paymentMethod === 'EFT') {
+        // Fetch bank details and show EFT modal
+        try {
+          const details = await paymentsApi.getEftDetails()
+          setEftDetails(details)
+        } catch {
+          setEftDetails({
+            bankName: 'Standard Bank',
+            accountName: 'Tlaka Treats (Pty) Ltd',
+            accountNumber: '000 000 0000',
+            branchCode: '051001',
+            accountType: 'Current Account',
+          })
+        }
+        setEftOrderRef(orderRef)
+        setShowEftModal(true)
+
+      } else if (paymentMethod === 'CARD') {
+        // Initiate PayFast and open in browser
+        try {
+          const { paymentUrl } = await paymentsApi.initiatePayFast(order.id)
+          await Linking.openURL(paymentUrl)
+          Alert.alert(
+            'Payment Opened',
+            `Complete the payment in your browser. Order ref: ${orderRef}`,
+            [{ text: 'Done', onPress: () => router.replace('/(ambassador)/orders' as any) }]
+          )
+        } catch {
+          Alert.alert(
+            'Payment Link Failed',
+            `Order was placed (${orderRef}) but the payment link could not be opened. You can retry payment from your orders.`,
+            [{ text: 'OK', onPress: () => router.replace('/(ambassador)/orders' as any) }]
+          )
+        }
+
+      } else {
+        // Cash on Delivery
+        Alert.alert(
+          'Order Placed! 🎉',
+          `Order ${orderRef} placed for ${fName} ${lName}.\nPayment collected on delivery.`,
+          [{ text: 'View Orders', onPress: () => router.replace('/(ambassador)/orders' as any) }]
+        )
+      }
     } catch (err: any) {
       Alert.alert('Order Failed', err?.response?.data?.message || 'Something went wrong. Please try again.')
     } finally {
@@ -50,6 +171,10 @@ export default function AmbassadorCheckout() {
   }
 
   const total = getTotal()
+
+  const customerName = selectedCustomer && !isNewCustomer
+    ? `${selectedCustomer.firstName} ${selectedCustomer.lastName}`
+    : null
 
   return (
     <View style={styles.container}>
@@ -76,36 +201,85 @@ export default function AmbassadorCheckout() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Customer Details */}
-          <Text style={styles.sectionTitle}>Customer Details</Text>
-          <View style={styles.row}>
-            <TextInput
-              style={[styles.textInput, { flex: 1, marginRight: 8 }]}
-              placeholder="First name *"
-              placeholderTextColor="#bbb"
-              value={firstName}
-              onChangeText={setFirstName}
-              autoCapitalize="words"
-            />
-            <TextInput
-              style={[styles.textInput, { flex: 1 }]}
-              placeholder="Last name *"
-              placeholderTextColor="#bbb"
-              value={lastName}
-              onChangeText={setLastName}
-              autoCapitalize="words"
-            />
-          </View>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Contact number *"
-            placeholderTextColor="#bbb"
-            value={phone}
-            onChangeText={setPhone}
-            keyboardType="phone-pad"
-          />
+          {/* ── Customer ────────────────────────────────────────────────── */}
+          <Text style={styles.sectionTitle}>Customer</Text>
 
-          {/* Delivery Address */}
+          {/* Existing customer picker */}
+          {!isNewCustomer && (
+            <TouchableOpacity
+              style={[styles.pickerBtn, selectedCustomer && styles.pickerBtnFilled]}
+              onPress={() => { setCustomerSearch(''); setShowCustomerPicker(true) }}
+            >
+              <Text style={styles.pickerIcon}>👤</Text>
+              <Text style={[styles.pickerValue, !selectedCustomer && styles.pickerPlaceholder]}>
+                {customerName ?? (customersLoading ? 'Loading customers…' : 'Select existing customer…')}
+              </Text>
+              {selectedCustomer
+                ? <TouchableOpacity onPress={() => setSelectedCustomer(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Text style={styles.clearBtn}>✕</Text>
+                  </TouchableOpacity>
+                : <Text style={styles.chevron}>▾</Text>
+              }
+            </TouchableOpacity>
+          )}
+
+          {/* Toggle new customer */}
+          <TouchableOpacity
+            style={styles.toggleLink}
+            onPress={() => isNewCustomer ? setIsNewCustomer(false) : switchToNewCustomer()}
+          >
+            <Text style={styles.toggleLinkText}>
+              {isNewCustomer ? '← Select existing customer' : '+ New customer'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* New customer form or selected customer details */}
+          {(isNewCustomer || selectedCustomer) && (
+            <View>
+              {isNewCustomer && (
+                <>
+                  <View style={styles.row}>
+                    <TextInput
+                      style={[styles.textInput, { flex: 1, marginRight: 8 }]}
+                      placeholder="First name *"
+                      placeholderTextColor="#bbb"
+                      value={firstName}
+                      onChangeText={setFirstName}
+                      autoCapitalize="words"
+                    />
+                    <TextInput
+                      style={[styles.textInput, { flex: 1 }]}
+                      placeholder="Last name *"
+                      placeholderTextColor="#bbb"
+                      value={lastName}
+                      onChangeText={setLastName}
+                      autoCapitalize="words"
+                    />
+                  </View>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Contact number *"
+                    placeholderTextColor="#bbb"
+                    value={phone}
+                    onChangeText={setPhone}
+                    keyboardType="phone-pad"
+                  />
+                </>
+              )}
+              {selectedCustomer && (
+                <View style={styles.customerCard}>
+                  <Text style={styles.customerCardName}>
+                    {selectedCustomer.firstName} {selectedCustomer.lastName}
+                  </Text>
+                  {selectedCustomer.phone && (
+                    <Text style={styles.customerCardDetail}>📞 {selectedCustomer.phone}</Text>
+                  )}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* ── Delivery Address ─────────────────────────────────────────── */}
           <Text style={styles.sectionTitle}>Delivery Address *</Text>
           <AddressAutocomplete
             value={deliveryAddress}
@@ -113,12 +287,12 @@ export default function AmbassadorCheckout() {
             placeholder="e.g. 12 Rose Street, Soweto, 1804"
           />
 
-          {/* Order Items */}
+          {/* ── Order Items ──────────────────────────────────────────────── */}
           <Text style={styles.sectionTitle}>Items ({items.length})</Text>
           {items.map((item) => (
             <View key={item.variantId} style={styles.cartItem}>
               <View style={styles.cartItemEmoji}>
-                <Text style={{ fontSize: 28 }}>🍪</Text>
+                <Text style={{ fontSize: 26 }}>🍪</Text>
               </View>
               <View style={styles.cartItemInfo}>
                 <Text style={styles.cartItemName}>{item.productName}</Text>
@@ -140,10 +314,38 @@ export default function AmbassadorCheckout() {
             </View>
           ))}
 
-          {/* Special Instructions */}
+          {/* ── Payment Method ───────────────────────────────────────────── */}
+          <Text style={styles.sectionTitle}>Payment Method</Text>
+          {([
+            { key: 'CASH', label: 'Cash on Delivery', icon: '💵', desc: 'Payment collected when order arrives' },
+            { key: 'EFT',  label: 'EFT / Bank Transfer', icon: '🏦', desc: "We'll share our banking details with the customer" },
+            { key: 'CARD', label: 'Debit / Credit Card', icon: '💳', desc: 'Secure online payment via PayFast' },
+          ] as { key: PaymentMethod; label: string; icon: string; desc: string }[]).map((pm) => (
+            <TouchableOpacity
+              key={pm.key}
+              style={[styles.paymentOption, paymentMethod === pm.key && styles.paymentOptionActive]}
+              onPress={() => setPaymentMethod(pm.key)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.paymentOptionLeft}>
+                <Text style={styles.paymentOptionIcon}>{pm.icon}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.paymentOptionLabel, paymentMethod === pm.key && styles.paymentOptionLabelActive]}>
+                    {pm.label}
+                  </Text>
+                  <Text style={styles.paymentOptionDesc}>{pm.desc}</Text>
+                </View>
+              </View>
+              <View style={[styles.radioOuter, paymentMethod === pm.key && styles.radioOuterActive]}>
+                {paymentMethod === pm.key && <View style={styles.radioInner} />}
+              </View>
+            </TouchableOpacity>
+          ))}
+
+          {/* ── Notes ───────────────────────────────────────────────────── */}
           <Text style={styles.sectionTitle}>Special Instructions (optional)</Text>
           <TextInput
-            style={[styles.textInput, { height: 80 }]}
+            style={[styles.textInput, { height: 72 }]}
             placeholder="e.g. No nuts, extra packaging..."
             placeholderTextColor="#bbb"
             value={notes}
@@ -151,10 +353,10 @@ export default function AmbassadorCheckout() {
             multiline
           />
 
-          {/* Order Summary */}
+          {/* ── Summary ─────────────────────────────────────────────────── */}
           <View style={styles.summaryCard}>
             <Text style={styles.summaryTitle}>Order Summary</Text>
-            <Text style={styles.ambassadorNote}>✓ Ambassador pricing applied — your commission will be earned</Text>
+            <Text style={styles.ambassadorNote}>✓ Ambassador pricing — your commission will be earned</Text>
             {items.map((item) => (
               <View key={item.variantId} style={styles.summaryRow}>
                 <Text style={styles.summaryItemName}>{item.productName} × {item.quantity}</Text>
@@ -166,7 +368,6 @@ export default function AmbassadorCheckout() {
               <Text style={styles.summaryTotal}>Total</Text>
               <Text style={styles.summaryTotalPrice}>R{total.toFixed(2)}</Text>
             </View>
-            <Text style={styles.summaryNote}>💳 Payment collected on delivery</Text>
           </View>
 
           <View style={{ height: 120 }} />
@@ -180,14 +381,99 @@ export default function AmbassadorCheckout() {
             onPress={handlePlaceOrder}
             disabled={placing}
           >
-            {placing ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.placeOrderText}>Place Order · R{total.toFixed(2)}</Text>
-            )}
+            {placing
+              ? <ActivityIndicator color="#fff" />
+              : <Text style={styles.placeOrderText}>
+                  {paymentMethod === 'CARD' ? '🔒 Pay via PayFast · ' : 'Place Order · '}R{total.toFixed(2)}
+                </Text>
+            }
           </TouchableOpacity>
         </View>
       )}
+
+      {/* ── Customer Picker Modal ────────────────────────────────────── */}
+      <Modal visible={showCustomerPicker} animationType="slide" transparent>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowCustomerPicker(false)}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Select Customer</Text>
+            <TextInput
+              style={styles.modalSearch}
+              placeholder="Search by name or phone…"
+              placeholderTextColor="#bbb"
+              value={customerSearch}
+              onChangeText={setCustomerSearch}
+              autoFocus
+            />
+            <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 320 }}>
+              {filteredCustomers.length === 0 ? (
+                <Text style={styles.modalEmpty}>
+                  {linkedCustomers.length === 0 ? 'No customers yet — orders you place will appear here' : 'No results'}
+                </Text>
+              ) : (
+                filteredCustomers.map((c) => (
+                  <TouchableOpacity key={c.id} style={styles.customerRow} onPress={() => selectExistingCustomer(c)}>
+                    <View style={styles.customerInitial}>
+                      <Text style={styles.customerInitialText}>{c.firstName[0].toUpperCase()}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.customerRowName}>{c.firstName} {c.lastName}</Text>
+                      {c.phone && <Text style={styles.customerRowPhone}>{c.phone}</Text>}
+                    </View>
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+            <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowCustomerPicker(false)}>
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── EFT Details Modal ─────────────────────────────────────────── */}
+      <Modal visible={showEftModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.eftTitle}>🏦 EFT Payment Details</Text>
+            <Text style={styles.eftSubtitle}>Share these banking details with your customer</Text>
+
+            {eftDetails && (
+              <View style={styles.eftDetailsCard}>
+                {[
+                  { label: 'Bank',           value: eftDetails.bankName },
+                  { label: 'Account Name',   value: eftDetails.accountName },
+                  { label: 'Account Number', value: eftDetails.accountNumber },
+                  { label: 'Branch Code',    value: eftDetails.branchCode },
+                  { label: 'Account Type',   value: eftDetails.accountType },
+                ].map(({ label, value }) => (
+                  <View key={label} style={styles.eftRow}>
+                    <Text style={styles.eftLabel}>{label}</Text>
+                    <Text style={styles.eftValue}>{value}</Text>
+                  </View>
+                ))}
+                <View style={[styles.eftRow, styles.eftRefRow]}>
+                  <Text style={styles.eftLabel}>Reference</Text>
+                  <Text style={[styles.eftValue, styles.eftRef]}>{eftOrderRef}</Text>
+                </View>
+              </View>
+            )}
+
+            <Text style={styles.eftNote}>
+              ⚠️ Customer must use <Text style={{ fontWeight: '800' }}>{eftOrderRef}</Text> as the payment reference
+            </Text>
+
+            <TouchableOpacity
+              style={styles.eftDoneBtn}
+              onPress={() => {
+                setShowEftModal(false)
+                router.replace('/(ambassador)/orders' as any)
+              }}
+            >
+              <Text style={styles.eftDoneText}>Done — View Orders</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   )
 }
@@ -199,31 +485,67 @@ const styles = StyleSheet.create({
   backIcon: { fontSize: 22, color: '#fff' },
   headerTitle: { flex: 1, fontSize: 18, fontWeight: '800', color: '#fff', textAlign: 'center' },
   scrollContent: { padding: 16 },
-  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#1a1a1a', marginBottom: 10, marginTop: 8 },
-  row: { flexDirection: 'row', marginBottom: 0 },
-  textInput: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e8d5d5',
-    padding: 14,
-    fontSize: 15,
-    color: '#1a1a1a',
-    marginBottom: 12,
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#1a1a1a', marginBottom: 10, marginTop: 14 },
+  row: { flexDirection: 'row' },
+
+  // Customer picker
+  pickerBtn: {
+    backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e8d5d5',
+    padding: 14, flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 10,
   },
+  pickerBtnFilled: { borderColor: '#8B3A3A' },
+  pickerIcon: { fontSize: 18 },
+  pickerValue: { flex: 1, fontSize: 15, color: '#1a1a1a', fontWeight: '600' },
+  pickerPlaceholder: { color: '#bbb', fontWeight: '400' },
+  clearBtn: { fontSize: 14, color: '#bbb', paddingLeft: 8 },
+  chevron: { fontSize: 16, color: '#999' },
+  toggleLink: { marginBottom: 12 },
+  toggleLinkText: { fontSize: 13, color: '#8B3A3A', fontWeight: '600' },
+  customerCard: {
+    backgroundColor: '#FFF0E6', borderRadius: 12, padding: 14, marginBottom: 12,
+    borderWidth: 1, borderColor: '#f5d0d0',
+  },
+  customerCardName: { fontSize: 15, fontWeight: '700', color: '#1a1a1a' },
+  customerCardDetail: { fontSize: 13, color: '#666', marginTop: 3 },
+
+  textInput: {
+    backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e8d5d5',
+    padding: 14, fontSize: 15, color: '#1a1a1a', marginBottom: 12,
+  },
+
+  // Cart items
   cartItem: { backgroundColor: '#fff', borderRadius: 14, padding: 12, flexDirection: 'row', alignItems: 'center', marginBottom: 10, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 },
-  cartItemEmoji: { width: 52, height: 52, backgroundColor: '#FFF0E6', borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 10 },
+  cartItemEmoji: { width: 46, height: 46, backgroundColor: '#FFF0E6', borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 10 },
   cartItemInfo: { flex: 1 },
-  cartItemName: { fontSize: 14, fontWeight: '700', color: '#1a1a1a' },
-  cartItemVariant: { fontSize: 12, color: '#999', marginTop: 1 },
-  cartItemPrice: { fontSize: 13, color: '#8B3A3A', fontWeight: '600', marginTop: 2 },
-  cartItemControls: { flexDirection: 'row', alignItems: 'center', gap: 8, marginRight: 8 },
-  qtyBtn: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#f0e8e8', justifyContent: 'center', alignItems: 'center' },
-  qtyBtnText: { fontSize: 16, color: '#8B3A3A', fontWeight: '700', lineHeight: 20 },
-  qtyValue: { fontSize: 15, fontWeight: '700', color: '#1a1a1a', minWidth: 20, textAlign: 'center' },
+  cartItemName: { fontSize: 13, fontWeight: '700', color: '#1a1a1a' },
+  cartItemVariant: { fontSize: 11, color: '#999', marginTop: 1 },
+  cartItemPrice: { fontSize: 12, color: '#8B3A3A', fontWeight: '600', marginTop: 2 },
+  cartItemControls: { flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 6 },
+  qtyBtn: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#f0e8e8', justifyContent: 'center', alignItems: 'center' },
+  qtyBtnText: { fontSize: 15, color: '#8B3A3A', fontWeight: '700', lineHeight: 18 },
+  qtyValue: { fontSize: 14, fontWeight: '700', color: '#1a1a1a', minWidth: 18, textAlign: 'center' },
   removeBtn: { padding: 4 },
-  removeBtnText: { fontSize: 14, color: '#ccc' },
-  summaryCard: { backgroundColor: '#fff', borderRadius: 16, padding: 18, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, elevation: 1, marginTop: 8 },
+  removeBtnText: { fontSize: 13, color: '#ccc' },
+
+  // Payment method
+  paymentOption: {
+    backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 10,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderWidth: 1.5, borderColor: '#e8d5d5',
+    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, elevation: 1,
+  },
+  paymentOptionActive: { borderColor: '#8B3A3A', backgroundColor: '#FFF8F5' },
+  paymentOptionLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12 },
+  paymentOptionIcon: { fontSize: 24 },
+  paymentOptionLabel: { fontSize: 14, fontWeight: '700', color: '#1a1a1a' },
+  paymentOptionLabelActive: { color: '#8B3A3A' },
+  paymentOptionDesc: { fontSize: 11, color: '#aaa', marginTop: 2 },
+  radioOuter: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: '#ccc', justifyContent: 'center', alignItems: 'center' },
+  radioOuterActive: { borderColor: '#8B3A3A' },
+  radioInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#8B3A3A' },
+
+  // Summary
+  summaryCard: { backgroundColor: '#fff', borderRadius: 16, padding: 18, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, elevation: 1, marginTop: 4 },
   summaryTitle: { fontSize: 16, fontWeight: '700', color: '#1a1a1a', marginBottom: 6 },
   ambassadorNote: { fontSize: 12, color: '#10B981', fontWeight: '600', marginBottom: 12 },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
@@ -232,7 +554,8 @@ const styles = StyleSheet.create({
   summaryDivider: { height: 1, backgroundColor: '#f0e0e0', marginVertical: 10 },
   summaryTotal: { fontSize: 15, fontWeight: '700', color: '#1a1a1a' },
   summaryTotalPrice: { fontSize: 17, fontWeight: '800', color: '#8B3A3A' },
-  summaryNote: { fontSize: 12, color: '#999', marginTop: 10, textAlign: 'center' },
+
+  // Bottom bar
   emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
   emptyEmoji: { fontSize: 64, marginBottom: 16 },
   emptyTitle: { fontSize: 20, fontWeight: '800', color: '#1a1a1a', marginBottom: 8 },
@@ -243,4 +566,33 @@ const styles = StyleSheet.create({
   placeOrderBtn: { backgroundColor: '#8B3A3A', borderRadius: 14, padding: 16, alignItems: 'center' },
   placeOrderBtnDisabled: { opacity: 0.6 },
   placeOrderText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+
+  // Shared modal
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalSheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
+  modalTitle: { fontSize: 17, fontWeight: '700', color: '#1a1a1a', textAlign: 'center', marginBottom: 12 },
+  modalSearch: { backgroundColor: '#f5f0eb', borderRadius: 10, padding: 12, fontSize: 15, color: '#1a1a1a', marginBottom: 10 },
+  modalEmpty: { textAlign: 'center', color: '#999', paddingVertical: 24, fontSize: 13 },
+  modalCancelBtn: { alignItems: 'center', paddingTop: 16 },
+  modalCancelText: { fontSize: 15, color: '#999', fontWeight: '600' },
+
+  // Customer picker rows
+  customerRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f5f0eb', gap: 12 },
+  customerInitial: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#FFF0E6', justifyContent: 'center', alignItems: 'center' },
+  customerInitialText: { fontSize: 16, fontWeight: '700', color: '#8B3A3A' },
+  customerRowName: { fontSize: 15, fontWeight: '600', color: '#1a1a1a' },
+  customerRowPhone: { fontSize: 12, color: '#999', marginTop: 2 },
+
+  // EFT modal
+  eftTitle: { fontSize: 18, fontWeight: '800', color: '#1a1a1a', textAlign: 'center', marginBottom: 4 },
+  eftSubtitle: { fontSize: 13, color: '#999', textAlign: 'center', marginBottom: 16 },
+  eftDetailsCard: { backgroundColor: '#FDF6F0', borderRadius: 14, padding: 16, marginBottom: 16 },
+  eftRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f0e8e8' },
+  eftRefRow: { borderBottomWidth: 0, marginTop: 4 },
+  eftLabel: { fontSize: 13, color: '#999', flex: 1 },
+  eftValue: { fontSize: 13, fontWeight: '700', color: '#1a1a1a', textAlign: 'right', flex: 1 },
+  eftRef: { color: '#8B3A3A', fontSize: 15 },
+  eftNote: { fontSize: 12, color: '#666', textAlign: 'center', marginBottom: 20, lineHeight: 18 },
+  eftDoneBtn: { backgroundColor: '#8B3A3A', borderRadius: 14, padding: 16, alignItems: 'center' },
+  eftDoneText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 })
