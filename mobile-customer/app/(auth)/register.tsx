@@ -5,13 +5,12 @@ import {
   ScrollView, ActivityIndicator,
 } from 'react-native'
 import { router } from 'expo-router'
-import { authApi } from '../../services/api'
-import { useAuthStore } from '../../store/auth.store'
+import { useAuth } from '../../context/AuthContext'
 
 export default function RegisterScreen() {
+  const { register } = useAuth()
   const [form, setForm] = useState({ email: '', password: '', firstName: '', lastName: '', phone: '' })
   const [loading, setLoading] = useState(false)
-  const { setAuth } = useAuthStore()
 
   const handleRegister = async () => {
     if (!form.email || !form.password || !form.firstName || !form.lastName) {
@@ -19,8 +18,14 @@ export default function RegisterScreen() {
     }
     setLoading(true)
     try {
-      const { token, user } = await authApi.register(form)
-      await setAuth(token, user)
+      await register({
+        email: form.email.trim().toLowerCase(),
+        password: form.password,
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
+        phone: form.phone.trim() || undefined,
+      })
+      // AuthContext updates user state → _layout.tsx routes to home automatically
     } catch (err: any) {
       Alert.alert('Registration Failed', err?.response?.data?.message || 'Something went wrong')
     } finally {
@@ -30,7 +35,7 @@ export default function RegisterScreen() {
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView contentContainerStyle={styles.inner}>
+      <ScrollView contentContainerStyle={styles.inner} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>Create Account</Text>
         <Text style={styles.subtitle}>Join the Tlaka Treats family 🍪</Text>
 

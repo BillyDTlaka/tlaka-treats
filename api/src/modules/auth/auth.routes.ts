@@ -28,7 +28,7 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
       email: user.email,
       roles: user.roles.map(r => r.role.name),
     })
-    return reply.code(201).send({ token, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName } })
+    return reply.code(201).send({ token, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName, roles: user.roles.map((r: any) => r.role.name) } })
   })
 
   // POST /auth/login

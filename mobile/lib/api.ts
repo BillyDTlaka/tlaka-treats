@@ -19,8 +19,9 @@ const del  = (url: string)               => client.delete(url).then(r => r.data)
 
 export const api = {
   auth: {
-    login:   (email: string, password: string) => post('/auth/login', { email, password }),
-    me:      ()                                => get('/auth/me'),
+    login:    (email: string, password: string) => post('/auth/login', { email, password }),
+    register: (data: { email: string; password: string; firstName: string; lastName: string; phone?: string }) => post('/auth/register', data),
+    me:       ()                                => get('/auth/me'),
   },
   dashboard: {
     summary: () => get('/dashboard/summary'),

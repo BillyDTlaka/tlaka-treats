@@ -2,16 +2,15 @@ import { useState } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, Alert, KeyboardAvoidingView, Platform,
-  ScrollView, ActivityIndicator
+  ScrollView, ActivityIndicator,
 } from 'react-native'
 import { router } from 'expo-router'
-import { authApi } from '../../services/api'
-import { useAuthStore } from '../../store/auth.store'
+import { useAuth } from '../../context/AuthContext'
 
 export default function RegisterScreen() {
+  const { register } = useAuth()
   const [form, setForm] = useState({ email: '', password: '', firstName: '', lastName: '', phone: '' })
   const [loading, setLoading] = useState(false)
-  const { setAuth } = useAuthStore()
 
   const handleRegister = async () => {
     if (!form.email || !form.password || !form.firstName || !form.lastName) {
@@ -19,8 +18,14 @@ export default function RegisterScreen() {
     }
     setLoading(true)
     try {
-      const { token, user } = await authApi.register(form)
-      await setAuth(token, user)
+      await register({
+        email: form.email.trim().toLowerCase(),
+        password: form.password,
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
+        phone: form.phone.trim() || undefined,
+      })
+      // AuthContext updates user state → _layout.tsx routes to home automatically
     } catch (err: any) {
       Alert.alert('Registration Failed', err?.response?.data?.message || 'Something went wrong')
     } finally {
@@ -30,7 +35,7 @@ export default function RegisterScreen() {
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView contentContainerStyle={styles.inner}>
+      <ScrollView contentContainerStyle={styles.inner} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>Create Account</Text>
         <Text style={styles.subtitle}>Join the Tlaka Treats family</Text>
 
@@ -38,7 +43,7 @@ export default function RegisterScreen() {
           <TextInput
             key={field}
             style={styles.input}
-            placeholder={field === 'firstName' ? 'First Name' : field === 'lastName' ? 'Last Name' : field.charAt(0).toUpperCase() + field.slice(1)}
+            placeholder={field === 'firstName' ? 'First Name *' : field === 'lastName' ? 'Last Name *' : field === 'email' ? 'Email *' : field === 'phone' ? 'Phone' : 'Password *'}
             placeholderTextColor="#999"
             secureTextEntry={field === 'password'}
             keyboardType={field === 'email' ? 'email-address' : field === 'phone' ? 'phone-pad' : 'default'}
@@ -52,8 +57,10 @@ export default function RegisterScreen() {
           {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Create Account</Text>}
         </TouchableOpacity>
 
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.link}>Already have an account? <Text style={styles.linkBold}>Sign In</Text></Text>
+        <TouchableOpacity onPress={() => router.back()} style={styles.loginRow}>
+          <Text style={styles.loginText}>
+            Already have an account? <Text style={styles.loginLink}>Sign In</Text>
+          </Text>
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -61,13 +68,14 @@ export default function RegisterScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#8B3A3A' },
-  inner: { flexGrow: 1, justifyContent: 'center', padding: 24, paddingTop: 60 },
-  title: { fontSize: 28, fontWeight: '800', color: '#fff', marginBottom: 4 },
-  subtitle: { fontSize: 16, color: '#f5d0d0', marginBottom: 32 },
-  input: { backgroundColor: '#fff', borderRadius: 12, padding: 16, fontSize: 16, marginBottom: 14, color: '#1a1a1a' },
-  button: { backgroundColor: '#5C1A1A', borderRadius: 12, padding: 16, alignItems: 'center', marginBottom: 20, marginTop: 8 },
+  container:  { flex: 1, backgroundColor: '#8B3A3A' },
+  inner:      { flexGrow: 1, justifyContent: 'center', padding: 24, paddingTop: 60 },
+  title:      { fontSize: 28, fontWeight: '800', color: '#fff', marginBottom: 4 },
+  subtitle:   { fontSize: 16, color: '#f5d0d0', marginBottom: 32 },
+  input:      { backgroundColor: '#fff', borderRadius: 12, padding: 16, fontSize: 16, marginBottom: 14, color: '#1a1a1a' },
+  button:     { backgroundColor: '#5C1A1A', borderRadius: 12, padding: 16, alignItems: 'center', marginBottom: 20, marginTop: 8 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  link: { textAlign: 'center', color: '#f5d0d0', fontSize: 14 },
-  linkBold: { fontWeight: '700', color: '#fff' },
+  loginRow:   { alignItems: 'center' },
+  loginText:  { color: '#f5d0d0', fontSize: 14 },
+  loginLink:  { fontWeight: '700', color: '#fff' },
 })
