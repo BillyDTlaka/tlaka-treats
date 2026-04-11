@@ -8,7 +8,8 @@ interface AuthContextType {
   token: string | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (data: { email: string; password: string; firstName: string; lastName: string; phone?: string }) => Promise<void>;
+  register: (data: { email: string; password: string; firstName: string; lastName: string; phone?: string }) => Promise<{ token: string; user: any }>;
+  applyAuth: (token: string, user: any) => void;
   logout: () => Promise<void>;
 }
 
@@ -38,9 +39,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function register(data: { email: string; password: string; firstName: string; lastName: string; phone?: string }) {
     const res = await authApi.register(data);
+    // Persist to storage so the session survives if the app is killed during the
+    // success screen, but do NOT update React state yet — the caller will call
+    // applyAuth() after showing a success screen, which triggers routing.
     await saveAuth(res.token, res.user);
-    setToken(res.token); setUser(res.user);
-    useAuthStore.setState({ token: res.token, user: res.user });
+    return { token: res.token, user: res.user };
+  }
+
+  function applyAuth(token: string, user: any) {
+    setToken(token); setUser(user);
+    useAuthStore.setState({ token, user });
   }
 
   async function logout() {
@@ -50,7 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, token, isLoading, login, register, applyAuth, logout }}>
       {children}
     </AuthContext.Provider>
   );
