@@ -12,6 +12,8 @@ export default function CustomerLayout() {
         <Stack.Screen name="checkout" />
         <Stack.Screen name="settings" />
         <Stack.Screen name="reports" />
+        <Stack.Screen name="ambassador-apply" />
+        <Stack.Screen name="ambassador-status" />
       </Stack>
     </SafeAreaProvider>
   )

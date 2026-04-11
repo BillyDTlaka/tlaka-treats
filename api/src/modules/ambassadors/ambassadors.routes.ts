@@ -34,10 +34,27 @@ const ambassadorRoutes: FastifyPluginAsync = async (fastify) => {
   }
 
   // ── POST /ambassadors/apply ───────────────────────────────────────────────
-  // Any logged-in user can apply — creates a PENDING ambassador record
+  // Any logged-in user can apply — collects full KYC + banking details in one step
   fastify.post('/apply', { preHandler: [authenticate] }, async (request, reply) => {
     const user = request.user as { id: string }
-    const { bio } = request.body as { bio?: string }
+    const {
+      bio,
+      phone, address,
+      idType, idNumber, idDocumentUrl,
+      bankName, accountName, accountNumber, branchCode, accountType,
+    } = request.body as {
+      bio?: string
+      phone?: string
+      address?: string
+      idType?: string
+      idNumber?: string
+      idDocumentUrl?: string
+      bankName?: string
+      accountName?: string
+      accountNumber?: string
+      branchCode?: string
+      accountType?: string
+    }
 
     const existing = await fastify.prisma.ambassador.findUnique({ where: { userId: user.id } })
     if (existing) throw new AppError('You have already applied to be an ambassador', 409)
@@ -46,8 +63,28 @@ const ambassadorRoutes: FastifyPluginAsync = async (fastify) => {
     if (!dbUser) throw new AppError('User not found', 404)
 
     const code = await generateCode(dbUser.firstName)
+
+    // KYC data — include banking details so admin can process payouts
+    const hasKyc = idType && idNumber && idDocumentUrl
+    const kycData = hasKyc ? {
+      phone: phone || dbUser.phone,
+      address,
+      idType,
+      idNumber,
+      idDocumentUrl,
+      banking: bankName ? { bankName, accountName, accountNumber, branchCode, accountType } : undefined,
+      submittedAt: new Date().toISOString(),
+    } : undefined
+
     const ambassador = await fastify.prisma.ambassador.create({
-      data: { userId: user.id, code, bio, status: 'PENDING' } as any,
+      data: {
+        userId: user.id,
+        code,
+        bio,
+        status: 'PENDING',
+        kycStatus: hasKyc ? 'SUBMITTED' : 'NOT_STARTED',
+        kycData: kycData ?? undefined,
+      } as any,
     })
 
     return reply.code(201).send(ambassador)

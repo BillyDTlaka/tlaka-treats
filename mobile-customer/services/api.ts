@@ -70,7 +70,20 @@ export const paymentsApi = {
 }
 
 export const ambassadorsApi = {
-  apply: (bio?: string) => api.post('/ambassadors/apply', { bio }).then(r => r.data),
+  apply: (data: {
+    bio?: string
+    phone?: string
+    address?: string
+    idType?: string
+    idNumber?: string
+    idDocumentUrl?: string
+    bankName?: string
+    accountName?: string
+    accountNumber?: string
+    branchCode?: string
+    accountType?: string
+  }) => api.post('/ambassadors/apply', data).then(r => r.data),
+  myApplication: () => api.get('/ambassadors/me').then(r => r.data).catch(() => null),
   me: () => api.get('/ambassadors/me').then(r => r.data),
   getActive: () => api.get('/ambassadors/active').then(r => r.data),
   earnings: () => api.get('/ambassadors/me/earnings').then(r => r.data),

@@ -5,7 +5,7 @@ import {
 } from 'react-native'
 import { router } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { productsApi } from '../../services/api'
+import { productsApi, ambassadorsApi } from '../../services/api'
 import { useAuthStore } from '../../store/auth.store'
 import { useCartStore } from '../../store/cart.store'
 import CustomerTabBar from '../../components/CustomerTabBar'
@@ -21,6 +21,7 @@ export default function CustomerHome() {
   const [refreshing, setRefreshing] = useState(false)
   const [search, setSearch] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
+  const [ambassadorApp, setAmbassadorApp] = useState<any>(undefined) // undefined=loading, null=none
 
   const fetchProducts = useCallback(async () => {
     try {
@@ -33,7 +34,12 @@ export default function CustomerHome() {
     }
   }, [])
 
-  useEffect(() => { fetchProducts() }, [fetchProducts])
+  const fetchAmbassadorStatus = useCallback(async () => {
+    const data = await ambassadorsApi.myApplication()
+    setAmbassadorApp(data) // null if no application
+  }, [])
+
+  useEffect(() => { fetchProducts(); fetchAmbassadorStatus() }, [fetchProducts, fetchAmbassadorStatus])
 
   useEffect(() => {
     let result = products
@@ -54,6 +60,7 @@ export default function CustomerHome() {
   const onRefresh = () => {
     setRefreshing(true)
     fetchProducts()
+    fetchAmbassadorStatus()
   }
 
   const getFromPrice = (product: any) => {
@@ -141,6 +148,35 @@ export default function CustomerHome() {
           contentContainerStyle={styles.listContent}
           numColumns={2}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#8B3A3A" />}
+          ListHeaderComponent={
+            ambassadorApp === null ? (
+              // No application — show invite banner
+              <TouchableOpacity style={styles.ambassadorBanner} onPress={() => router.push('/(customer)/ambassador-apply' as any)} activeOpacity={0.85}>
+                <View style={styles.ambassadorBannerLeft}>
+                  <Text style={styles.ambassadorBannerEmoji}>🌟</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.ambassadorBannerTitle}>Become an Ambassador</Text>
+                    <Text style={styles.ambassadorBannerSub}>Earn commission on every order with your unique code</Text>
+                  </View>
+                </View>
+                <Text style={styles.ambassadorBannerArrow}>→</Text>
+              </TouchableOpacity>
+            ) : ambassadorApp && ambassadorApp.status !== 'ACTIVE' ? (
+              // Has application — show status pill
+              <TouchableOpacity style={styles.ambassadorStatusBanner} onPress={() => router.push('/(customer)/ambassador-status' as any)} activeOpacity={0.85}>
+                <Text style={styles.ambassadorStatusEmoji}>
+                  {ambassadorApp.status === 'PENDING' ? '⏳' : '⚠️'}
+                </Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.ambassadorStatusTitle}>Ambassador Application</Text>
+                  <Text style={styles.ambassadorStatusSub}>
+                    {ambassadorApp.status === 'PENDING' ? 'Under review — tap to check status' : 'Account suspended — tap for details'}
+                  </Text>
+                </View>
+                <Text style={styles.ambassadorBannerArrow}>→</Text>
+              </TouchableOpacity>
+            ) : null
+          }
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Text style={styles.emptyEmoji}>🔍</Text>
@@ -260,4 +296,21 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', paddingVertical: 60 },
   emptyEmoji: { fontSize: 48, marginBottom: 12 },
   emptyText: { fontSize: 16, color: '#999' },
+  ambassadorBanner: {
+    backgroundColor: '#8B3A3A', borderRadius: 16, padding: 16, marginBottom: 16,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  ambassadorBannerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12 },
+  ambassadorBannerEmoji: { fontSize: 28 },
+  ambassadorBannerTitle: { fontSize: 14, fontWeight: '800', color: '#fff' },
+  ambassadorBannerSub: { fontSize: 11, color: '#f5d0d0', marginTop: 2 },
+  ambassadorBannerArrow: { fontSize: 18, color: '#fff', fontWeight: '700' },
+  ambassadorStatusBanner: {
+    backgroundColor: '#FFF3CD', borderRadius: 16, padding: 16, marginBottom: 16,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderWidth: 1, borderColor: '#ffeeba',
+  },
+  ambassadorStatusEmoji: { fontSize: 24, marginRight: 12 },
+  ambassadorStatusTitle: { fontSize: 14, fontWeight: '800', color: '#856404' },
+  ambassadorStatusSub: { fontSize: 11, color: '#856404', marginTop: 2 },
 })
