@@ -50,6 +50,8 @@ export const ordersApi = {
     lastName: string
     phone: string
     address?: string
+    addressId?: string
+    fulfillmentType?: 'DELIVERY' | 'COLLECT'
     items: Array<{ variantId: string; quantity: number }>
     notes?: string
     paymentMethod?: 'CASH' | 'EFT' | 'CARD'
@@ -57,6 +59,8 @@ export const ordersApi = {
   getMy: () => api.get('/orders/my').then(r => r.data),
   getAmbassador: () => api.get('/orders/ambassador').then(r => r.data),
   getAmbassadorCustomers: () => api.get('/orders/ambassador/customers').then(r => r.data),
+  getCustomerAddresses: (customerId: string) =>
+    api.get(`/orders/ambassador/customers/${customerId}/addresses`).then(r => r.data),
 }
 
 export const paymentsApi = {

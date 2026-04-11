@@ -38,13 +38,15 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
       throw new AppError('Only active ambassadors can place orders for customers', 403)
     }
 
-    const { firstName, lastName, phone, items, notes, address, paymentMethod } = request.body as {
+    const { firstName, lastName, phone, items, notes, address, addressId, fulfillmentType, paymentMethod } = request.body as {
       firstName: string
       lastName: string
       phone: string
       items: Array<{ variantId: string; quantity: number }>
       notes?: string
-      address?: string
+      address?: string      // free-text new address — will be saved for the customer
+      addressId?: string    // ID of an existing saved address
+      fulfillmentType?: 'DELIVERY' | 'COLLECT'
       paymentMethod?: string
     }
 
@@ -72,13 +74,32 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
       })
     }
 
+    // Resolve address ID — use existing or save new one
+    let resolvedAddressId: string | undefined = addressId
+    if (!resolvedAddressId && address?.trim() && fulfillmentType !== 'COLLECT') {
+      // Save the new address against the customer so it appears next time
+      const saved = await fastify.prisma.address.create({
+        data: {
+          userId: customer.id,
+          street: address.trim(),
+          city: '—',
+          province: '—',
+          postalCode: '0000',
+          isDefault: false,
+        },
+      })
+      resolvedAddressId = saved.id
+    }
+
     const orderNotes = [
-      address?.trim() ? `Delivery: ${address.trim()}` : null,
+      fulfillmentType === 'COLLECT' ? 'COLLECT — customer will collect' : null,
+      address?.trim() && fulfillmentType !== 'COLLECT' ? `Delivery: ${address.trim()}` : null,
       notes?.trim() || null,
     ].filter(Boolean).join(' | ') || undefined
 
     const order = await orderService.create({
       customerId: customer.id,
+      addressId: resolvedAddressId,
       items,
       ambassadorCode: ambassador.code,
       notes: orderNotes,
@@ -151,6 +172,27 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
       }
     }
     return customers
+  })
+
+  // GET /orders/ambassador/customers/:customerId/addresses
+  // Returns saved delivery addresses for a customer linked to this ambassador
+  fastify.get('/ambassador/customers/:customerId/addresses', { preHandler: [authenticate] }, async (request) => {
+    const user = request.user as { id: string }
+    const { customerId } = request.params as { customerId: string }
+
+    // Verify this ambassador is actually linked to this customer
+    const ambassador = await fastify.prisma.ambassador.findUnique({ where: { userId: user.id } })
+    if (!ambassador) return []
+
+    const linked = await fastify.prisma.order.findFirst({
+      where: { ambassadorId: ambassador.id, customerId },
+    })
+    if (!linked) return []
+
+    return fastify.prisma.address.findMany({
+      where: { userId: customerId },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
+    })
   })
 
   // GET /orders/:id - admin gets single order
