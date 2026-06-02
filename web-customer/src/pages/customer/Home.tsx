@@ -49,7 +49,7 @@ export default function CustomerHome() {
       <div style={{ background: '#8B3A3A', padding: '52px 16px 16px', flexShrink: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <img src="/logo.png" alt="" style={{ width: 40, height: 40, borderRadius: 10, objectFit: 'cover' }} />
+            <img src="/logo.png" alt="" style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'contain', background: '#fff', padding: 2 }} />
             <div>
               <p style={{ fontSize: 18, fontWeight: 800, color: '#fff' }}>Hey, {user?.firstName} 👋</p>
               <p style={{ fontSize: 12, color: '#f5d0d0', marginTop: 1 }}>What are you craving today?</p>

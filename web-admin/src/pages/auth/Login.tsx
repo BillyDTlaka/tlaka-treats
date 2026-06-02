@@ -46,7 +46,7 @@ export default function AdminLogin() {
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', background: '#fff' }}>
       <div style={{ padding: 28, display: 'flex', flexDirection: 'column', maxWidth: 480, width: '100%', margin: '0 auto' }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 40 }}>
-          <img src="/logo.png" alt="Tlaka Treats" style={{ width: 96, height: 96, borderRadius: 24, marginBottom: 16, objectFit: 'cover', boxShadow: '0 4px 16px rgba(139,58,58,0.25)' }} />
+          <img src="/logo.png" alt="Tlaka Treats" style={{ width: 120, height: 120, marginBottom: 8, objectFit: 'contain' }} />
           <h1 style={{ fontSize: 24, fontWeight: 900, color: '#111827', margin: 0 }}>Tlaka Treats</h1>
           <p style={{ fontSize: 13, color: '#6B7280', marginTop: 6 }}>Admin & Staff Portal</p>
         </div>

@@ -100,7 +100,7 @@ export default function AmbassadorDashboard() {
         {/* Header */}
         <div style={{ background: '#8B3A3A', padding: '52px 20px 22px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <img src="/logo.png" alt="" style={{ width: 40, height: 40, borderRadius: 10, objectFit: 'cover' }} />
+            <img src="/logo.png" alt="" style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'contain', background: '#fff', padding: 2 }} />
             <div>
               <p style={{ fontSize: 20, fontWeight: 800, color: '#fff' }}>Hey, {user?.firstName} 👋</p>
               <p style={{ fontSize: 12, color: '#f5d0d0', marginTop: 1 }}>Ambassador Dashboard</p>
