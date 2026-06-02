@@ -143,9 +143,13 @@ export default function Dashboard() {
         {/* Management */}
         <p className="section-title" style={{ marginTop: 20 }}>Management</p>
         <div className="card">
-          <button onClick={() => navigate('/admin/ambassadors')} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 14, width: '100%', background: 'none', border: 'none', cursor: 'pointer' }}>
+          <button onClick={() => navigate('/admin/ambassadors')} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 14, width: '100%', background: 'none', border: 'none', cursor: 'pointer', borderBottom: `1px solid ${COLORS.gray100}` }}>
             <p style={{ fontSize: 14, fontWeight: 700, color: COLORS.gray900 }}>🌟 Ambassador Applications</p>
             <p style={{ fontSize: 12, color: BRAND, fontWeight: 700 }}>Review →</p>
+          </button>
+          <button onClick={() => navigate('/admin/bohlale')} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 14, width: '100%', background: 'none', border: 'none', cursor: 'pointer' }}>
+            <p style={{ fontSize: 14, fontWeight: 700, color: COLORS.gray900 }}>✨ Bohlale AI Assistant</p>
+            <p style={{ fontSize: 12, color: BRAND, fontWeight: 700 }}>Open →</p>
           </button>
         </div>
 

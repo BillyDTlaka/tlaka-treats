@@ -56,6 +56,16 @@ export const api = {
     createConversation: ()        => post('/chat/conversations'),
     getConversation:    (id: string) => get(`/chat/conversations/${id}`),
   },
+  productsAdmin: {
+    list:               ()                          => get('/products/admin'),
+    create:             (data: any)                 => post('/products', data),
+    update:             (id: string, data: any)     => patch(`/products/${id}`, data),
+    addVariant:         (id: string, data: any)     => post(`/products/${id}/variants`, data),
+    removeVariant:      (id: string, vid: string)   => client.delete(`/products/${id}/variants/${vid}`).then(r => r.data),
+    updateVariantPrice: (id: string, vid: string, data: any) => patch(`/products/${id}/variants/${vid}/prices`, data),
+    listCategories:     ()                          => get('/products/categories'),
+    createCategory:     (name: string, desc?: string) => post('/products/categories', { name, description: desc }),
+  },
   ambassadors: {
     list:         ()                                            => get('/ambassadors'),
     updateStatus: (id: string, status: string, note?: string)  => patch(`/ambassadors/${id}/status`, { status, note }),

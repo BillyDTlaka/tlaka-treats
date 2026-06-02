@@ -4,6 +4,7 @@ import { isAdmin as checkIsAdmin } from './store/auth.store'
 import Login from './pages/auth/Login'
 import Dashboard from './pages/admin/Dashboard'
 import Orders from './pages/admin/Orders'
+import Products from './pages/admin/Products'
 import Stock from './pages/admin/Stock'
 import People from './pages/admin/People'
 import Bohlale from './pages/admin/Bohlale'
@@ -46,6 +47,7 @@ export default function App() {
       {/* Admin routes */}
       <Route path="/admin/dashboard"   element={<RequireAuth><Dashboard /></RequireAuth>} />
       <Route path="/admin/orders"      element={<RequireAuth><Orders /></RequireAuth>} />
+      <Route path="/admin/products"    element={<RequireAuth><Products /></RequireAuth>} />
       <Route path="/admin/stock"       element={<RequireAuth><Stock /></RequireAuth>} />
       <Route path="/admin/people"      element={<RequireAuth><People /></RequireAuth>} />
       <Route path="/admin/bohlale"     element={<RequireAuth><Bohlale /></RequireAuth>} />

@@ -4,6 +4,48 @@ import { NotFoundError } from '../../shared/errors'
 export class ProductService {
   constructor(private prisma: PrismaClient) {}
 
+  // ── Categories ────────────────────────────────────────────────────────────
+
+  async listCategories() {
+    return this.prisma.category.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+    })
+  }
+
+  async createCategory(name: string, description?: string) {
+    return this.prisma.category.upsert({
+      where: { name },
+      update: { isActive: true, description },
+      create: { name, description },
+    })
+  }
+
+  async deleteCategory(id: string) {
+    await this.prisma.category.update({ where: { id }, data: { isActive: false } })
+  }
+
+  // ── Variant helpers ───────────────────────────────────────────────────────
+
+  async deleteVariant(variantId: string) {
+    await this.prisma.productVariant.update({ where: { id: variantId }, data: { isActive: false } })
+  }
+
+  async updateVariantPrice(variantId: string, data: { tier: PricingTier; price: number }) {
+    const existing = await (this.prisma as any).productVariantPrice.findFirst({
+      where: { variantId, tier: data.tier },
+    })
+    if (existing) {
+      return (this.prisma as any).productVariantPrice.update({
+        where: { id: existing.id },
+        data: { price: data.price },
+      })
+    }
+    return (this.prisma as any).productVariantPrice.create({
+      data: { variantId, tier: data.tier, price: data.price },
+    })
+  }
+
   async getAll(tier: PricingTier = 'RETAIL') {
     const products = await this.prisma.product.findMany({
       where: { isActive: true, classification: 'SELLABLE' },
