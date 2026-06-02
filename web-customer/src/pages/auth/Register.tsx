@@ -11,7 +11,7 @@ const FIELDS = [
 ] as const
 
 export default function Register() {
-  const { register, applyAuth } = useAuth()
+  const { register, applyAuth, user } = useAuth()
   const navigate = useNavigate()
   const [form, setForm]         = useState({ email: '', password: '', firstName: '', lastName: '', phone: '' })
   const [loading, setLoading]   = useState(false)
@@ -19,6 +19,13 @@ export default function Register() {
   const [success, setSuccess]   = useState(false)
   const [countdown, setCountdown] = useState(3)
   const pendingAuth = useRef<{ token: string; user: any } | null>(null)
+
+  // Navigate once applyAuth has updated the user in context
+  useEffect(() => {
+    if (!user) return
+    if (user.roles?.includes('AMBASSADOR')) navigate('/ambassador/dashboard', { replace: true })
+    else navigate('/customer/home', { replace: true })
+  }, [user])
 
   useEffect(() => {
     if (!success) return

@@ -1,12 +1,25 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 
 export default function AdminLogin() {
-  const { login } = useAuth()
+  const { login, user, isLoading } = useAuth()
+  const navigate = useNavigate()
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState('')
+
+  // Redirect as soon as we have a user (covers "already logged in" and "just logged in")
+  useEffect(() => {
+    if (isLoading) return
+    if (!user) return
+    const roles: string[] = user.roles ?? []
+    const perms: string[] = user.permissions ?? []
+    if (roles.includes('ADMIN') || perms.length > 0) navigate('/admin/dashboard', { replace: true })
+    else if (roles.includes('AMBASSADOR')) navigate('/ambassador/dashboard', { replace: true })
+    else navigate('/customer/home', { replace: true })
+  }, [user, isLoading])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -14,6 +27,7 @@ export default function AdminLogin() {
     setLoading(true); setError('')
     try {
       await login(email.trim().toLowerCase(), password)
+      // navigation handled by the useEffect above
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Invalid credentials')
     } finally { setLoading(false) }

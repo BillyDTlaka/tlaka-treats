@@ -1,14 +1,22 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 
 export default function Login() {
-  const { login } = useAuth()
+  const { login, user, isLoading } = useAuth()
   const navigate = useNavigate()
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState('')
+
+  // Redirect as soon as we have a user (covers both "already logged in" and "just logged in")
+  useEffect(() => {
+    if (isLoading) return
+    if (!user) return
+    if (user.roles?.includes('AMBASSADOR')) navigate('/ambassador/dashboard', { replace: true })
+    else navigate('/customer/home', { replace: true })
+  }, [user, isLoading])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -16,6 +24,7 @@ export default function Login() {
     setLoading(true); setError('')
     try {
       await login(email.trim().toLowerCase(), password)
+      // navigation handled by the useEffect above
     } catch (err: any) {
       setError(err?.response?.data?.message || 'Invalid credentials')
     } finally {
@@ -56,17 +65,12 @@ export default function Login() {
             placeholder="••••••••"
             autoComplete="current-password"
           />
-          <button
-            type="submit"
-            className="btn-primary"
-            disabled={loading}
-            style={{ marginTop: 24 }}
-          >
+          <button type="submit" className="btn-primary" disabled={loading} style={{ marginTop: 24 }}>
             {loading ? <span className="spinner" style={{ width: 20, height: 20, margin: 'auto' }} /> : 'Sign In'}
           </button>
         </form>
 
-        <div className="register-link" style={{ textAlign: 'center', marginTop: 16, fontSize: 14, color: '#6B7280' }}>
+        <div style={{ textAlign: 'center', marginTop: 16, fontSize: 14, color: '#6B7280' }}>
           New here?{' '}
           <button onClick={() => navigate('/register')} style={{ background: 'none', border: 'none', color: '#8B3A3A', fontWeight: 700, cursor: 'pointer', fontSize: 14, padding: 0 }}>
             Create an account
