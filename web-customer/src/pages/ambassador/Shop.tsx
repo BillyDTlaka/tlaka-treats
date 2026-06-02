@@ -40,10 +40,13 @@ export default function AmbassadorShop() {
   return (
     <div className="screen" style={{ background: '#FDF6F0' }}>
       <div style={{ background: '#8B3A3A', padding: '52px 16px 16px', flexShrink: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
-          <div>
-            <p style={{ fontSize: 20, fontWeight: 800, color: '#fff' }}>Hey, {user?.firstName} 👋</p>
-            <p style={{ fontSize: 13, color: '#f5d0d0', marginTop: 2 }}>Order for yourself or customers</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <img src="/logo.png" alt="" style={{ width: 40, height: 40, borderRadius: 10, objectFit: 'cover' }} />
+            <div>
+              <p style={{ fontSize: 18, fontWeight: 800, color: '#fff' }}>Hey, {user?.firstName} 👋</p>
+              <p style={{ fontSize: 12, color: '#f5d0d0', marginTop: 1 }}>Order for yourself or customers</p>
+            </div>
           </div>
           <button onClick={() => navigate('/ambassador/checkout')} style={{ background: 'none', border: 'none', padding: 6, cursor: 'pointer', position: 'relative' }}>
             <span style={{ fontSize: 26 }}>🛍️</span>

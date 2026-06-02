@@ -88,9 +88,14 @@ export default function Register() {
 
   return (
     <div style={{ minHeight: '100vh', background: '#8B3A3A', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ flex: 1, overflow: 'auto', padding: '60px 24px 24px', display: 'flex', flexDirection: 'column' }}>
-        <h1 style={{ fontSize: 28, fontWeight: 800, color: '#fff', marginBottom: 4 }}>Create Account</h1>
-        <p style={{ fontSize: 16, color: '#f5d0d0', marginBottom: 32 }}>Join the Tlaka Treats family 🍪</p>
+      <div style={{ flex: 1, overflow: 'auto', padding: '48px 24px 24px', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28 }}>
+          <img src="/logo.png" alt="Tlaka Treats" style={{ width: 56, height: 56, borderRadius: 14, objectFit: 'cover' }} />
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 900, color: '#fff', margin: 0 }}>Create Account</h1>
+            <p style={{ fontSize: 14, color: '#f5d0d0', marginTop: 2 }}>Join the Tlaka Treats family</p>
+          </div>
+        </div>
 
         {error && (
           <div style={{ background: 'rgba(255,255,255,0.2)', borderRadius: 10, padding: '10px 14px', color: '#fff', fontSize: 14, marginBottom: 12 }}>

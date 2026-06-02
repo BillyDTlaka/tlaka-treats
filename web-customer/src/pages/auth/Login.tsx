@@ -44,10 +44,8 @@ export default function Login() {
       <div style={{ padding: 28, display: 'flex', flexDirection: 'column', maxWidth: 480, width: '100%', margin: '0 auto' }}>
         {/* Logo */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 40 }}>
-          <div style={{ width: 80, height: 80, borderRadius: 24, background: '#8B3A3A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 36, marginBottom: 16 }}>
-            🍪
-          </div>
-          <h1 style={{ fontSize: 26, fontWeight: 900, color: '#111827', marginBottom: 6, margin: 0 }}>Tlaka Treats</h1>
+          <img src="/logo.png" alt="Tlaka Treats" style={{ width: 100, height: 100, borderRadius: 24, marginBottom: 16, objectFit: 'cover', boxShadow: '0 4px 16px rgba(139,58,58,0.25)' }} />
+          <h1 style={{ fontSize: 26, fontWeight: 900, color: '#111827', margin: 0 }}>Tlaka Treats</h1>
           <p style={{ fontSize: 14, color: '#6B7280', textAlign: 'center', marginTop: 6 }}>Fresh treats delivered to your door</p>
         </div>
 
