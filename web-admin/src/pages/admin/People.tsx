@@ -50,7 +50,7 @@ export default function PeoplePage() {
       {isLoading ? (
         <div className="spinner-wrap"><div className="spinner" /></div>
       ) : (
-        <div className="scroll-content" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ padding: 16, paddingBottom: 100, display: 'flex', flexDirection: 'column', gap: 10 }}>
           {/* Staff */}
           {tab === 'staff' && (employees as any[]).map((emp: any) => {
             const name = `${emp.user?.firstName || ''} ${emp.user?.lastName || ''}`.trim() || 'Unknown'

@@ -70,7 +70,7 @@ export default function AmbassadorShop() {
         </div>
       )}
 
-      <div style={{ padding: '12px 12px 0' }}>
+      <div style={{ padding: '12px 12px 100px' }}>
         {loading ? (
           <div className="spinner-wrap"><div className="spinner" /></div>
         ) : filtered.length === 0 ? (

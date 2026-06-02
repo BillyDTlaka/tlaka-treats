@@ -47,7 +47,7 @@ export default function OrdersPage() {
       {isLoading ? (
         <div className="spinner-wrap"><div className="spinner" /></div>
       ) : (
-        <div className="scroll-content">
+        <div style={{ padding: 16, paddingBottom: 100, display: 'flex', flexDirection: 'column', gap: 10 }}>
           {orders.length === 0 && <p style={{ textAlign: 'center', color: COLORS.gray400, marginTop: 60, fontSize: 15 }}>No orders found</p>}
           {orders.map((order: any) => {
             const name = `${order.customer?.firstName || ''} ${order.customer?.lastName || ''}`.trim() || 'Unknown'

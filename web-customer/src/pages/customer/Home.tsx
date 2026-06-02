@@ -78,7 +78,7 @@ export default function CustomerHome() {
         </div>
       )}
 
-      <div style={{ padding: '12px 12px 0' }}>
+      <div style={{ padding: '12px 12px 100px' }}>
         {/* Ambassador banner */}
         {ambassadorApp === null && (
           <button className="amb-banner" onClick={() => navigate('/customer/ambassador-apply')} style={{ border: 'none', width: '100%', textAlign: 'left' }}>

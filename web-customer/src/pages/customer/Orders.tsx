@@ -27,7 +27,7 @@ export default function CustomerOrders() {
       {loading ? (
         <div className="spinner-wrap"><div className="spinner" /></div>
       ) : (
-        <div style={{ padding: 16 }}>
+        <div style={{ padding: 16, paddingBottom: 100 }}>
           {orders.length === 0 ? (
             <div className="empty-state">
               <span style={{ fontSize: 56, marginBottom: 16 }}>📦</span>

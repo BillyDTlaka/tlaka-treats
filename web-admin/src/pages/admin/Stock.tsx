@@ -50,7 +50,7 @@ export default function StockPage() {
       {isLoading ? (
         <div className="spinner-wrap"><div className="spinner" /></div>
       ) : (
-        <div className="scroll-content" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ padding: 16, paddingBottom: 100, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {filtered.map((item: any) => {
             const color = stockColor(item)
             const qty   = Number(item.currentStock)

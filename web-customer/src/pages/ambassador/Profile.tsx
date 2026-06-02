@@ -45,7 +45,7 @@ export default function AmbassadorProfile() {
       {loading ? (
         <div className="spinner-wrap"><div className="spinner" /></div>
       ) : (
-        <div style={{ padding: 16 }}>
+        <div style={{ padding: 16, paddingBottom: 100 }}>
           <div className="avatar-section">
             <div className="avatar">{user?.firstName?.[0]?.toUpperCase() ?? '?'}</div>
             <p style={{ fontSize: 20, fontWeight: 800, color: '#1a1a1a', marginBottom: 4 }}>{user?.firstName} {user?.lastName}</p>

@@ -46,7 +46,7 @@ export default function Dashboard() {
 
   return (
     <div className="screen" style={{ background: COLORS.gray50 }}>
-      <div className="scroll-content" style={{ padding: 16 }}>
+      <div style={{ padding: 16, paddingBottom: 100 }}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, paddingTop: 40 }}>
           <div>

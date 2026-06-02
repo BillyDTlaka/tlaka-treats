@@ -96,7 +96,7 @@ export default function AmbassadorDashboard() {
 
   return (
     <div className="screen" style={{ background: '#FDF6F0' }}>
-      <div style={{ overflowY: 'auto', flex: 1, paddingBottom: 80 }}>
+      <div style={{ flex: 1, paddingBottom: 100 }}>
         {/* Header */}
         <div style={{ background: '#8B3A3A', padding: '52px 20px 22px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
@@ -174,7 +174,7 @@ export default function AmbassadorDashboard() {
         </div>
 
         {/* Recent Orders */}
-        <div style={{ padding: '16px 16px 0' }}>
+        <div style={{ padding: '16px 16px 20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <p style={{ fontSize: 18, fontWeight: 700, color: '#1a1a1a' }}>Orders in Period</p>
             {filteredOrders.length > 5 && (

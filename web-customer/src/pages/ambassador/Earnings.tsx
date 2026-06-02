@@ -64,7 +64,7 @@ export default function EarningsPage() {
         <div style={{ width: 40 }} />
       </div>
 
-      <div style={{ padding: 16 }}>
+      <div style={{ padding: 16, paddingBottom: 100 }}>
         {/* Summary Grid */}
         <div className="summary-grid">
           <div style={{ background: '#8B3A3A', borderRadius: 16, padding: 20, boxShadow: '0 1px 6px rgba(0,0,0,0.05)' }}>
