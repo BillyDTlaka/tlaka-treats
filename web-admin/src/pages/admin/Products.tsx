@@ -16,7 +16,8 @@ interface Product  {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function retailPrice(v: Variant): number | undefined {
-  return v.prices.find(p => p.tier === 'RETAIL')?.price
+  const p = v.prices.find(p => p.tier === 'RETAIL')?.price
+  return p != null ? Number(p) : undefined
 }
 
 function priceLabel(product: Product): string {

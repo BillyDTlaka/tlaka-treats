@@ -138,6 +138,7 @@ export default function AmbassadorShop() {
         </View>
       ) : (
         <FlatList
+          style={{ flex: 1 }}
           data={filtered}
           keyExtractor={(item: any) => item.id}
           contentContainerStyle={styles.listContent}
