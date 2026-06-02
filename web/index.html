@@ -6,9 +6,10 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <meta name="apple-mobile-web-app-title" content="TT Admin" />
+  <meta name="apple-mobile-web-app-title" content="Tlaka Treats" />
   <meta name="theme-color" content="#8B3A3A" />
   <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
   <title>Tlaka Treats</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -16015,9 +16016,20 @@ if (!store.user) {
   redirectByRole(store.user);
 }
 
-// Register service worker (PWA)
+// Register service worker (PWA) — reload when a new version activates
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
+  navigator.serviceWorker.register('/sw.js').then(reg => {
+    reg.addEventListener('updatefound', () => {
+      const sw = reg.installing;
+      if (!sw) return;
+      sw.addEventListener('statechange', () => {
+        if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+          // New version ready — reload to activate it immediately
+          window.location.reload();
+        }
+      });
+    });
+  }).catch(() => {});
 }
 </script>
 </body>
