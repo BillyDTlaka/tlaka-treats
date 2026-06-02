@@ -100,11 +100,11 @@ a { text-decoration: none; color: inherit; }
   font-size: 9px; font-weight: 800; padding: 0 3px;
 }
 
-/* ── Scrollable content ── */
+/* ── Scrollable content ──
+   No overflow-y here — the page itself scrolls naturally.
+   padding-bottom clears the fixed tab bar or bottom action bar. */
 .scroll-content {
   flex: 1;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
   padding-bottom: 80px;
 }
 
@@ -347,15 +347,44 @@ a { text-decoration: none; color: inherit; }
 .summary-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
 .summary-divider { height: 1px; background: #f0e0e0; margin: 10px 0; }
 
-/* ── Bottom action bar ── */
+/* ── Bottom action bar (fixed, used on pages without a tab bar) ── */
 .bottom-bar {
-  position: sticky;
+  position: fixed;
   bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 480px;
   background: #fff;
   padding: 12px 16px;
   padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid #f0e0e0;
   box-shadow: 0 -4px 12px rgba(0,0,0,0.08);
+  z-index: 50;
+}
+
+/* ── Cart toast ── */
+.cart-toast {
+  position: fixed;
+  bottom: 104px; /* sits above the Add to Cart bar */
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a1a1a;
+  color: #fff;
+  border-radius: 28px;
+  padding: 14px 16px 14px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 200;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+  max-width: calc(100% - 32px);
+  animation: slideUp 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  white-space: nowrap;
+}
+@keyframes slideUp {
+  from { transform: translateX(-50%) translateY(20px); opacity: 0; }
+  to   { transform: translateX(-50%) translateY(0);    opacity: 1; }
 }
 
 /* ── Quantity row (product detail) ── */

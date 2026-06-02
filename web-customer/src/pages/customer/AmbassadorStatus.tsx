@@ -66,7 +66,7 @@ export default function AmbassadorStatus() {
         <div style={{ width: 40 }} />
       </div>
 
-      <div className="scroll-content" style={{ padding: 20 }}>
+      <div style={{ padding: 20 }}>
         {/* Status card */}
         <div className="status-card" style={{ background: statusCfg.bg }}>
           <span style={{ fontSize: 40, marginBottom: 8 }}>{statusCfg.emoji}</span>

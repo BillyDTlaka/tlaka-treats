@@ -96,7 +96,7 @@ export default function AmbassadorApply() {
         <div style={{ width: 40 }} />
       </div>
 
-      <form onSubmit={handleSubmit} className="scroll-content" style={{ padding: 20 }}>
+      <form onSubmit={handleSubmit} style={{ padding: 20 }}>
         <div className="intro-banner">
           <span style={{ fontSize: 36, marginBottom: 10 }}>🌟</span>
           <p style={{ fontSize: 18, fontWeight: 800, color: '#fff', textAlign: 'center', marginBottom: 8 }}>Become a Tlaka Treats Ambassador</p>

@@ -11,10 +11,11 @@ export default function ProductDetail() {
   const [loading, setLoading]           = useState(true)
   const [selectedVariant, setSelectedVariant] = useState<any>(null)
   const [quantity, setQuantity]         = useState(1)
-  const addItem = useCartStore(s => s.addItem)
+  const [toastVisible, setToastVisible] = useState(false)
+  const [btnAdded, setBtnAdded]         = useState(false)
+  const addItem  = useCartStore(s => s.addItem)
   const cartCount = useCartStore(s => s.getItemCount())
 
-  // Determine which checkout route to use based on where we came from
   const isAmbassador = location.pathname.startsWith('/ambassador')
   const checkoutPath = isAmbassador ? '/ambassador/checkout' : '/customer/checkout'
 
@@ -34,11 +35,24 @@ export default function ProductDetail() {
     if (!selectedVariant) { alert('Please choose a size first'); return }
     const price = getRetailPrice(selectedVariant)
     if (!price) { alert('No price available for this option'); return }
-    addItem({ productId: product.id, variantId: selectedVariant.id, quantity, productName: product.name, variantName: selectedVariant.name, price })
+
+    addItem({
+      productId: product.id,
+      variantId: selectedVariant.id,
+      quantity,
+      productName: product.name,
+      variantName: selectedVariant.name,
+      price,
+    })
     setQuantity(1)
-    if (window.confirm(`${quantity}× ${product.name} added to your cart.\n\nView cart now?`)) {
-      navigate(checkoutPath)
-    }
+
+    // Flash the button green then revert
+    setBtnAdded(true)
+    setTimeout(() => setBtnAdded(false), 2000)
+
+    // Show toast then fade it away
+    setToastVisible(true)
+    setTimeout(() => setToastVisible(false), 3500)
   }
 
   if (loading) return <div className="spinner-wrap" style={{ minHeight: '100vh' }}><div className="spinner" /></div>
@@ -47,11 +61,13 @@ export default function ProductDetail() {
   const price = selectedVariant ? getRetailPrice(selectedVariant) : null
 
   return (
-    <div className="screen" style={{ background: '#FDF6F0' }}>
+    <div className="screen" style={{ background: '#FDF6F0', paddingBottom: 120 }}>
       {/* Header */}
-      <div style={{ background: '#8B3A3A', display: 'flex', alignItems: 'center', padding: '52px 16px 16px', flexShrink: 0 }}>
+      <div style={{ background: '#8B3A3A', display: 'flex', alignItems: 'center', padding: '52px 16px 16px' }}>
         <button className="back-btn" onClick={() => navigate(-1)}>←</button>
-        <p style={{ flex: 1, fontSize: 17, fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Product Details</p>
+        <p style={{ flex: 1, fontSize: 17, fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          Product Details
+        </p>
         <button onClick={() => navigate(checkoutPath)} style={{ background: 'none', border: 'none', padding: 8, cursor: 'pointer', position: 'relative' }}>
           <span style={{ fontSize: 22 }}>🛍️</span>
           {cartCount > 0 && (
@@ -62,63 +78,123 @@ export default function ProductDetail() {
         </button>
       </div>
 
-      <div className="scroll-content" style={{ paddingBottom: 120 }}>
-        {/* Image */}
-        <div style={{ background: '#FFF0E6', height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-          <span style={{ fontSize: 80 }}>🍪</span>
-          {product.category?.name && (
-            <div style={{ position: 'absolute', bottom: 12, left: 16, background: '#8B3A3A', borderRadius: 20, padding: '4px 12px' }}>
-              <span style={{ color: '#fff', fontSize: 12, fontWeight: 600 }}>{product.category.name}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Info */}
-        <div style={{ padding: 20 }}>
-          <h1 style={{ fontSize: 24, fontWeight: 800, color: '#1a1a1a', marginBottom: 8 }}>{product.name}</h1>
-          {product.description && <p style={{ fontSize: 14, color: '#666', lineHeight: 1.5, marginBottom: 12 }}>{product.description}</p>}
-          {price && <p style={{ fontSize: 26, fontWeight: 800, color: '#8B3A3A' }}>R{price.toFixed(2)}</p>}
-        </div>
-
-        {/* Variants */}
-        {product.variants?.length > 0 && (
-          <div style={{ paddingInline: 20, marginBottom: 24 }}>
-            <p style={{ fontSize: 16, fontWeight: 700, color: '#1a1a1a', marginBottom: 12 }}>Choose Size</p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-              {product.variants.map((variant: any) => {
-                const vPrice = getRetailPrice(variant)
-                const isSelected = selectedVariant?.id === variant.id
-                return (
-                  <button
-                    key={variant.id}
-                    className={`variant-chip${isSelected ? ' selected' : ''}`}
-                    onClick={() => setSelectedVariant(variant)}
-                  >
-                    <span className="name">{variant.name}</span>
-                    {vPrice && <span className="price">R{vPrice.toFixed(2)}</span>}
-                  </button>
-                )
-              })}
-            </div>
+      {/* Product image */}
+      <div style={{ background: '#FFF0E6', height: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+        <span style={{ fontSize: 90 }}>🍪</span>
+        {product.category?.name && (
+          <div style={{ position: 'absolute', bottom: 14, left: 16, background: '#8B3A3A', borderRadius: 20, padding: '5px 14px' }}>
+            <span style={{ color: '#fff', fontSize: 12, fontWeight: 600 }}>{product.category.name}</span>
           </div>
         )}
+      </div>
 
-        {/* Quantity */}
-        <div style={{ paddingInline: 20, marginBottom: 24 }}>
-          <p style={{ fontSize: 16, fontWeight: 700, color: '#1a1a1a', marginBottom: 12 }}>Quantity</p>
-          <div className="qty-row-lg">
-            <button className="qty-btn-lg" onClick={() => setQuantity(q => Math.max(1, q - 1))}>−</button>
-            <span className="qty-value-lg">{quantity}</span>
-            <button className="qty-btn-lg" onClick={() => setQuantity(q => q + 1)}>+</button>
+      {/* Info */}
+      <div style={{ padding: '20px 20px 8px' }}>
+        <h1 style={{ fontSize: 24, fontWeight: 800, color: '#1a1a1a', marginBottom: 8 }}>{product.name}</h1>
+        {product.description && (
+          <p style={{ fontSize: 14, color: '#666', lineHeight: 1.6, marginBottom: 14 }}>{product.description}</p>
+        )}
+        {price && <p style={{ fontSize: 28, fontWeight: 900, color: '#8B3A3A' }}>R{price.toFixed(2)}</p>}
+      </div>
+
+      {/* Variants */}
+      {product.variants?.length > 0 && (
+        <div style={{ padding: '8px 20px 16px' }}>
+          <p style={{ fontSize: 15, fontWeight: 700, color: '#1a1a1a', marginBottom: 12 }}>Choose Size</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            {product.variants.map((variant: any) => {
+              const vPrice = getRetailPrice(variant)
+              const isSelected = selectedVariant?.id === variant.id
+              return (
+                <button
+                  key={variant.id}
+                  onClick={() => setSelectedVariant(variant)}
+                  style={{
+                    border: `2px solid ${isSelected ? '#8B3A3A' : '#e0c8c8'}`,
+                    borderRadius: 12,
+                    padding: '10px 18px',
+                    background: isSelected ? '#8B3A3A' : '#fff',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  <span style={{ fontSize: 14, fontWeight: 600, color: isSelected ? '#fff' : '#1a1a1a' }}>{variant.name}</span>
+                  {vPrice && <span style={{ fontSize: 13, color: isSelected ? '#f5d0d0' : '#8B3A3A', marginTop: 2, fontWeight: 600 }}>R{vPrice.toFixed(2)}</span>}
+                </button>
+              )
+            })}
           </div>
+        </div>
+      )}
+
+      {/* Quantity */}
+      <div style={{ padding: '8px 20px 24px' }}>
+        <p style={{ fontSize: 15, fontWeight: 700, color: '#1a1a1a', marginBottom: 14 }}>Quantity</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+          <button
+            onClick={() => setQuantity(q => Math.max(1, q - 1))}
+            style={{ width: 48, height: 48, borderRadius: 24, background: '#8B3A3A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, color: '#fff', fontWeight: 700, border: 'none', cursor: 'pointer' }}
+          >−</button>
+          <span style={{ fontSize: 24, fontWeight: 800, minWidth: 32, textAlign: 'center' }}>{quantity}</span>
+          <button
+            onClick={() => setQuantity(q => q + 1)}
+            style={{ width: 48, height: 48, borderRadius: 24, background: '#8B3A3A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, color: '#fff', fontWeight: 700, border: 'none', cursor: 'pointer' }}
+          >+</button>
         </div>
       </div>
 
-      {/* Bottom CTA */}
+      {/* Fixed Add to Cart bar */}
       <div className="bottom-bar">
-        {price && <p style={{ fontSize: 14, color: '#666', marginBottom: 10, textAlign: 'center' }}>Total: R{(price * quantity).toFixed(2)}</p>}
-        <button className="btn-primary" onClick={handleAddToCart}>Add to Cart 🛍️</button>
+        {price && (
+          <p style={{ fontSize: 14, color: '#666', marginBottom: 10, textAlign: 'center' }}>
+            Total: <strong style={{ color: '#8B3A3A' }}>R{(price * quantity).toFixed(2)}</strong>
+          </p>
+        )}
+        <button
+          onClick={handleAddToCart}
+          style={{
+            width: '100%',
+            background: btnAdded ? '#059669' : '#8B3A3A',
+            color: '#fff',
+            borderRadius: 14,
+            padding: 16,
+            fontSize: 16,
+            fontWeight: 800,
+            border: 'none',
+            cursor: 'pointer',
+            transition: 'background 0.3s',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+          }}
+        >
+          {btnAdded ? '✓ Added to Cart!' : 'Add to Cart 🛍️'}
+        </button>
       </div>
+
+      {/* Toast notification */}
+      {toastVisible && (
+        <div className="cart-toast">
+          <span style={{ fontSize: 18 }}>🛍️</span>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Added to cart!</span>
+          <button
+            onClick={() => navigate(checkoutPath)}
+            style={{ background: '#8B3A3A', color: '#fff', border: 'none', borderRadius: 18, padding: '8px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
+          >
+            View Cart →
+          </button>
+          <button
+            onClick={() => setToastVisible(false)}
+            style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', borderRadius: '50%', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, cursor: 'pointer', flexShrink: 0 }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   )
 }

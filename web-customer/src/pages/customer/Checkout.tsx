@@ -62,14 +62,14 @@ export default function CheckoutPage() {
   }
 
   return (
-    <div className="screen" style={{ background: '#FDF6F0' }}>
+    <div className="screen" style={{ background: '#FDF6F0', paddingBottom: 100 }}>
       <div style={{ background: '#8B3A3A', display: 'flex', alignItems: 'center', padding: '52px 16px 16px', flexShrink: 0 }}>
         <button className="back-btn" onClick={() => navigate(-1)}>←</button>
         <p style={{ flex: 1, fontSize: 18, fontWeight: 800, color: '#fff', textAlign: 'center' }}>Your Cart</p>
         <div style={{ width: 40 }} />
       </div>
 
-      <div className="scroll-content" style={{ padding: 16, paddingBottom: 100 }}>
+      <div style={{ padding: 16 }}>
         {/* Cart Items */}
         <p className="section-title">Items ({items.length})</p>
         {items.map(item => (

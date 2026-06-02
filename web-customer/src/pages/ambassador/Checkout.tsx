@@ -63,7 +63,7 @@ export default function AmbassadorCheckout() {
         <p style={{ flex: 1, fontSize: 18, fontWeight: 800, color: '#fff', textAlign: 'center' }}>Your Cart</p>
       </div>
 
-      <div className="scroll-content" style={{ padding: 16, paddingBottom: 100 }}>
+      <div style={{ padding: 16 }}>
         <p className="section-title">Items ({items.length})</p>
         {items.map(item => (
           <div key={item.variantId} className="cart-item">

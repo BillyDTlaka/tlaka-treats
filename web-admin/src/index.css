@@ -68,7 +68,7 @@ input, textarea { font-family: inherit; outline: none; }
 .tab-bar-dot { width: 4px; height: 4px; border-radius: 2px; background: var(--brand); margin-top: 1px; }
 
 /* ── Scroll content ── */
-.scroll-content { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: 80px; padding: 16px; padding-bottom: 80px; }
+.scroll-content { flex: 1; padding: 16px; padding-bottom: 80px; }
 
 /* ── Spinner ── */
 .spinner-wrap { display: flex; align-items: center; justify-content: center; flex: 1; padding: 40px; }
