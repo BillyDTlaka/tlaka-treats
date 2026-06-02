@@ -191,7 +191,12 @@ export class OrderService {
   async getForCustomer(customerId: string) {
     return this.prisma.order.findMany({
       where: { customerId },
-      include: { items: { include: { variant: { include: { product: true } } } } },
+      include: {
+        items: { include: { variant: { include: { product: true } } } },
+        address: true,
+        ambassador: { select: { code: true } },
+        statusLogs: { orderBy: { createdAt: 'asc' } },
+      },
       orderBy: { createdAt: 'desc' },
     })
   }

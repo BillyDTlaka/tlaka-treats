@@ -1020,13 +1020,14 @@ function CustomerHomePage() {
       }
 
       const ORDER_STEPS = ['PENDING','CONFIRMED','BAKING','READY','DELIVERED'];
-      const ORDER_STEP_LABELS = { PENDING:'Received', CONFIRMED:'Confirmed', BAKING:'Baking', READY:'Ready', DELIVERED:'Delivered' };
+      const ORDER_STEP_LABELS = { PENDING:'Received', CONFIRMED:'Confirmed', BAKING:'Baking 🔥', READY:'Ready 🎁', DELIVERED:'Delivered 🚀' };
       const ORDER_STEP_ICONS  = { PENDING:'📋', CONFIRMED:'✅', BAKING:'🔥', READY:'🎁', DELIVERED:'🚀' };
+      const PAYMENT_LABELS = { CASH: '💵 Cash', EFT: '🏦 EFT', CARD: '💳 Card' };
 
       function orderTimeline(status) {
-        if (status === 'CANCELLED') return el('div', { className: 'flex items-center gap-2 mt-3 pt-3 border-t border-gray-50' }, el('span', { className: 'text-xs font-bold text-red-400 bg-red-50 px-2 py-1 rounded-full' }, '✕ Cancelled'));
+        if (status === 'CANCELLED') return el('div', { className: 'flex items-center gap-2' }, el('span', { className: 'text-xs font-bold text-red-400 bg-red-50 px-2 py-1 rounded-full' }, '✕ Cancelled'));
         const currentIdx = ORDER_STEPS.indexOf(status);
-        const tl = el('div', { className: 'flex items-center mt-3 pt-3 border-t border-gray-50 overflow-x-auto' });
+        const tl = el('div', { className: 'flex items-center overflow-x-auto' });
         ORDER_STEPS.forEach((step, i) => {
           const done   = i <= currentIdx;
           const active = i === currentIdx;
@@ -1035,42 +1036,207 @@ function CustomerHomePage() {
               el('div', { className: `w-7 h-7 rounded-full flex items-center justify-center text-sm flex-shrink-0 ${done ? (active ? 'bg-brand' : 'bg-green-500') : 'bg-gray-100'}` },
                 done ? (active ? ORDER_STEP_ICONS[step] : '✓') : el('span', { className: 'text-gray-300 text-xs' }, String(i+1))
               ),
-              el('span', { className: `text-xs mt-1 font-semibold whitespace-nowrap ${active ? 'text-brand' : done ? 'text-green-600' : 'text-gray-300'}` }, ORDER_STEP_LABELS[step])
+              el('span', { className: `text-xs mt-1 font-semibold whitespace-nowrap ${active ? 'text-brand' : done ? 'text-green-600' : 'text-gray-300'}` }, ORDER_STEP_LABELS[step].split(' ')[0])
             ),
             i < ORDER_STEPS.length - 1
-              ? el('div', { className: `flex-1 h-0.5 mx-1 ${i < currentIdx ? 'bg-green-400' : 'bg-gray-100'}`, style: { minWidth: '16px' } })
+              ? el('div', { className: `flex-1 h-0.5 mx-1 ${i < currentIdx ? 'bg-green-400' : 'bg-gray-100'}`, style: { minWidth: '12px' } })
               : null
           );
         });
         return tl;
       }
 
+      function showOrderDetail(order) {
+        const sheet = el('div', {
+          className: 'fixed inset-0 z-50 flex flex-col',
+          style: { background: 'rgba(0,0,0,0.45)' },
+        });
+
+        const panel = el('div', {
+          className: 'mt-auto bg-white rounded-t-3xl overflow-y-auto fade-in',
+          style: { maxHeight: '92vh', paddingBottom: 'env(safe-area-inset-bottom, 16px)' },
+        });
+
+        const date = new Date(order.createdAt).toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
+        const subtotal   = Number(order.subtotal   ?? 0);
+        const deliveryFee = Number(order.deliveryFee ?? 0);
+        const discount   = Number(order.discountAmount ?? 0);
+        const total      = Number(order.total ?? 0);
+
+        // Header
+        panel.append(
+          el('div', { className: 'sticky top-0 bg-white px-5 pt-5 pb-3 border-b border-gray-100 flex items-start justify-between' },
+            el('div', {},
+              el('p', { className: 'text-xs text-gray-400 font-mono mb-0.5' }, `#${order.id.slice(-8).toUpperCase()}${order.invoiceNumber ? ' · ' + order.invoiceNumber : ''}`),
+              el('p', { className: 'text-xl font-black text-gray-900' }, `R${total.toFixed(2)}`),
+              el('p', { className: 'text-xs text-gray-400 mt-0.5' }, date),
+            ),
+            el('button', {
+              className: 'w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 text-lg font-bold flex-shrink-0 ml-3',
+              onClick: () => sheet.remove(),
+            }, '✕')
+          )
+        );
+
+        // Status timeline
+        panel.append(
+          el('div', { className: 'px-5 py-4 border-b border-gray-100' },
+            el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wide mb-3' }, 'Order Status'),
+            orderTimeline(order.status)
+          )
+        );
+
+        // Status history log
+        if (order.statusLogs?.length) {
+          const logSection = el('div', { className: 'px-5 py-4 border-b border-gray-100' },
+            el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wide mb-3' }, 'Status History')
+          );
+          order.statusLogs.forEach(log => {
+            const logTime = new Date(log.createdAt).toLocaleString('en-ZA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+            logSection.append(
+              el('div', { className: 'flex items-start gap-2 mb-2' },
+                el('div', { className: 'w-1.5 h-1.5 rounded-full bg-brand mt-1.5 flex-shrink-0' }),
+                el('div', {},
+                  el('p', { className: 'text-sm font-semibold text-gray-800' }, ORDER_STEP_LABELS[log.status] || log.status),
+                  log.note ? el('p', { className: 'text-xs text-gray-400 mt-0.5' }, log.note) : null,
+                  el('p', { className: 'text-xs text-gray-300' }, logTime)
+                )
+              )
+            );
+          });
+          panel.append(logSection);
+        }
+
+        // Items
+        const itemsSection = el('div', { className: 'px-5 py-4 border-b border-gray-100' },
+          el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wide mb-3' }, 'Items')
+        );
+        (order.items || []).forEach(item => {
+          const name    = item.variant?.product?.name || 'Item';
+          const variant = item.variant?.name || '';
+          const price   = Number(item.unitPrice ?? 0);
+          const sub     = Number(item.subtotal ?? price * item.quantity);
+          itemsSection.append(
+            el('div', { className: 'flex justify-between items-center py-2 border-b border-gray-50 last:border-0' },
+              el('div', { className: 'flex-1' },
+                el('p', { className: 'text-sm font-semibold text-gray-900' }, name),
+                el('p', { className: 'text-xs text-gray-400' }, `${variant}${variant ? ' · ' : ''}R${price.toFixed(2)} × ${item.quantity}`)
+              ),
+              el('p', { className: 'text-sm font-bold text-gray-900 ml-3' }, `R${sub.toFixed(2)}`)
+            )
+          );
+        });
+        panel.append(itemsSection);
+
+        // Totals breakdown
+        const totalsSection = el('div', { className: 'px-5 py-4 border-b border-gray-100 space-y-2' });
+        const totRow = (label, val, bold = false) => totalsSection.append(
+          el('div', { className: 'flex justify-between' },
+            el('p', { className: `text-sm ${bold ? 'font-black text-gray-900' : 'text-gray-500'}` }, label),
+            el('p', { className: `text-sm ${bold ? 'font-black text-gray-900' : 'text-gray-700'}` }, val)
+          )
+        );
+        totRow('Subtotal', `R${subtotal.toFixed(2)}`);
+        totRow('Delivery', deliveryFee > 0 ? `R${deliveryFee.toFixed(2)}` : 'Free');
+        if (discount > 0) totRow('Discount', `-R${discount.toFixed(2)}`);
+        totRow('Total', `R${total.toFixed(2)}`, true);
+        panel.append(totalsSection);
+
+        // Delivery & payment info
+        const metaSection = el('div', { className: 'px-5 py-4 space-y-3' });
+
+        if (order.address) {
+          const addr = order.address;
+          const addrStr = [addr.street, addr.suburb, addr.city].filter(Boolean).join(', ');
+          metaSection.append(
+            el('div', { className: 'flex gap-3' },
+              el('span', { className: 'text-lg' }, '📍'),
+              el('div', {},
+                el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wide' }, 'Delivery Address'),
+                el('p', { className: 'text-sm text-gray-700 mt-0.5' }, addrStr)
+              )
+            )
+          );
+        }
+
+        if (order.paymentMethod) {
+          metaSection.append(
+            el('div', { className: 'flex gap-3 items-center' },
+              el('span', { className: 'text-lg' }, '💳'),
+              el('div', {},
+                el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wide' }, 'Payment'),
+                el('p', { className: 'text-sm text-gray-700 mt-0.5' },
+                  (PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod) +
+                  (order.paymentStatus ? ` · ${order.paymentStatus}` : '')
+                )
+              )
+            )
+          );
+        }
+
+        if (order.ambassador?.code) {
+          metaSection.append(
+            el('div', { className: 'flex gap-3 items-center' },
+              el('span', { className: 'text-lg' }, '🎟️'),
+              el('div', {},
+                el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wide' }, 'Ambassador'),
+                el('p', { className: 'text-sm text-brand font-semibold mt-0.5' }, order.ambassador.code)
+              )
+            )
+          );
+        }
+
+        if (order.notes) {
+          metaSection.append(
+            el('div', { className: 'flex gap-3' },
+              el('span', { className: 'text-lg' }, '📝'),
+              el('div', {},
+                el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wide' }, 'Notes'),
+                el('p', { className: 'text-sm text-gray-700 mt-0.5' }, order.notes)
+              )
+            )
+          );
+        }
+
+        if (metaSection.children.length) panel.append(metaSection);
+
+        // Close on backdrop tap
+        sheet.addEventListener('click', e => { if (e.target === sheet) sheet.remove(); });
+        sheet.append(panel);
+        document.body.append(sheet);
+      }
+
       ordersView.append(el('div', { className: 'space-y-3' },
         ...orders.map(order => {
           const date = new Date(order.createdAt).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
-          return el('div', { className: 'bg-white rounded-xl p-5 shadow-sm border border-gray-100' },
+          const itemCount = order.items?.reduce((n, i) => n + i.quantity, 0) ?? 0;
+          return el('button', {
+            className: 'w-full bg-white rounded-xl p-5 shadow-sm border border-gray-100 text-left hover:border-brand/30 hover:shadow-md transition-all',
+            onClick: () => showOrderDetail(order),
+          },
             el('div', { className: 'flex justify-between items-start mb-3' },
               el('div', {},
-                el('p', { className: 'font-black text-gray-900' }, `R${Number(order.total).toFixed(2)}`),
+                el('p', { className: 'font-black text-gray-900 text-base' }, `R${Number(order.total).toFixed(2)}`),
                 el('div', { className: 'flex items-center gap-2 mt-0.5' },
                   el('p', { className: 'text-xs text-gray-400' }, date),
-                  el('span', { className: 'text-gray-300 text-xs' }, '·'),
-                  el('p', { className: 'text-xs text-gray-400 font-mono' }, `#${order.id.slice(-8).toUpperCase()}`)
+                  el('span', { className: 'text-gray-200' }, '·'),
+                  el('p', { className: 'text-xs text-gray-400 font-mono' }, `#${order.id.slice(-8).toUpperCase()}`),
+                  el('span', { className: 'text-gray-200' }, '·'),
+                  el('p', { className: 'text-xs text-gray-400' }, `${itemCount} item${itemCount !== 1 ? 's' : ''}`)
                 )
               ),
-              badge(order.status, STATUS_COLORS[order.status] || '#999')
+              el('div', { className: 'flex items-center gap-2' },
+                badge(order.status, STATUS_COLORS[order.status] || '#999'),
+                el('span', { className: 'text-gray-300 text-sm' }, '›')
+              )
             ),
-            order.items?.length
-              ? el('div', { className: 'space-y-1 text-sm text-gray-600' },
-                  ...order.items.map(item => el('p', {}, `${item.quantity}× ${item.variant?.product?.name || 'Item'}${item.variant?.name ? ' — ' + item.variant.name : ''}`))
-                )
-              : null,
-            order.ambassador ? el('p', { className: 'text-xs text-brand font-semibold mt-2' }, `🎟️ Via: ${order.ambassador.code}`) : null,
-            orderTimeline(order.status)
+            el('div', { className: 'border-t border-gray-50 pt-3' },
+              orderTimeline(order.status)
+            )
           );
         })
       ));
-    }).catch(() => { ordersView.append(el('p', { className: 'text-red-400 text-sm text-center py-8' }, 'Failed to load orders. Make sure the API is running.')); });
+    }).catch(() => { ordersView.append(el('p', { className: 'text-red-400 text-sm text-center py-8' }, 'Failed to load orders.')); });
   }
 
   // ── CART VIEW ──────────────────────────────────────────────────────────────
