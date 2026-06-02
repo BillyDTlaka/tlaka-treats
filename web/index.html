@@ -3401,13 +3401,214 @@ function renderTabHub(container, hubId, tabDefs) {
   activate(activeTab);
 }
 
-// ── SALES HUB: Orders · Customers · Ambassadors ───────────────────────────────
+// ── SALES HUB: Overview · Orders · Customers · Ambassadors ──────────────────
 function renderAdminSales(data, container, reload) {
   renderTabHub(container, 'sales', [
+    { id: 'overview',    label: '📊 Overview',    render: c => renderAdminSalesOverview(data, c, reload) },
     { id: 'orders',      label: '🛒 Orders',      render: c => renderAdminOrders(data, c, reload) },
     { id: 'customers',   label: '👤 Customers',   render: c => renderAdminCustomers(data, c, reload) },
     { id: 'ambassadors', label: '⭐ Ambassadors',  render: c => renderAdminAmbassadors(data, c, reload) },
   ]);
+}
+
+function renderAdminSalesOverview(data, container, reload) {
+  const orders     = data.orders || [];
+  const ambassadors = data.ambassadors || [];
+  const customers  = data.customers || [];
+
+  const now      = new Date();
+  const todayStr = now.toDateString();
+  const weekAgo  = new Date(now - 7  * 86400000);
+  const monthAgo = new Date(now - 30 * 86400000);
+
+  const todays   = orders.filter(o => new Date(o.createdAt).toDateString() === todayStr);
+  const thisWeek = orders.filter(o => new Date(o.createdAt) >= weekAgo);
+  const thisMonth = orders.filter(o => new Date(o.createdAt) >= monthAgo);
+
+  const rev  = arr => arr.reduce((s, o) => s + Number(o.total || 0), 0);
+  const fmt  = n => `R${n.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const page = el('div', { className: 'p-6 max-w-6xl mx-auto space-y-6' });
+
+  // ── KPI row ────────────────────────────────────────────────────────────────
+  const kpis = [
+    { label: "Today's Revenue",   value: fmt(rev(todays)),    sub: `${todays.length} order${todays.length !== 1 ? 's' : ''}`,          color: '#10B981', icon: '💰' },
+    { label: 'This Week',         value: fmt(rev(thisWeek)),  sub: `${thisWeek.length} orders`,                                          color: '#3B82F6', icon: '📈' },
+    { label: 'This Month',        value: fmt(rev(thisMonth)), sub: `${thisMonth.length} orders`,                                         color: '#8B5CF6', icon: '📅' },
+    { label: 'Active Ambassadors',value: String(ambassadors.filter(a => a.status === 'ACTIVE').length), sub: `${ambassadors.length} total`, color: '#F59E0B', icon: '🌟' },
+  ];
+  page.append(el('div', { className: 'grid grid-cols-2 lg:grid-cols-4 gap-4' },
+    ...kpis.map(k =>
+      el('div', { className: 'bg-white rounded-2xl p-5 shadow-sm border border-gray-100' },
+        el('div', { className: 'flex items-center justify-between mb-3' },
+          el('span', { className: 'text-2xl' }, k.icon),
+          el('div', { className: 'w-2 h-2 rounded-full', style: { backgroundColor: k.color } })
+        ),
+        el('p', { className: 'text-2xl font-black text-gray-900 leading-tight' }, k.value),
+        el('p', { className: 'text-xs font-semibold text-gray-400 mt-1' }, k.label),
+        el('p', { className: 'text-xs text-gray-300 mt-0.5' }, k.sub)
+      )
+    )
+  ));
+
+  // ── Pipeline ───────────────────────────────────────────────────────────────
+  const pipeline = ['PENDING','CONFIRMED','BAKING','READY','OUT_FOR_DELIVERY','DELIVERED'];
+  const pipeIcons = { PENDING:'📋', CONFIRMED:'✅', BAKING:'🔥', READY:'🎁', OUT_FOR_DELIVERY:'🚚', DELIVERED:'🚀' };
+  const pipeColors = { PENDING:'#F59E0B', CONFIRMED:'#3B82F6', BAKING:'#F97316', READY:'#10B981', OUT_FOR_DELIVERY:'#6366F1', DELIVERED:'#10B981' };
+
+  const pipeSection = el('div', { className: 'bg-white rounded-2xl shadow-sm border border-gray-100 p-5' },
+    el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-4' }, 'Orders Pipeline')
+  );
+  const pipeRow = el('div', { className: 'flex gap-3 overflow-x-auto pb-2' });
+  pipeline.forEach(status => {
+    const count = orders.filter(o => o.status === status).length;
+    const rev30 = thisMonth.filter(o => o.status === status).reduce((s, o) => s + Number(o.total || 0), 0);
+    pipeRow.append(
+      el('div', { className: 'flex-shrink-0 flex flex-col items-center bg-gray-50 rounded-xl px-5 py-4 min-w-24 border border-gray-100' },
+        el('span', { className: 'text-xl mb-1' }, pipeIcons[status] || '📦'),
+        el('p', { className: 'text-2xl font-black', style: { color: pipeColors[status] } }, String(count)),
+        el('p', { className: 'text-xs font-semibold text-gray-500 text-center whitespace-nowrap mt-0.5' }, status.replace('_', ' ')),
+        count > 0 ? el('p', { className: 'text-xs text-gray-300 mt-1' }, fmt(rev30)) : null
+      )
+    );
+  });
+  const cancelled = orders.filter(o => o.status === 'CANCELLED').length;
+  if (cancelled) {
+    pipeRow.append(
+      el('div', { className: 'flex-shrink-0 flex flex-col items-center bg-red-50 rounded-xl px-5 py-4 min-w-24 border border-red-100' },
+        el('span', { className: 'text-xl mb-1' }, '✕'),
+        el('p', { className: 'text-2xl font-black text-red-400' }, String(cancelled)),
+        el('p', { className: 'text-xs font-semibold text-red-400 text-center mt-0.5' }, 'CANCELLED')
+      )
+    );
+  }
+  pipeSection.append(pipeRow);
+  page.append(pipeSection);
+
+  // ── Recent orders ──────────────────────────────────────────────────────────
+  const recent = [...orders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 8);
+  if (recent.length) {
+    const recSection = el('div', { className: 'bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden' },
+      el('div', { className: 'flex items-center justify-between px-5 py-4 border-b border-gray-100' },
+        el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider' }, 'Recent Orders'),
+        el('button', {
+          className: 'text-xs font-bold text-brand hover:opacity-70 transition',
+          onClick: () => {
+            sessionStorage.setItem('hub_sales', 'orders');
+            container.innerHTML = '';
+            renderAdminSales(data, container, reload);
+          }
+        }, 'View all →')
+      )
+    );
+    recent.forEach(order => {
+      const cName = `${order.customer?.firstName || ''} ${order.customer?.lastName || ''}`.trim() || 'Unknown';
+      const date  = new Date(order.createdAt).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
+      const sc    = STATUS_COLORS[order.status] || '#9CA3AF';
+      recSection.append(
+        el('button', {
+          className: 'w-full flex items-center gap-3 px-5 py-3 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition text-left',
+          onClick: () => showOrderDetail(order),
+        },
+          el('div', { className: 'w-8 h-8 rounded-full bg-brand text-white text-xs font-black flex items-center justify-center flex-shrink-0' },
+            (cName[0] || '?').toUpperCase()
+          ),
+          el('div', { className: 'flex-1 min-w-0' },
+            el('p', { className: 'text-sm font-semibold text-gray-900 truncate' }, cName),
+            el('p', { className: 'text-xs text-gray-400' }, `${date} · ${(order.items || []).reduce((n, i) => n + i.quantity, 0)} items`)
+          ),
+          el('div', { className: 'text-right flex-shrink-0' },
+            el('p', { className: 'text-sm font-black text-gray-900' }, fmt(Number(order.total || 0))),
+            el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full text-white', style: { backgroundColor: sc } }, order.status)
+          )
+        )
+      );
+    });
+    page.append(recSection);
+  }
+
+  // ── Top ambassadors ────────────────────────────────────────────────────────
+  const activeAmbs = ambassadors
+    .filter(a => a.status === 'ACTIVE')
+    .map(a => ({
+      ...a,
+      earned: (a.commissions || []).reduce((s, c) => s + Number(c.amount || 0), 0),
+      orderCount: a._count?.orders || 0,
+    }))
+    .sort((a, b) => b.earned - a.earned)
+    .slice(0, 5);
+
+  if (activeAmbs.length) {
+    const ambSection = el('div', { className: 'bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden' },
+      el('div', { className: 'px-5 py-4 border-b border-gray-100' },
+        el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider' }, 'Top Ambassadors')
+      )
+    );
+    activeAmbs.forEach((a, i) => {
+      const name = `${a.user?.firstName || ''} ${a.user?.lastName || ''}`.trim() || 'Unknown';
+      ambSection.append(
+        el('div', { className: 'flex items-center gap-3 px-5 py-3 border-b border-gray-50 last:border-0' },
+          el('span', { className: 'text-sm font-black text-gray-300 w-5' }, `${i + 1}`),
+          el('div', { className: 'w-8 h-8 rounded-full bg-brand text-white text-xs font-black flex items-center justify-center flex-shrink-0' },
+            (name[0] || '?').toUpperCase()
+          ),
+          el('div', { className: 'flex-1 min-w-0' },
+            el('p', { className: 'text-sm font-semibold text-gray-900 truncate' }, name),
+            el('p', { className: 'text-xs text-gray-400 font-mono' }, a.code)
+          ),
+          el('div', { className: 'text-right' },
+            el('p', { className: 'text-sm font-black text-green-600' }, fmt(a.earned)),
+            el('p', { className: 'text-xs text-gray-400' }, `${a.orderCount} orders`)
+          )
+        )
+      );
+    });
+    page.append(ambSection);
+  }
+
+  // ── Quick actions ──────────────────────────────────────────────────────────
+  page.append(
+    el('div', { className: 'grid grid-cols-2 sm:grid-cols-3 gap-3' },
+      el('button', {
+        className: 'bg-brand text-white rounded-2xl p-4 text-left hover:opacity-90 transition shadow-sm',
+        onClick: () => showAdminPlaceOrderModal(customers, data.products, () => reload()),
+      },
+        el('p', { className: 'text-xl mb-1' }, '🛒'),
+        el('p', { className: 'font-bold text-sm' }, 'Place Order'),
+        el('p', { className: 'text-xs opacity-75 mt-0.5' }, 'Create order for a customer')
+      ),
+      el('button', {
+        className: 'bg-white border border-gray-200 rounded-2xl p-4 text-left hover:border-brand hover:shadow-sm transition',
+        onClick: () => {
+          sessionStorage.setItem('hub_sales', 'orders');
+          container.innerHTML = '';
+          renderAdminSales(data, container, reload);
+        }
+      },
+        el('p', { className: 'text-xl mb-1' }, '📦'),
+        el('p', { className: 'font-bold text-sm text-gray-900' }, 'Pending Orders'),
+        el('p', { className: 'text-xs text-gray-400 mt-0.5' }, `${orders.filter(o => o.status === 'PENDING').length} awaiting confirmation`)
+      ),
+      el('button', {
+        className: 'bg-white border border-gray-200 rounded-2xl p-4 text-left hover:border-brand hover:shadow-sm transition',
+        onClick: () => {
+          sessionStorage.setItem('hub_sales', 'ambassadors');
+          container.innerHTML = '';
+          renderAdminSales(data, container, reload);
+        }
+      },
+        el('p', { className: 'text-xl mb-1' }, '⭐'),
+        el('p', { className: 'font-bold text-sm text-gray-900' }, 'Ambassadors'),
+        el('p', { className: 'text-xs text-gray-400 mt-0.5' },
+          ambassadors.filter(a => a.status === 'PENDING').length > 0
+            ? `${ambassadors.filter(a => a.status === 'PENDING').length} awaiting approval`
+            : `${ambassadors.filter(a => a.status === 'ACTIVE').length} active`
+        )
+      )
+    )
+  );
+
+  container.append(page);
 }
 
 // ── CATALOGUE HUB: Products · Recipes ─────────────────────────────────────────
@@ -8569,6 +8770,22 @@ function renderAdminAmbassadors(data, container, reload) {
             )
           )
         );
+
+        // Payout action (if pending commissions exist)
+        const pendingComms = (amb.commissions || []).filter(c => c.status === 'PENDING' || c.status === 'APPROVED');
+        if (pendingComms.length > 0) {
+          const pendingTotal = pendingComms.reduce((s, c) => s + Number(c.amount || 0), 0);
+          const payoutBtn = el('button', {
+            className: 'w-full bg-green-500 hover:bg-green-600 text-white text-sm font-bold px-5 py-2.5 rounded-xl transition flex items-center justify-center gap-2',
+            onClick: () => showPayoutForm(amb, pendingComms.map(c => c.id), pendingTotal, () => reload()),
+          }, `💸 Process Payout — R${pendingTotal.toFixed(2)}`);
+          panel.append(
+            el('div', { className: 'bg-green-50 rounded-xl p-4 border border-green-100' },
+              el('p', { className: 'text-xs font-black text-green-700 uppercase tracking-wider mb-2' }, `💰 ${pendingComms.length} pending commission${pendingComms.length !== 1 ? 's' : ''}`),
+              payoutBtn
+            )
+          );
+        }
 
         // Status management
         const statusRow = el('div', { className: 'flex flex-wrap gap-2' });
