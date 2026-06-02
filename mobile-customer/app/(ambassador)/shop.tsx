@@ -19,14 +19,18 @@ export default function AmbassadorShop() {
   const [filtered, setFiltered] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
 
   const fetchProducts = useCallback(async () => {
+    setError(null)
     try {
       const data = await productsApi.getAll('AMBASSADOR')
       setProducts(data)
       setFiltered(data)
+    } catch (e: any) {
+      setError(e?.message ?? 'Could not load products. Check your connection.')
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -116,7 +120,19 @@ export default function AmbassadorShop() {
         </View>
       )}
 
-      {loading ? (
+      {error ? (
+        <View style={styles.loadingContainer}>
+          <Text style={{ fontSize: 40, marginBottom: 12 }}>⚠️</Text>
+          <Text style={{ fontSize: 16, fontWeight: '700', color: '#1a1a1a', marginBottom: 6 }}>Couldn't load treats</Text>
+          <Text style={{ fontSize: 13, color: '#999', textAlign: 'center', marginBottom: 20, paddingHorizontal: 16 }}>{error}</Text>
+          <TouchableOpacity
+            style={{ backgroundColor: '#8B3A3A', borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12 }}
+            onPress={() => { setLoading(true); fetchProducts() }}
+          >
+            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      ) : loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator color="#8B3A3A" size="large" />
         </View>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, ActivityIndicator, Alert, ScrollView,
+  KeyboardAvoidingView, Platform, ActivityIndicator, Alert, ScrollView, Image,
 } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS, BRAND } from '../../lib/theme';
@@ -34,9 +34,7 @@ export default function LoginScreen() {
     >
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
-          <View style={styles.logo}>
-            <Text style={styles.logoText}>TT</Text>
-          </View>
+          <Image source={require('../../assets/logo.png')} style={styles.logo} resizeMode="contain" />
           <Text style={styles.title}>Tlaka Treats</Text>
           <Text style={styles.subtitle}>Admin Portal</Text>
         </View>

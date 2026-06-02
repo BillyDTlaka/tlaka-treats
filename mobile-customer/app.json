@@ -6,15 +6,20 @@
     "orientation": "portrait",
     "scheme": "tlakatreats",
     "userInterfaceStyle": "light",
+    "icon": "./assets/logo.png",
     "splash": {
+      "image": "./assets/logo.png",
+      "resizeMode": "contain",
       "backgroundColor": "#8B3A3A"
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "co.za.tlakatreats"
+      "bundleIdentifier": "co.za.tlakatreats",
+      "icon": "./assets/logo.png"
     },
     "android": {
       "adaptiveIcon": {
+        "foregroundImage": "./assets/logo.png",
         "backgroundColor": "#8B3A3A"
       },
       "package": "co.za.tlakatreats"

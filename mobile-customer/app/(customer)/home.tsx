@@ -19,15 +19,19 @@ export default function CustomerHome() {
   const [filtered, setFiltered] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [ambassadorApp, setAmbassadorApp] = useState<any>(undefined) // undefined=loading, null=none
 
   const fetchProducts = useCallback(async () => {
+    setError(null)
     try {
       const data = await productsApi.getAll()
       setProducts(data)
       setFiltered(data)
+    } catch (e: any) {
+      setError(e?.message ?? 'Could not load products. Check your connection.')
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -137,7 +141,16 @@ export default function CustomerHome() {
         </View>
       )}
 
-      {loading ? (
+      {error ? (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorEmoji}>⚠️</Text>
+          <Text style={styles.errorText}>Couldn't load treats</Text>
+          <Text style={styles.errorSub}>{error}</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => { setLoading(true); fetchProducts() }}>
+            <Text style={styles.retryBtnText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      ) : loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator color="#8B3A3A" size="large" />
         </View>
@@ -296,6 +309,12 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', paddingVertical: 60 },
   emptyEmoji: { fontSize: 48, marginBottom: 12 },
   emptyText: { fontSize: 16, color: '#999' },
+  errorContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
+  errorEmoji: { fontSize: 48, marginBottom: 12 },
+  errorText: { fontSize: 17, fontWeight: '700', color: '#1a1a1a', marginBottom: 6 },
+  errorSub: { fontSize: 13, color: '#999', textAlign: 'center', marginBottom: 20 },
+  retryBtn: { backgroundColor: '#8B3A3A', borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12 },
+  retryBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
   ambassadorBanner: {
     backgroundColor: '#8B3A3A', borderRadius: 16, padding: 16, marginBottom: 16,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
