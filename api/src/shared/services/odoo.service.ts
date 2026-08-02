@@ -1,8 +1,11 @@
 import { PrismaClient } from '@prisma/client'
 import { config } from '../../config'
 
+const CUSTOMER_TAG_NAME = 'TT Customer'
+
 let cachedUid: number | null = null
 let cachedCompanyId: number | null = null
+let cachedTagId: number | null = null
 
 async function odooRpc<T>(service: string, method: string, args: unknown[]): Promise<T> {
   const res = await fetch(`${config.odoo.url}/jsonrpc`, {
@@ -41,9 +44,30 @@ async function getCompanyId(uid: number): Promise<number> {
   return cachedCompanyId
 }
 
+async function getTagId(uid: number): Promise<number> {
+  if (cachedTagId) return cachedTagId
+  const existing = await odooRpc<Array<{ id: number }>>('object', 'execute_kw', [
+    config.odoo.db,
+    uid,
+    config.odoo.apiKey,
+    'res.partner.category',
+    'search_read',
+    [[['name', '=', CUSTOMER_TAG_NAME]]],
+    { fields: ['id'], limit: 1 },
+  ])
+  if (existing.length) {
+    cachedTagId = existing[0].id
+    return cachedTagId
+  }
+  cachedTagId = await odooRpc<number>('object', 'execute_kw', [
+    config.odoo.db, uid, config.odoo.apiKey, 'res.partner.category', 'create', [{ name: CUSTOMER_TAG_NAME }],
+  ])
+  return cachedTagId
+}
+
 async function createOdooContact(input: { name: string; email?: string | null; phone?: string | null }): Promise<number> {
   const uid = await getUid()
-  const companyId = await getCompanyId(uid)
+  const [companyId, tagId] = await Promise.all([getCompanyId(uid), getTagId(uid)])
   return odooRpc<number>('object', 'execute_kw', [
     config.odoo.db,
     uid,
@@ -56,6 +80,7 @@ async function createOdooContact(input: { name: string; email?: string | null; p
       phone: input.phone || false,
       customer_rank: 1,
       company_id: companyId,
+      category_id: [[6, 0, [tagId]]],
     }],
   ])
 }
