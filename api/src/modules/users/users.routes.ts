@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify'
 import { authenticate, authorize } from '../../shared/middleware/auth'
 import { AppError } from '../../shared/errors'
 import bcrypt from 'bcryptjs'
+import { syncCustomerToOdoo } from '../../shared/services/odoo.service'
 
 const auth = [authenticate, authorize('manage', 'user')]
 
@@ -65,6 +66,11 @@ const usersRoutes: FastifyPluginAsync = async (fastify) => {
       },
       select: USER_SELECT,
     })
+
+    if (user.roles.some((r: any) => r.role.name === 'CUSTOMER')) {
+      syncCustomerToOdoo(db, user).catch((err: any) => req.log.error({ err }, '[odoo] contact sync failed'))
+    }
+
     return reply.code(201).send(user)
   })
 

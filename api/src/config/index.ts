@@ -30,4 +30,12 @@ export const config = {
     authToken:  process.env.TWILIO_AUTH_TOKEN   || '',
     whatsappFrom: process.env.TWILIO_WHATSAPP_FROM || 'whatsapp:+14155238886',
   },
+
+  // Odoo (external API — JSON-RPC)
+  odoo: {
+    url:      process.env.ODOO_URL      || '',
+    db:       process.env.ODOO_DB       || '',
+    username: process.env.ODOO_USERNAME || '',
+    apiKey:   process.env.ODOO_API_KEY  || '',
+  },
 }

@@ -92,6 +92,7 @@ model User {
   firstName    String
   lastName     String
   status       UserStatus @default(ACTIVE)
+  odooPartnerId String?   @unique
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 

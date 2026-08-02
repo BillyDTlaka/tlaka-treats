@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import { AppError } from '../../shared/errors'
+import { syncCustomerToOdoo } from '../../shared/services/odoo.service'
 
 export class AuthService {
   constructor(private prisma: PrismaClient) {}
@@ -32,6 +33,8 @@ export class AuthService {
       },
       include: { roles: { include: { role: true } } },
     })
+
+    syncCustomerToOdoo(this.prisma, user).catch(err => console.error('[odoo] contact sync failed:', err.message))
 
     return user
   }
