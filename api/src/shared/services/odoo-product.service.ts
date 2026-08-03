@@ -37,30 +37,42 @@ type VariantForMapping = {
   product?: { name: string } | null
 }
 
+// Derives a stable default_code from the product/variant name when no reference has
+// been set manually, e.g. "Melting Moments" + "5L Bucket" -> "MELTING-MOMENTS-5L-BUCKET".
+function generateReference(variant: VariantForMapping): string {
+  const raw = `${variant.product?.name ?? ''} ${variant.name}`
+  return raw.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+}
+
 // Matching priority: 1) stored odooProductId  2) odooProductReference vs Odoo default_code
-// 3) auto-create only when ODOO_AUTO_CREATE_PRODUCTS=true. Caches the resolved id back onto
-// the variant so subsequent orders skip the Odoo lookup entirely.
+// 3) auto-create (only when ODOO_AUTO_CREATE_PRODUCTS=true) — generating a reference from
+// the product/variant name first if none was set manually. Caches the resolved id (and any
+// generated reference) back onto the variant so subsequent orders skip the Odoo lookup.
 export async function resolveOdooProductId(prisma: PrismaClient, uid: number, variant: VariantForMapping): Promise<number> {
   if (variant.odooProductId) return variant.odooProductId
 
   const label = `${variant.product?.name ?? 'Unknown product'} — ${variant.name}`
+  let reference = variant.odooProductReference
 
-  if (!variant.odooProductReference) {
-    throw new ProductMappingError(`Product mapping missing for ${label} (no Odoo reference configured on this variant)`)
+  if (!reference) {
+    if (!config.odoo.autoCreateProducts) {
+      throw new ProductMappingError(`Product mapping missing for ${label} (no Odoo reference configured on this variant)`)
+    }
+    reference = generateReference(variant)
   }
 
-  const found = await findOdooProductByReference(uid, variant.odooProductReference)
+  const found = await findOdooProductByReference(uid, reference)
   if (found) {
-    await (prisma as any).productVariant.update({ where: { id: variant.id }, data: { odooProductId: found.id } })
+    await (prisma as any).productVariant.update({ where: { id: variant.id }, data: { odooProductId: found.id, odooProductReference: reference } })
     return found.id
   }
 
   if (!config.odoo.autoCreateProducts) {
-    throw new ProductMappingError(`Product mapping missing for SKU ${variant.odooProductReference}`)
+    throw new ProductMappingError(`Product mapping missing for SKU ${reference}`)
   }
 
-  const newId = await createOdooProduct(uid, variant.odooProductReference, label)
-  await (prisma as any).productVariant.update({ where: { id: variant.id }, data: { odooProductId: newId } })
+  const newId = await createOdooProduct(uid, reference, label)
+  await (prisma as any).productVariant.update({ where: { id: variant.id }, data: { odooProductId: newId, odooProductReference: reference } })
   return newId
 }
 

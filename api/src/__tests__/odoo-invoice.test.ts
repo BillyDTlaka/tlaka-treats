@@ -110,7 +110,10 @@ describe('syncOrderInvoice', () => {
 
     expect(result.ok).toBe(true)
     // resolved id is cached back onto the variant
-    expect(prisma.productVariant.update).toHaveBeenCalledWith({ where: { id: 'variant-1' }, data: { odooProductId: 321 } })
+    expect(prisma.productVariant.update).toHaveBeenCalledWith({
+      where: { id: 'variant-1' },
+      data: { odooProductId: 321, odooProductReference: 'BISCUIT-BUCKET-140' },
+    })
   })
 
   it('INV-06 — missing product mapping fails clearly and marks the order FAILED', async () => {
