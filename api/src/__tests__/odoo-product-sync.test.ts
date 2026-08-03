@@ -41,9 +41,9 @@ describe('syncProductToOdoo — proper Odoo variants (one template, generated pr
     odooTemplateId: null,
     category: { odooIncomeAccountCode: '500010' },
     variants: [
-      { id: 'v-5l',  name: '5L Bucket',  odooProductId: null, odooProductReference: null },
-      { id: 'v-10l', name: '10L Bucket', odooProductId: null, odooProductReference: null },
-      { id: 'v-20l', name: '20L Bucket', odooProductId: null, odooProductReference: null },
+      { id: 'v-5l',  name: '5L Bucket',  odooProductId: null, odooProductReference: null, prices: [{ tier: 'RETAIL', price: 280 }] },
+      { id: 'v-10l', name: '10L Bucket', odooProductId: null, odooProductReference: null, prices: [{ tier: 'RETAIL', price: 350 }] },
+      { id: 'v-20l', name: '20L Bucket', odooProductId: null, odooProductReference: null, prices: [{ tier: 'RETAIL', price: 800 }] },
     ],
   }
 
@@ -73,6 +73,26 @@ describe('syncProductToOdoo — proper Odoo variants (one template, generated pr
       expect(c.data.odooProductSyncStatus).toBe('SYNCED')
       expect(c.data.odooProductReference).toBeTruthy()
     })
+  })
+
+  it('sets each variant\'s real RETAIL price as price_extra, with the template base at 0', async () => {
+    odoo.accountsByCode.set('500010', { id: 42 })
+    prisma.product.findUnique.mockResolvedValueOnce(product)
+
+    await syncProductToOdoo(prisma, 'product-1')
+
+    const [template] = [...odoo.templatesById.values()]
+    const createCall = (global.fetch as jest.Mock).mock.calls.find((call) => {
+      const params = JSON.parse(call[1].body).params
+      return params.args?.[3] === 'product.template' && params.args?.[4] === 'create'
+    })
+    expect(JSON.parse(createCall[1].body).params.args[5][0].list_price).toBe(0)
+
+    const priceExtras = [...odoo.templateAttributeValuesById.values()]
+      .filter((v: any) => v.product_tmpl_id === template.id)
+      .map((v: any) => v.price_extra)
+      .sort((a: number, b: number) => a - b)
+    expect(priceExtras).toEqual([280, 350, 800])
   })
 
   it('sets the category income account on the template (once), not per variant', async () => {

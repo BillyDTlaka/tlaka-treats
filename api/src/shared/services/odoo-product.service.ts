@@ -189,7 +189,29 @@ async function findGeneratedVariant(uid: number, templateId: number, valueId: nu
   return products[0]?.id ?? null
 }
 
-type VariantRow = { id: string; name: string; odooProductId: number | null; odooProductReference: string | null }
+// The template's own list_price is always created as 0 (see syncProductToOdoo) and each
+// variant's real price is set as price_extra on its product.template.attribute.value — the
+// junction record Odoo creates per (template, attribute value) — so the variant's computed
+// sales price (list_price + price_extra) equals the variant's actual price.
+async function setVariantPriceExtra(uid: number, templateId: number, valueId: number, priceExtra: number): Promise<void> {
+  const records = await odooRpc<Array<{ id: number }>>('object', 'execute_kw', [
+    config.odoo.db, uid, config.odoo.apiKey, 'product.template.attribute.value', 'search_read',
+    [[['product_tmpl_id', '=', templateId], ['product_attribute_value_id', '=', valueId]]],
+    { fields: ['id'], limit: 1 },
+  ])
+  if (!records.length) throw new ProductMappingError(`Could not find the generated attribute-value record to set price for template ${templateId}`)
+  await odooRpc('object', 'execute_kw', [
+    config.odoo.db, uid, config.odoo.apiKey, 'product.template.attribute.value', 'write', [[records[0].id], { price_extra: priceExtra }],
+  ])
+}
+
+type VariantRow = {
+  id: string
+  name: string
+  odooProductId: number | null
+  odooProductReference: string | null
+  prices?: Array<{ tier: string; price: unknown }>
+}
 type ProductForSync = {
   id: string
   name: string
@@ -197,6 +219,14 @@ type ProductForSync = {
   odooTemplateId: number | null
   category?: { odooIncomeAccountCode?: string | null } | null
   variants: VariantRow[]
+}
+
+// Prefers the RETAIL tier — the standard walk-in price — falling back to whatever price
+// exists if a variant has no RETAIL entry, rather than leaving Odoo's price at 0.
+function getRetailPrice(variant: VariantRow): number {
+  const retail = variant.prices?.find(p => p.tier === 'RETAIL')
+  const any = retail ?? variant.prices?.[0]
+  return any ? Number(any.price) : 0
 }
 
 async function assignVariantCode(prisma: PrismaClient, uid: number, variant: VariantRow, productProductId: number): Promise<void> {
@@ -223,7 +253,7 @@ export async function syncProductToOdoo(prisma: PrismaClient, productId: string)
   const db = prisma as any
   const product: ProductForSync | null = await db.product.findUnique({
     where: { id: productId },
-    include: { category: true, variants: true },
+    include: { category: true, variants: { include: { prices: true } } },
   })
   if (!product) return
   if (product.classification !== 'SELLABLE') return
@@ -246,6 +276,7 @@ export async function syncProductToOdoo(prisma: PrismaClient, productId: string)
           name: product.name,
           sale_ok: true,
           purchase_ok: false,
+          list_price: 0, // each variant's real price is set as price_extra below
           ...(incomeAccountId ? { property_account_income_id: incomeAccountId } : {}),
           attribute_line_ids: [[0, 0, { attribute_id: attributeId, value_ids: [[6, 0, valueIds]] }]],
         }],
@@ -274,6 +305,7 @@ export async function syncProductToOdoo(prisma: PrismaClient, productId: string)
     for (let i = 0; i < pending.length; i++) {
       const productProductId = await findGeneratedVariant(uid, templateId, valueIds[i])
       if (!productProductId) throw new ProductMappingError(`Odoo did not generate a variant for "${pending[i].name}" on template ${templateId}`)
+      await setVariantPriceExtra(uid, templateId, valueIds[i], getRetailPrice(pending[i]))
       await assignVariantCode(prisma, uid, pending[i], productProductId)
     }
   } catch (err: any) {

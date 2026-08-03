@@ -20,16 +20,26 @@ export function installMockOdoo() {
     attributeValuesByKey: new Map<string, number>(),
     templatesById: new Map<number, any>(),
     attributeLinesById: new Map<number, any>(),
+    nextTemplateAttrValueId: 3000,
+    templateAttributeValuesById: new Map<number, any>(),
     searchInvoiceResults: [] as any[],
   }
 
-  // Simulates Odoo auto-generating a product.product for every value on an attribute line.
+  // Simulates Odoo auto-generating a product.product, and its product.template.attribute.value
+  // junction record (where price_extra lives), for every value on an attribute line.
   function generateVariantsForLine(line: any) {
     for (const valueId of line.value_ids) {
       const exists = [...state.productsById.values()].some(p => p._templateId === line.product_tmpl_id && p._valueId === valueId)
       if (!exists) {
         const id = state.nextProductId++
         state.productsById.set(id, { id, _templateId: line.product_tmpl_id, _valueId: valueId, default_code: false })
+      }
+      const tavExists = [...state.templateAttributeValuesById.values()].some(
+        (v: any) => v.product_tmpl_id === line.product_tmpl_id && v.product_attribute_value_id === valueId,
+      )
+      if (!tavExists) {
+        const id = state.nextTemplateAttrValueId++
+        state.templateAttributeValuesById.set(id, { id, product_tmpl_id: line.product_tmpl_id, product_attribute_value_id: valueId, price_extra: 0 })
       }
     }
   }
@@ -103,6 +113,21 @@ export function installMockOdoo() {
             }
             generateVariantsForLine(line)
           }
+          result = true
+        }
+      } else if (model === 'product.template.attribute.value') {
+        if (modelMethod === 'search_read') {
+          const domain = methodArgs[0]
+          const templateId = domain[0][2]
+          const valueId = domain[1][2]
+          const found = [...state.templateAttributeValuesById.values()].find(
+            (v: any) => v.product_tmpl_id === templateId && v.product_attribute_value_id === valueId,
+          )
+          result = found ? [{ id: found.id }] : []
+        } else if (modelMethod === 'write') {
+          const [ids, vals] = methodArgs
+          const rec = state.templateAttributeValuesById.get(ids[0])
+          if (rec && vals.price_extra !== undefined) rec.price_extra = vals.price_extra
           result = true
         }
       } else if (model === 'product.template') {
