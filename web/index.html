@@ -146,6 +146,7 @@ const api = {
     getById: (id) => req('GET', `/products/${id}`),
     getAllAdmin: () => req('GET', '/products/admin'),
     getCategories: () => req('GET', '/products/categories'),
+    updateCategoryOdooAccount: (id, code) => req('PATCH', `/products/categories/${id}/odoo-income-account`, { odooIncomeAccountCode: code }),
     create: (data) => req('POST', '/products', data),
     update: (id, data) => req('PATCH', `/products/${id}`, data),
     addVariant: (id, data) => req('POST', `/products/${id}/variants`, data),
@@ -16095,6 +16096,38 @@ function renderAdminSettings(data, container, reload) {
       storeInputs.vatNumber = inputField(storeFields.vatNumber, 'e.g. 4123456789', v => storeFields.vatNumber = v)),
     saveBtn('Save Store Info', () => toast('Store info saved ✓', 'success'))
   ));
+
+  // ── Odoo Revenue Accounts ───────────────────────────────────────
+  const categories = data.categories || [];
+  if (categories.length) {
+    const categoryInputs = {};
+    const catRows = categories.map((c, i, arr) => {
+      categoryInputs[c.id] = inputField(c.odooIncomeAccountCode || '', 'e.g. 500010', null);
+      return el('div', { className: `flex items-center gap-4 py-3 ${i < arr.length - 1 ? 'border-b border-gray-50' : ''}` },
+        el('div', { className: 'w-44 flex-shrink-0' },
+          el('p', { className: 'text-sm font-semibold text-gray-700' }, c.name)
+        ),
+        el('div', { className: 'flex-1' }, categoryInputs[c.id]),
+        el('button', {
+          className: 'text-xs font-bold text-brand px-3 py-2 rounded-lg bg-brand/10 flex-shrink-0',
+          onClick: async (e) => {
+            const btn = e.currentTarget;
+            const val = categoryInputs[c.id].value.trim();
+            btn.textContent = 'Saving…'; btn.disabled = true;
+            try {
+              await api.products.updateCategoryOdooAccount(c.id, val || null);
+              toast(`${c.name} updated`, 'success');
+            } catch (err) {
+              toast(err.message || 'Failed to save');
+            } finally {
+              btn.textContent = 'Save'; btn.disabled = false;
+            }
+          },
+        }, 'Save')
+      );
+    });
+    page.append(section('Odoo Revenue Accounts', 'The account.account code (e.g. "500010") each category\'s products post revenue to in Odoo', ...catRows));
+  }
 
   // ── Ambassador Defaults ────────────────────────────────────────
   let defaultRate = 10;
