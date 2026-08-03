@@ -10,6 +10,7 @@ export function installMockOdoo() {
     nextProductId: 200,
     invoicesById: new Map<number, any>(),
     productsByCode: new Map<string, any>(),
+    accountsByCode: new Map<string, any>(),
     searchInvoiceResults: [] as any[],
   }
 
@@ -41,6 +42,10 @@ export function installMockOdoo() {
           state.productsByCode.set(vals.default_code, rec)
           result = id
         }
+      } else if (model === 'account.account' && modelMethod === 'search_read') {
+        const code = methodArgs[0][0][2]
+        const found = state.accountsByCode.get(code)
+        result = found ? [found] : []
       } else if (model === 'account.move') {
         if (modelMethod === 'search_read') {
           result = state.searchInvoiceResults

@@ -148,6 +148,7 @@ const api = {
     create: (data) => req('POST', '/products', data),
     update: (id, data) => req('PATCH', `/products/${id}`, data),
     addVariant: (id, data) => req('POST', `/products/${id}/variants`, data),
+    retryOdooSync: (id, variantId) => req('POST', `/products/${id}/variants/${variantId}/odoo-sync/retry`),
   },
   orders: {
     create: (data) => req('POST', '/orders', data),
@@ -15770,8 +15771,82 @@ function renderAdminTasks(container) {
 function renderAdminIntegrations(data, container, reload) {
   renderTabHub(container, 'integrations', [
     { id: 'orders',    label: '📦 Order Invoices',    render: c => renderOdooOrderSyncTab(data, c, reload) },
+    { id: 'products',  label: '🍪 Products',          render: c => renderOdooProductSyncTab(data, c, reload) },
     { id: 'customers', label: '👤 Customer Contacts', render: c => renderOdooCustomerSyncTab(data, c, reload) },
   ]);
+}
+
+function renderOdooProductSyncTab(data, container, reload) {
+  // Flatten every SELLABLE product's variants into one list — ingredients/packaging/etc.
+  // never sync to Odoo, so they're excluded rather than shown as perpetually "Not Synced".
+  const variants = [];
+  (data.products || []).filter(p => p.classification === 'SELLABLE').forEach(p => {
+    (p.variants || []).forEach(v => variants.push({ ...v, productName: p.name }));
+  });
+
+  let filter = 'ALL';
+  const FILTERS = [
+    { id: 'ALL',        label: 'All' },
+    { id: 'FAILED',     label: 'Failed' },
+    { id: 'SYNCED',     label: 'Synced' },
+    { id: 'NOT_SYNCED', label: 'Not Synced' },
+  ];
+
+  async function retry(variant, btn) {
+    btn.textContent = 'Retrying…'; btn.disabled = true;
+    try {
+      await api.products.retryOdooSync(variant.productId, variant.id);
+      toast('Retried', 'success');
+      reload();
+    } catch (err) {
+      toast(err.message || 'Retry failed');
+      btn.textContent = 'Retry'; btn.disabled = false;
+    }
+  }
+
+  function render() {
+    container.innerHTML = '';
+    const page = el('div', { className: 'p-6' });
+
+    const filterBar = el('div', { className: 'flex gap-2 mb-4 flex-wrap' });
+    FILTERS.forEach(f => {
+      filterBar.append(el('button', {
+        className: `px-3 py-1.5 rounded-lg text-xs font-bold transition ${filter === f.id ? 'bg-brand text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`,
+        onClick: () => { filter = f.id; render(); },
+      }, `${f.label} (${variants.filter(v => f.id === 'ALL' || (v.odooProductSyncStatus || 'NOT_SYNCED') === f.id).length})`));
+    });
+    page.append(filterBar);
+
+    const list = variants.filter(v => filter === 'ALL' || (v.odooProductSyncStatus || 'NOT_SYNCED') === filter);
+    const table = el('div', { className: 'bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden' });
+    if (!list.length) {
+      table.append(el('p', { className: 'text-center text-gray-400 text-sm py-12' }, 'No products match this filter'));
+    } else {
+      list.forEach(v => {
+        const status = v.odooProductSyncStatus || 'NOT_SYNCED';
+        table.append(el('div', { className: 'flex items-center justify-between px-5 py-4 border-b border-gray-50 last:border-0 gap-3' },
+          el('div', { className: 'min-w-0' },
+            el('p', { className: 'text-sm font-bold text-gray-900' }, `${v.productName} — ${v.name}`),
+            v.odooProductReference ? el('p', { className: 'text-xs text-gray-400 mt-0.5 font-mono' }, v.odooProductReference) : null,
+            v.odooProductSyncError ? el('p', { className: 'text-xs text-red-500 mt-1' }, v.odooProductSyncError) : null,
+          ),
+          el('div', { className: 'flex items-center gap-3 flex-shrink-0' },
+            odooStatusBadge(ODOO_CUSTOMER_SYNC_STYLE, status),
+            status !== 'SYNCED'
+              ? el('button', {
+                  className: 'text-xs font-bold text-brand px-3 py-1.5 rounded-lg bg-brand/10',
+                  onClick: (e) => retry(v, e.currentTarget),
+                }, 'Retry')
+              : null,
+          )
+        ));
+      });
+    }
+    page.append(table);
+    container.append(page);
+  }
+
+  render();
 }
 
 function renderOdooOrderSyncTab(data, container, reload) {

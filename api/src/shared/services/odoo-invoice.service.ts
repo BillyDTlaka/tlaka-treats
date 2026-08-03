@@ -121,13 +121,13 @@ async function buildInvoiceLines(prisma: PrismaClient, uid: number, order: any):
   }
 
   if (Number(order.deliveryFee) > 0) {
-    const deliveryProductId = await resolveServiceProductId(uid, config.odoo.deliveryProductRef, 'Delivery Fee')
+    const deliveryProductId = await resolveServiceProductId(uid, config.odoo.deliveryProductRef, 'Delivery Fee', config.odoo.deliveryIncomeAccountCode)
     lines.push([0, 0, { product_id: deliveryProductId, name: 'Delivery Fee', quantity: 1, price_unit: Number(order.deliveryFee) }])
     expectedTotal += Number(order.deliveryFee)
   }
 
   if (Number(order.discountAmount) > 0) {
-    const discountProductId = await resolveServiceProductId(uid, config.odoo.discountProductRef, 'Discount')
+    const discountProductId = await resolveServiceProductId(uid, config.odoo.discountProductRef, 'Discount', config.odoo.discountIncomeAccountCode)
     lines.push([0, 0, { product_id: discountProductId, name: 'Discount', quantity: 1, price_unit: -Number(order.discountAmount) }])
     expectedTotal -= Number(order.discountAmount)
   }

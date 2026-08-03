@@ -220,6 +220,10 @@ model Category {
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())
   products    Product[]
+
+  // Odoo account.account code (e.g. "500010") products in this category should post
+  // revenue against. Left unset, Odoo falls back to the product/category's own default.
+  odooIncomeAccountCode String?
 }
 
 model Product {
@@ -255,6 +259,12 @@ model ProductVariant {
   // Odoo product.product mapping — set manually by an admin, matched against Odoo's default_code
   odooProductId        Int?
   odooProductReference String?
+
+  // Synced to Odoo immediately on creation (not lazily on first order) — tracked the same
+  // way customer contact sync is, so failures show up in the admin monitoring view.
+  odooProductSyncStatus OdooSyncStatus @default(NOT_SYNCED)
+  odooProductSyncError  String?
+  odooProductSyncedAt   DateTime?
 
   product    Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
   prices     VariantPrice[]

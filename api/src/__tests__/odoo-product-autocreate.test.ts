@@ -41,7 +41,7 @@ describe('resolveOdooProductId with ODOO_AUTO_CREATE_PRODUCTS=true', () => {
     expect(id).toBeGreaterThan(0)
     expect(prisma.productVariant.update).toHaveBeenCalledWith({
       where: { id: 'variant-1' },
-      data: { odooProductId: id, odooProductReference: 'MELTING-MOMENTS-5L-BUCKET' },
+      data: expect.objectContaining({ odooProductId: id, odooProductReference: 'MELTING-MOMENTS-5L-BUCKET', odooProductSyncStatus: 'SYNCED' }),
     })
   })
 

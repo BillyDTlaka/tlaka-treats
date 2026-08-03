@@ -1,5 +1,6 @@
 import { PrismaClient, PricingTier, ProductClassification } from '@prisma/client'
 import { NotFoundError } from '../../shared/errors'
+import { syncProductVariantToOdoo } from '../../shared/services/odoo-product.service'
 
 export class ProductService {
   constructor(private prisma: PrismaClient) {}
@@ -23,6 +24,14 @@ export class ProductService {
 
   async deleteCategory(id: string) {
     await this.prisma.category.update({ where: { id }, data: { isActive: false } })
+  }
+
+  // Sets the Odoo account.account code (e.g. "500010") products in this category post revenue against.
+  async updateCategoryOdooIncomeAccount(id: string, odooIncomeAccountCode: string | null) {
+    return this.prisma.category.update({
+      where: { id },
+      data: { odooIncomeAccountCode: odooIncomeAccountCode?.trim() || null },
+    })
   }
 
   // ── Variant helpers ───────────────────────────────────────────────────────
@@ -108,7 +117,7 @@ export class ProductService {
   }) {
     // Derive primary imageUrl from images array if not explicitly provided
     const primaryImage = data.images?.find(i => i.isPrimary)?.url ?? data.images?.[0]?.url
-    return (this.prisma as any).product.create({
+    const product = await (this.prisma as any).product.create({
       data: {
         name: data.name,
         description: data.description,
@@ -130,6 +139,14 @@ export class ProductService {
       },
       include: { variants: { include: { prices: true } }, category: true, supplier: { select: { id: true, name: true } } },
     })
+
+    // Sync each variant to Odoo now, rather than waiting for it to first appear in a
+    // confirmed order — fire-and-forget, failures are visible in the admin monitoring view.
+    for (const variant of product.variants) {
+      syncProductVariantToOdoo(this.prisma, variant.id).catch(err => console.error('[odoo] product sync failed:', err.message))
+    }
+
+    return product
   }
 
   async getAllAdmin() {
@@ -151,7 +168,7 @@ export class ProductService {
   }) {
     const product = await this.prisma.product.findUnique({ where: { id: productId } })
     if (!product) throw new NotFoundError('Product')
-    return this.prisma.productVariant.create({
+    const variant = await this.prisma.productVariant.create({
       data: {
         productId,
         name: data.name,
@@ -159,6 +176,10 @@ export class ProductService {
       },
       include: { prices: true },
     })
+
+    syncProductVariantToOdoo(this.prisma, variant.id).catch(err => console.error('[odoo] product sync failed:', err.message))
+
+    return variant
   }
 
   async update(id: string, data: Partial<{

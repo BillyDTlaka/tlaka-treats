@@ -112,7 +112,7 @@ describe('syncOrderInvoice', () => {
     // resolved id is cached back onto the variant
     expect(prisma.productVariant.update).toHaveBeenCalledWith({
       where: { id: 'variant-1' },
-      data: { odooProductId: 321, odooProductReference: 'BISCUIT-BUCKET-140' },
+      data: expect.objectContaining({ odooProductId: 321, odooProductReference: 'BISCUIT-BUCKET-140', odooProductSyncStatus: 'SYNCED' }),
     })
   })
 

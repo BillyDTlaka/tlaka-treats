@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify'
 import { ProductService } from './products.service'
 import { authenticate, authorize } from '../../shared/middleware/auth'
+import { syncProductVariantToOdoo } from '../../shared/services/odoo-product.service'
 
 const productRoutes: FastifyPluginAsync = async (fastify) => {
   const productService = new ProductService(fastify.prisma)
@@ -28,6 +29,15 @@ const productRoutes: FastifyPluginAsync = async (fastify) => {
     const { id } = request.params as { id: string }
     await productService.deleteCategory(id)
     return reply.code(204).send()
+  })
+
+  // PATCH /products/categories/:id/odoo-income-account - set the account.account code (e.g. "500010") this category's products post revenue against
+  fastify.patch('/categories/:id/odoo-income-account', {
+    preHandler: [authenticate, authorize('update', 'product')],
+  }, async (request) => {
+    const { id } = request.params as { id: string }
+    const { odooIncomeAccountCode } = request.body as { odooIncomeAccountCode?: string | null }
+    return productService.updateCategoryOdooIncomeAccount(id, odooIncomeAccountCode ?? null)
   })
 
   // ── Products ──────────────────────────────────────────────────────────────
@@ -101,6 +111,19 @@ const productRoutes: FastifyPluginAsync = async (fastify) => {
     const { variantId } = request.params as { id: string; variantId: string }
     const { odooProductReference } = request.body as { odooProductReference?: string | null }
     return productService.updateVariantOdooMapping(variantId, { odooProductReference })
+  })
+
+  // POST /products/:id/variants/:variantId/odoo-sync/retry - admin manually (re)runs the Odoo product sync
+  fastify.post('/:id/variants/:variantId/odoo-sync/retry', {
+    preHandler: [authenticate, authorize('update', 'product')],
+  }, async (request) => {
+    const { variantId } = request.params as { id: string; variantId: string }
+    try {
+      await syncProductVariantToOdoo(fastify.prisma, variantId)
+      return { ok: true }
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Unknown Odoo sync error' }
+    }
   })
 }
 

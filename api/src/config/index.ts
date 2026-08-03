@@ -43,5 +43,10 @@ export const config = {
     autoCreateProducts: process.env.ODOO_AUTO_CREATE_PRODUCTS === 'true',
     deliveryProductRef: process.env.ODOO_DELIVERY_PRODUCT_REF || 'DELIVERY-FEE',
     discountProductRef: process.env.ODOO_DISCOUNT_PRODUCT_REF || 'DISCOUNT',
+
+    // account.account codes (e.g. "500040") for the delivery-fee/discount lines, since
+    // they aren't tied to a Category. Left unset, Odoo uses the product's own default.
+    deliveryIncomeAccountCode: process.env.ODOO_DELIVERY_INCOME_ACCOUNT_CODE || '',
+    discountIncomeAccountCode: process.env.ODOO_DISCOUNT_INCOME_ACCOUNT_CODE || '',
   },
 }
