@@ -38,5 +38,10 @@ export const config = {
     username:    process.env.ODOO_USERNAME     || '',
     apiKey:      process.env.ODOO_API_KEY      || '',
     companyName: process.env.ODOO_COMPANY_NAME || '',
+
+    // Order → invoice sync
+    autoCreateProducts: process.env.ODOO_AUTO_CREATE_PRODUCTS === 'true',
+    deliveryProductRef: process.env.ODOO_DELIVERY_PRODUCT_REF || 'DELIVERY-FEE',
+    discountProductRef: process.env.ODOO_DISCOUNT_PRODUCT_REF || 'DISCOUNT',
   },
 }

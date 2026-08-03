@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import { OrderService } from './orders.service'
 import { authenticate, authorize } from '../../shared/middleware/auth'
 import { AppError, NotFoundError } from '../../shared/errors'
+import { syncOrderInvoice } from '../../shared/services/odoo-invoice.service'
 
 const orderRoutes: FastifyPluginAsync = async (fastify) => {
   const orderService = new OrderService(fastify.prisma)
@@ -240,6 +241,16 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
     const { id } = request.params as { id: string }
     const { status, note } = request.body as { status: any; note?: string }
     return orderService.updateStatus(id, status, note)
+  })
+
+  // POST /orders/:id/odoo-invoice/retry - admin manually (re)runs the Odoo invoice sync.
+  // Idempotent — reuses the same service the CONFIRMED-status hook calls, so it never
+  // creates a duplicate invoice; it either links, updates the draft, or reports the error.
+  fastify.post('/:id/odoo-invoice/retry', {
+    preHandler: [authenticate, authorize('manage', 'order')],
+  }, async (request) => {
+    const { id } = request.params as { id: string }
+    return syncOrderInvoice(fastify.prisma, id)
   })
 }
 

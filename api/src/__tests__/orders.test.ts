@@ -292,6 +292,29 @@ describe('Order routes', () => {
 
       expect(res.status).toBe(403)
     })
+
+    it('ORD-18 — confirming an order still succeeds even when Odoo is unreachable/unconfigured', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'order' }])
+      // 1st findUnique: updateStatus's own lookup. 2nd: syncOrderInvoice's independent lookup.
+      prisma.order.findUnique
+        .mockResolvedValueOnce(makeOrder({ status: 'CONFIRMED' }))
+        .mockResolvedValueOnce(makeOrder({ status: 'CONFIRMED' }))
+      prisma.order.update.mockResolvedValueOnce(makeOrder({ status: 'CONFIRMED' }))
+      prisma.financeTransaction.findUnique.mockResolvedValueOnce(null)
+      prisma.financeAccount.findFirst.mockResolvedValueOnce(null)
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .patch('/orders/order-1/status')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'CONFIRMED' })
+
+      // The order transition itself must succeed regardless of Odoo's config/availability
+      expect(res.status).toBe(200)
+      expect(res.body.status).toBe('CONFIRMED')
+      expect(res.body.odoo.ok).toBe(false)
+      expect(res.body.odoo.error).toMatch(/Odoo is not configured/)
+    })
   })
 
   // ── PATCH /orders/:id ─────────────────────────────────────────────────────
@@ -311,6 +334,35 @@ describe('Order routes', () => {
 
       expect(res.status).toBe(200)
       expect(res.body.notes).toBe('Leave at gate')
+    })
+  })
+
+  // ── POST /orders/:id/odoo-invoice/retry ───────────────────────────────────
+
+  describe('POST /orders/:id/odoo-invoice/retry', () => {
+    it('admin can retry the Odoo invoice sync', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([ADMIN_PERMISSION])
+      prisma.order.findUnique.mockResolvedValueOnce(makeOrder({ status: 'CONFIRMED' }))
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .post('/orders/order-1/odoo-invoice/retry')
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(res.status).toBe(200)
+      expect(res.body.ok).toBe(false) // Odoo isn't configured in the test env
+      expect(res.body.error).toMatch(/Odoo is not configured/)
+    })
+
+    it('returns 403 for a customer attempting to retry', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([])
+
+      const token = customerToken(app)
+      const res = await supertest(app.server)
+        .post('/orders/order-1/odoo-invoice/retry')
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(res.status).toBe(403)
     })
   })
 

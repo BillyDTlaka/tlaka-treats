@@ -160,6 +160,7 @@ const api = {
     updateItems: (id, items) => req('PUT', `/orders/${id}/items`, { items }),
     updateStatus: (id, status, note) => req('PATCH', `/orders/${id}/status`, { status, ...(note ? { note } : {}) }),
     invoice:      (id)               => req('POST',  `/orders/${id}/invoice`),
+    retryOdooInvoice: (id)           => req('POST',  `/orders/${id}/odoo-invoice/retry`),
   },
   addresses: {
     getAll:  ()         => req('GET',    '/addresses'),
@@ -911,6 +912,48 @@ function showOrderDetail(order) {
   }
   if (order.notes) metaSection.append(metaRow('📝', 'Notes', order.notes));
   if (metaSection.children.length) panel.append(metaSection);
+
+  // Odoo invoice sync status — admin only, and only once the order has been confirmed
+  if (store.isAdmin(store.user) && order.odooInvoiceStatus && order.odooInvoiceStatus !== 'NOT_READY') {
+    const ODOO_STATUS_STYLE = {
+      SYNCING:               { label: 'Syncing…',            className: 'bg-gray-100 text-gray-600' },
+      DRAFT_CREATED:         { label: 'Draft invoice created', className: 'bg-blue-50 text-blue-700' },
+      POSTED:                { label: 'Posted',               className: 'bg-emerald-50 text-emerald-700' },
+      PAID:                  { label: 'Paid',                 className: 'bg-emerald-50 text-emerald-700' },
+      FAILED:                { label: 'Sync failed',          className: 'bg-red-50 text-red-700' },
+      RECONCILIATION_ISSUE:  { label: 'Needs review',         className: 'bg-amber-50 text-amber-700' },
+    };
+    const s = ODOO_STATUS_STYLE[order.odooInvoiceStatus] || { label: order.odooInvoiceStatus, className: 'bg-gray-100 text-gray-600' };
+
+    const odooSection = el('div', { className: 'px-5 py-4 border-b border-gray-100' },
+      el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wide mb-3' }, 'Odoo Invoice'),
+      el('div', { className: 'flex items-center justify-between' },
+        el('div', {},
+          el('span', { className: `inline-block text-xs font-bold px-2 py-1 rounded-full ${s.className}` }, s.label),
+          order.odooInvoiceNumber ? el('p', { className: 'text-sm text-gray-700 mt-2 font-mono' }, order.odooInvoiceNumber) : null,
+          order.odooInvoiceSyncError ? el('p', { className: 'text-xs text-red-500 mt-1' }, order.odooInvoiceSyncError) : null,
+        ),
+        el('button', {
+          className: 'text-xs font-bold text-brand px-3 py-2 rounded-lg bg-brand/10',
+          onClick: async (e) => {
+            e.target.textContent = 'Retrying…';
+            e.target.disabled = true;
+            try {
+              await api.orders.retryOdooInvoice(order.id);
+              const fresh = await api.orders.getById(order.id);
+              sheet.remove();
+              showOrderDetail(fresh);
+            } catch (err) {
+              toast(err.message || 'Retry failed');
+              e.target.textContent = 'Retry';
+              e.target.disabled = false;
+            }
+          },
+        }, 'Retry')
+      )
+    );
+    panel.append(odooSection);
+  }
 
   sheet.addEventListener('click', e => { if (e.target === sheet) sheet.remove(); });
   sheet.append(panel);

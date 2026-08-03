@@ -1,6 +1,7 @@
 import { PrismaClient, OrderStatus } from '@prisma/client'
 import { AppError, NotFoundError, ForbiddenError } from '../../shared/errors'
 import { sendOrderStatusEmail, sendOrderStatusWhatsApp } from '../../shared/services/notify.service'
+import { syncOrderInvoice, OdooInvoiceSyncResult } from '../../shared/services/odoo-invoice.service'
 
 export class OrderService {
   constructor(private prisma: PrismaClient) {}
@@ -185,7 +186,16 @@ export class OrderService {
     }
     this.fireNotification(notifyOrder, order.customer as any)
 
-    return updated
+    // Create/refresh the draft Odoo customer invoice — synchronous for now so the
+    // result is visible immediately. Never throws: Odoo failures are persisted on
+    // the order (odooInvoiceStatus/odooInvoiceSyncError) but don't affect the
+    // already-committed local status change, stock, finance or commission records.
+    let odoo: OdooInvoiceSyncResult | undefined
+    if (status === 'CONFIRMED') {
+      odoo = await syncOrderInvoice(this.prisma, orderId)
+    }
+
+    return odoo ? { ...updated, odoo } : updated
   }
 
   async getForCustomer(customerId: string) {

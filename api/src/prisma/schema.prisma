@@ -39,6 +39,17 @@ enum OrderStatus {
   CANCELLED
 }
 
+enum OdooInvoiceSyncStatus {
+  NOT_READY
+  READY
+  SYNCING
+  DRAFT_CREATED
+  POSTED
+  PAID
+  FAILED
+  RECONCILIATION_ISSUE
+}
+
 enum CommissionStatus {
   PENDING
   APPROVED
@@ -232,6 +243,10 @@ model ProductVariant {
   description String?
   isActive    Boolean @default(true)
 
+  // Odoo product.product mapping — set manually by an admin, matched against Odoo's default_code
+  odooProductId        Int?
+  odooProductReference String?
+
   product    Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
   prices     VariantPrice[]
   orderItems OrderItem[]
@@ -275,6 +290,20 @@ model Order {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
+  // Sequential, human-readable reconciliation key — the cross-system key used with Odoo.
+  // orderSeq is a real Postgres-generated sequence (safe under concurrency); orderNumber
+  // is the formatted "TT-ORD-000123" string, backfilled lazily on first Odoo sync for
+  // orders that existed before this feature shipped.
+  orderSeq    Int     @default(autoincrement())
+  orderNumber String? @unique
+
+  // Odoo account.move (customer invoice) sync state
+  odooInvoiceId        Int?
+  odooInvoiceNumber    String?
+  odooInvoiceStatus    OdooInvoiceSyncStatus @default(NOT_READY)
+  odooInvoiceSyncError String?
+  odooInvoiceSyncedAt  DateTime?
+
   customer   User        @relation(fields: [customerId], references: [id])
   ambassador Ambassador? @relation(fields: [ambassadorId], references: [id])
   address    Address?    @relation(fields: [addressId], references: [id])
@@ -282,6 +311,8 @@ model Order {
   commission Commission?
   statusLogs OrderStatusLog[]
   financeTransaction FinanceTransaction?
+
+  @@index([odooInvoiceStatus])
 }
 
 model OrderItem {

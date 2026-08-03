@@ -88,6 +88,19 @@ export function createMockPrisma() {
       update: jest.fn(),
       delete: jest.fn(),
     },
+    financeTransaction: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
+    },
+    financeAccount: {
+      findFirst: jest.fn(),
+    },
+    stockMovement: {
+      create: jest.fn(),
+    },
+    stockItem: {
+      update: jest.fn(),
+    },
     // Prisma transaction support — handles both array and callback forms
     $transaction: jest.fn((arg: any) =>
       Array.isArray(arg) ? Promise.all(arg) : arg(mock)
@@ -154,9 +167,17 @@ export function makeOrder(overrides: Record<string, any> = {}) {
     status: 'PENDING',
     subtotal: 170,
     deliveryFee: 0,
+    discountAmount: 0,
     total: 170,
     notes: null,
     invoiceNumber: null,
+    orderSeq: 1,
+    orderNumber: null,
+    odooInvoiceId: null,
+    odooInvoiceNumber: null,
+    odooInvoiceStatus: 'NOT_READY',
+    odooInvoiceSyncError: null,
+    odooInvoiceSyncedAt: null,
     createdAt: new Date(),
     items: [
       {
@@ -165,11 +186,11 @@ export function makeOrder(overrides: Record<string, any> = {}) {
         quantity: 2,
         unitPrice: 85,
         subtotal: 170,
-        variant: { product: { name: 'Choc Chip Cookies' } },
+        variant: { id: 'variant-1', name: '12 Pack', odooProductId: null, odooProductReference: null, product: { name: 'Choc Chip Cookies' } },
       },
     ],
     ambassador: null,
-    customer: { email: 'test@example.com', phone: null, firstName: 'Test', lastName: 'User' },
+    customer: { id: 'user-1', email: 'test@example.com', phone: null, firstName: 'Test', lastName: 'User', odooPartnerId: null },
     statusLogs: [],
     ...overrides,
   }

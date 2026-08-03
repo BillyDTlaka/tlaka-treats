@@ -93,6 +93,15 @@ const productRoutes: FastifyPluginAsync = async (fastify) => {
     const { variantId } = request.params as { id: string; variantId: string }
     return productService.updateVariantPrice(variantId, request.body as any)
   })
+
+  // PATCH /products/:id/variants/:variantId/odoo-mapping - set the Odoo default_code this variant maps to
+  fastify.patch('/:id/variants/:variantId/odoo-mapping', {
+    preHandler: [authenticate, authorize('update', 'product')],
+  }, async (request) => {
+    const { variantId } = request.params as { id: string; variantId: string }
+    const { odooProductReference } = request.body as { odooProductReference?: string | null }
+    return productService.updateVariantOdooMapping(variantId, { odooProductReference })
+  })
 }
 
 export default productRoutes

@@ -31,6 +31,18 @@ export class ProductService {
     await this.prisma.productVariant.update({ where: { id: variantId }, data: { isActive: false } })
   }
 
+  // Sets the Odoo default_code this variant should match against product.product.
+  // Clears any cached odooProductId so the next invoice sync re-resolves against the new reference.
+  async updateVariantOdooMapping(variantId: string, data: { odooProductReference?: string | null }) {
+    return this.prisma.productVariant.update({
+      where: { id: variantId },
+      data: {
+        odooProductReference: data.odooProductReference?.trim() || null,
+        odooProductId: null,
+      },
+    })
+  }
+
   async updateVariantPrice(variantId: string, data: { tier: PricingTier; price: number }) {
     const existing = await (this.prisma as any).productVariantPrice.findFirst({
       where: { variantId, tier: data.tier },
