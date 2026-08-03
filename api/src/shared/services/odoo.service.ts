@@ -48,21 +48,34 @@ async function createOdooContact(input: { name: string; email?: string | null; p
 }
 
 // Skips creation if odooPartnerId is already set, so retried calls don't create duplicate contacts.
+// Persists odooSyncStatus/Error either way, so failures are visible in the admin monitoring
+// view instead of only in server logs — but still throws on failure, so callers that depend
+// on a partner id existing afterward (e.g. the order-invoice sync) fail loudly as before.
 export async function syncCustomerToOdoo(
   prisma: PrismaClient,
   user: { id: string; email: string; firstName: string; lastName: string; phone?: string | null; odooPartnerId?: string | null },
 ): Promise<void> {
   if (user.odooPartnerId) return
-  assertOdooConfigured()
 
-  const partnerId = await createOdooContact({
-    name: `${user.firstName} ${user.lastName}`.trim(),
-    email: user.email,
-    phone: user.phone,
-  })
+  try {
+    assertOdooConfigured()
 
-  await (prisma as any).user.update({
-    where: { id: user.id },
-    data: { odooPartnerId: String(partnerId) },
-  })
+    const partnerId = await createOdooContact({
+      name: `${user.firstName} ${user.lastName}`.trim(),
+      email: user.email,
+      phone: user.phone,
+    })
+
+    await (prisma as any).user.update({
+      where: { id: user.id },
+      data: { odooPartnerId: String(partnerId), odooSyncStatus: 'SYNCED', odooSyncError: null, odooSyncedAt: new Date() },
+    })
+  } catch (err: any) {
+    const message = err?.message || 'Unknown Odoo sync error'
+    await (prisma as any).user.update({
+      where: { id: user.id },
+      data: { odooSyncStatus: 'FAILED', odooSyncError: message, odooSyncedAt: new Date() },
+    }).catch(() => {/* the original error is what matters; swallow a secondary write failure */})
+    throw err
+  }
 }

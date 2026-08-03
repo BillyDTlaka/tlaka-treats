@@ -182,6 +182,7 @@ const api = {
   customers: {
     getAll:       ()              => req('GET',   '/customers'),
     updateStatus: (id, status)    => req('PATCH', `/customers/${id}/status`, { status }),
+    retryOdooSync: (id)           => req('POST',  `/customers/${id}/odoo-sync/retry`),
   },
   suppliers: {
     getAll:         ()         => req('GET',    '/suppliers'),
@@ -779,6 +780,25 @@ const ORDER_STEP_LABELS = { PENDING:'Received', CONFIRMED:'Confirmed', BAKING:'B
 const ORDER_STEP_ICONS  = { PENDING:'📋', CONFIRMED:'✅', BAKING:'🔥', READY:'🎁', DELIVERED:'🚀' };
 const PAYMENT_LABELS    = { CASH:'💵 Cash', EFT:'🏦 EFT', CARD:'💳 Card' };
 
+const ODOO_INVOICE_STATUS_STYLE = {
+  NOT_READY:             { label: 'Not ready',            className: 'bg-gray-100 text-gray-500' },
+  SYNCING:               { label: 'Syncing…',             className: 'bg-gray-100 text-gray-600' },
+  DRAFT_CREATED:         { label: 'Draft invoice created', className: 'bg-blue-50 text-blue-700' },
+  POSTED:                { label: 'Posted',               className: 'bg-emerald-50 text-emerald-700' },
+  PAID:                  { label: 'Paid',                 className: 'bg-emerald-50 text-emerald-700' },
+  FAILED:                { label: 'Sync failed',          className: 'bg-red-50 text-red-700' },
+  RECONCILIATION_ISSUE:  { label: 'Needs review',         className: 'bg-amber-50 text-amber-700' },
+};
+const ODOO_CUSTOMER_SYNC_STYLE = {
+  NOT_SYNCED: { label: 'Not synced', className: 'bg-gray-100 text-gray-500' },
+  SYNCED:     { label: 'Synced',     className: 'bg-emerald-50 text-emerald-700' },
+  FAILED:     { label: 'Sync failed', className: 'bg-red-50 text-red-700' },
+};
+function odooStatusBadge(style, key) {
+  const s = style[key] || { label: key, className: 'bg-gray-100 text-gray-600' };
+  return el('span', { className: `inline-block text-xs font-bold px-2 py-1 rounded-full ${s.className}` }, s.label);
+}
+
 function orderTimeline(status) {
   if (status === 'CANCELLED') return el('div', { className: 'flex items-center gap-2' }, el('span', { className: 'text-xs font-bold text-red-400 bg-red-50 px-2 py-1 rounded-full' }, '✕ Cancelled'));
   const currentIdx = ORDER_STEPS.indexOf(status);
@@ -915,21 +935,11 @@ function showOrderDetail(order) {
 
   // Odoo invoice sync status — admin only, and only once the order has been confirmed
   if (store.isAdmin(store.user) && order.odooInvoiceStatus && order.odooInvoiceStatus !== 'NOT_READY') {
-    const ODOO_STATUS_STYLE = {
-      SYNCING:               { label: 'Syncing…',            className: 'bg-gray-100 text-gray-600' },
-      DRAFT_CREATED:         { label: 'Draft invoice created', className: 'bg-blue-50 text-blue-700' },
-      POSTED:                { label: 'Posted',               className: 'bg-emerald-50 text-emerald-700' },
-      PAID:                  { label: 'Paid',                 className: 'bg-emerald-50 text-emerald-700' },
-      FAILED:                { label: 'Sync failed',          className: 'bg-red-50 text-red-700' },
-      RECONCILIATION_ISSUE:  { label: 'Needs review',         className: 'bg-amber-50 text-amber-700' },
-    };
-    const s = ODOO_STATUS_STYLE[order.odooInvoiceStatus] || { label: order.odooInvoiceStatus, className: 'bg-gray-100 text-gray-600' };
-
     const odooSection = el('div', { className: 'px-5 py-4 border-b border-gray-100' },
       el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wide mb-3' }, 'Odoo Invoice'),
       el('div', { className: 'flex items-center justify-between' },
         el('div', {},
-          el('span', { className: `inline-block text-xs font-bold px-2 py-1 rounded-full ${s.className}` }, s.label),
+          odooStatusBadge(ODOO_INVOICE_STATUS_STYLE, order.odooInvoiceStatus),
           order.odooInvoiceNumber ? el('p', { className: 'text-sm text-gray-700 mt-2 font-mono' }, order.odooInvoiceNumber) : null,
           order.odooInvoiceSyncError ? el('p', { className: 'text-xs text-red-500 mt-1' }, order.odooInvoiceSyncError) : null,
         ),
@@ -3214,7 +3224,8 @@ const ADMIN_NAV = [
   { id: 'reports',     label: 'Reports',    icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',                                                        soon: false },
   { id: 'people',      label: 'People',     icon: 'M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2|M9 11a4 4 0 100-8 4 4 0 000 8z|M23 21v-2a4 4 0 00-3-3.87|M16 3.13a4 4 0 010 7.75',                                                                                                                                          soon: false },
   { id: 'bohlale',     label: 'Bohlale',    icon: 'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',                                                   soon: false },
-  { id: 'settings',    label: 'Settings',   icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z|M15 12a3 3 0 11-6 0 3 3 0 016 0z', soon: false, separator: true },
+  { id: 'integrations', label: 'Odoo Sync', icon: 'M23 4v6h-6|M1 20v-6h6|M3.51 9a9 9 0 0114.85-3.36L23 10|M1 14l4.64 4.36A9 9 0 0020.49 15', soon: false, separator: true },
+  { id: 'settings',    label: 'Settings',   icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z|M15 12a3 3 0 11-6 0 3 3 0 016 0z', soon: false },
   { id: 'users',       label: 'Users',      icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z', soon: false },
 ];
 
@@ -3227,6 +3238,7 @@ const MODULE_META = {
   reports:     { title: 'Reports',     subtitle: 'Business analytics & insights' },
   people:      { title: 'People',      subtitle: 'Employees, tasks & scheduling' },
   bohlale:     { title: 'Bohlale',     subtitle: 'AI intelligence — board meetings, strategy & chat' },
+  integrations:{ title: 'Odoo Sync',  subtitle: 'Monitor customer & order sync with Odoo' },
   settings:    { title: 'Settings',    subtitle: 'Configure your store' },
   users:       { title: 'Users',       subtitle: 'Manage users, roles & permissions' },
 };
@@ -3287,6 +3299,10 @@ const HUB_MODULES = [
   {
     id: 'bohlale', icon: '✨', color: '#8B3A3A',
     name: 'Bohlale', desc: 'AI — board, strategy & chat',
+  },
+  {
+    id: 'integrations', icon: '🔄', color: '#0EA5E9',
+    name: 'Odoo Sync', desc: 'Customer & invoice sync status',
   },
   {
     id: 'settings', icon: '⚙️', color: '#6B7280',
@@ -3572,6 +3588,7 @@ function renderAdminModule(module, data, container, reload, navigate) {
     case 'reports':    renderAdminReports(data, container);                     break;
     case 'people':     renderAdminPeople(container);                            break;
     case 'bohlale':    renderAdminBohlale(container);                           break;
+    case 'integrations': renderAdminIntegrations(data, container, reload);      break;
     case 'settings':   renderAdminSettings(data, container, reload);            break;
     case 'users':      renderAdminUsers(container);                             break;
     default:           renderAdminSoon(module, container);                      break;
@@ -15747,6 +15764,158 @@ function renderAdminTasks(container) {
   loadTasks().catch(e => {
     listEl.append(el('p', { className: 'text-red-500 text-sm text-center py-8' }, 'Failed to load tasks: ' + e.message));
   });
+}
+
+// ── ODOO SYNC MONITORING: Order Invoices · Customer Contacts ─────────────────
+function renderAdminIntegrations(data, container, reload) {
+  renderTabHub(container, 'integrations', [
+    { id: 'orders',    label: '📦 Order Invoices',    render: c => renderOdooOrderSyncTab(data, c, reload) },
+    { id: 'customers', label: '👤 Customer Contacts', render: c => renderOdooCustomerSyncTab(data, c, reload) },
+  ]);
+}
+
+function renderOdooOrderSyncTab(data, container, reload) {
+  const orders = (data.orders || []).filter(o => o.odooInvoiceStatus && o.odooInvoiceStatus !== 'NOT_READY');
+  let filter = 'ALL';
+
+  const FILTERS = [
+    { id: 'ALL',           label: 'All' },
+    { id: 'ATTENTION',     label: 'Needs Attention' },
+    { id: 'DRAFT_CREATED', label: 'Draft' },
+    { id: 'POSTED',        label: 'Posted' },
+    { id: 'PAID',          label: 'Paid' },
+  ];
+
+  function statusMatches(status, filterId) {
+    if (filterId === 'ALL') return true;
+    if (filterId === 'ATTENTION') return status === 'FAILED' || status === 'RECONCILIATION_ISSUE';
+    return status === filterId;
+  }
+
+  async function retry(order, btn) {
+    btn.textContent = 'Retrying…'; btn.disabled = true;
+    try {
+      await api.orders.retryOdooInvoice(order.id);
+      toast('Retried', 'success');
+      reload();
+    } catch (err) {
+      toast(err.message || 'Retry failed');
+      btn.textContent = 'Retry'; btn.disabled = false;
+    }
+  }
+
+  function render() {
+    container.innerHTML = '';
+    const page = el('div', { className: 'p-6' });
+
+    const filterBar = el('div', { className: 'flex gap-2 mb-4 flex-wrap' });
+    FILTERS.forEach(f => {
+      filterBar.append(el('button', {
+        className: `px-3 py-1.5 rounded-lg text-xs font-bold transition ${filter === f.id ? 'bg-brand text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`,
+        onClick: () => { filter = f.id; render(); },
+      }, `${f.label} (${orders.filter(o => statusMatches(o.odooInvoiceStatus, f.id)).length})`));
+    });
+    page.append(filterBar);
+
+    const list = orders.filter(o => statusMatches(o.odooInvoiceStatus, filter));
+    const table = el('div', { className: 'bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden' });
+    if (!list.length) {
+      table.append(el('p', { className: 'text-center text-gray-400 text-sm py-12' }, 'No orders match this filter'));
+    } else {
+      list.forEach(o => {
+        const custName = `${o.customer?.firstName || ''} ${o.customer?.lastName || ''}`.trim() || '—';
+        table.append(el('div', { className: 'flex items-center justify-between px-5 py-4 border-b border-gray-50 last:border-0 gap-3' },
+          el('div', { className: 'min-w-0' },
+            el('p', { className: 'text-sm font-bold text-gray-900' }, o.orderNumber || `#${o.id.slice(-8).toUpperCase()}`),
+            el('p', { className: 'text-xs text-gray-400 mt-0.5' }, `${custName} · R${Number(o.total).toFixed(2)}`),
+            o.odooInvoiceSyncError ? el('p', { className: 'text-xs text-red-500 mt-1' }, o.odooInvoiceSyncError) : null,
+          ),
+          el('div', { className: 'flex items-center gap-3 flex-shrink-0' },
+            o.odooInvoiceNumber ? el('span', { className: 'text-xs font-mono text-gray-500' }, o.odooInvoiceNumber) : null,
+            odooStatusBadge(ODOO_INVOICE_STATUS_STYLE, o.odooInvoiceStatus),
+            (o.odooInvoiceStatus === 'FAILED' || o.odooInvoiceStatus === 'RECONCILIATION_ISSUE')
+              ? el('button', {
+                  className: 'text-xs font-bold text-brand px-3 py-1.5 rounded-lg bg-brand/10',
+                  onClick: (e) => retry(o, e.currentTarget),
+                }, 'Retry')
+              : null,
+          )
+        ));
+      });
+    }
+    page.append(table);
+    container.append(page);
+  }
+
+  render();
+}
+
+function renderOdooCustomerSyncTab(data, container, reload) {
+  const customers = data.customers || [];
+  let filter = 'ALL';
+
+  const FILTERS = [
+    { id: 'ALL',        label: 'All' },
+    { id: 'FAILED',     label: 'Failed' },
+    { id: 'SYNCED',     label: 'Synced' },
+    { id: 'NOT_SYNCED', label: 'Not Synced' },
+  ];
+
+  async function retry(customer, btn) {
+    btn.textContent = 'Retrying…'; btn.disabled = true;
+    try {
+      await api.customers.retryOdooSync(customer.id);
+      toast('Retried', 'success');
+      reload();
+    } catch (err) {
+      toast(err.message || 'Retry failed');
+      btn.textContent = 'Retry'; btn.disabled = false;
+    }
+  }
+
+  function render() {
+    container.innerHTML = '';
+    const page = el('div', { className: 'p-6' });
+
+    const filterBar = el('div', { className: 'flex gap-2 mb-4 flex-wrap' });
+    FILTERS.forEach(f => {
+      filterBar.append(el('button', {
+        className: `px-3 py-1.5 rounded-lg text-xs font-bold transition ${filter === f.id ? 'bg-brand text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`,
+        onClick: () => { filter = f.id; render(); },
+      }, `${f.label} (${customers.filter(c => f.id === 'ALL' || (c.odooSyncStatus || 'NOT_SYNCED') === f.id).length})`));
+    });
+    page.append(filterBar);
+
+    const list = customers.filter(c => filter === 'ALL' || (c.odooSyncStatus || 'NOT_SYNCED') === filter);
+    const table = el('div', { className: 'bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden' });
+    if (!list.length) {
+      table.append(el('p', { className: 'text-center text-gray-400 text-sm py-12' }, 'No customers match this filter'));
+    } else {
+      list.forEach(c => {
+        const status = c.odooSyncStatus || 'NOT_SYNCED';
+        table.append(el('div', { className: 'flex items-center justify-between px-5 py-4 border-b border-gray-50 last:border-0 gap-3' },
+          el('div', { className: 'min-w-0' },
+            el('p', { className: 'text-sm font-bold text-gray-900' }, `${c.firstName || ''} ${c.lastName || ''}`.trim() || c.email),
+            el('p', { className: 'text-xs text-gray-400 mt-0.5' }, c.email),
+            c.odooSyncError ? el('p', { className: 'text-xs text-red-500 mt-1' }, c.odooSyncError) : null,
+          ),
+          el('div', { className: 'flex items-center gap-3 flex-shrink-0' },
+            odooStatusBadge(ODOO_CUSTOMER_SYNC_STYLE, status),
+            status !== 'SYNCED'
+              ? el('button', {
+                  className: 'text-xs font-bold text-brand px-3 py-1.5 rounded-lg bg-brand/10',
+                  onClick: (e) => retry(c, e.currentTarget),
+                }, 'Retry')
+              : null,
+          )
+        ));
+      });
+    }
+    page.append(table);
+    container.append(page);
+  }
+
+  render();
 }
 
 // ── SETTINGS MODULE ───────────────────────────────────────────────────────────

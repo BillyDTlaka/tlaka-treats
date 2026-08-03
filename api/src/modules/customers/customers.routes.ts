@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from 'fastify'
 import { authenticate, authorize } from '../../shared/middleware/auth'
+import { syncCustomerToOdoo } from '../../shared/services/odoo.service'
 
 const customerRoutes: FastifyPluginAsync = async (fastify) => {
 
@@ -40,7 +41,28 @@ const customerRoutes: FastifyPluginAsync = async (fastify) => {
       orders:     u.orders,
       ambassador: u.ambassador,
       addresses:  u.addresses,
+      odooPartnerId:  (u as any).odooPartnerId,
+      odooSyncStatus: (u as any).odooSyncStatus,
+      odooSyncError:  (u as any).odooSyncError,
+      odooSyncedAt:   (u as any).odooSyncedAt,
     }))
+  })
+
+  // ── POST /customers/:id/odoo-sync/retry ── Admin: manually (re)runs the Odoo contact sync
+  fastify.post('/:id/odoo-sync/retry', {
+    preHandler: [authenticate, authorize('manage', 'user')],
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const db = fastify.prisma as any
+    const user = await db.user.findUnique({ where: { id } })
+    if (!user) return reply.code(404).send({ error: 'NOT_FOUND', message: 'Customer not found' })
+
+    try {
+      await syncCustomerToOdoo(db, user)
+      return { ok: true }
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Unknown Odoo sync error' }
+    }
   })
 
   // ── PATCH /customers/:id/status ── Admin: activate or suspend a user
