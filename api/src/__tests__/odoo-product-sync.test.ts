@@ -75,6 +75,20 @@ describe('syncProductToOdoo — proper Odoo variants (one template, generated pr
     })
   })
 
+  it('never applies a default sales tax — Tlaka Treats is not VAT registered', async () => {
+    odoo.accountsByCode.set('500010', { id: 42 })
+    prisma.product.findUnique.mockResolvedValueOnce(product)
+
+    await syncProductToOdoo(prisma, 'product-1')
+
+    const createCall = (global.fetch as jest.Mock).mock.calls.find((call) => {
+      const params = JSON.parse(call[1].body).params
+      return params.args?.[3] === 'product.template' && params.args?.[4] === 'create'
+    })
+    const vals = JSON.parse(createCall[1].body).params.args[5][0]
+    expect(vals.taxes_id).toEqual([[6, 0, []]])
+  })
+
   it('sets each variant\'s real RETAIL price as price_extra, with the template base at 0', async () => {
     odoo.accountsByCode.set('500010', { id: 42 })
     prisma.product.findUnique.mockResolvedValueOnce(product)

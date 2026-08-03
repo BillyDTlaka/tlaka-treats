@@ -47,6 +47,8 @@ async function resolveIncomeAccountId(uid: number, code: string | null | undefin
 // Everything created through this integration is something Tlaka Treats sells to
 // customers (a finished good, delivery fee, or discount line) — never an ingredient —
 // so it's marked sellable-only in Odoo, not purchasable, to keep the two apart there too.
+// taxes_id is explicitly cleared: Odoo otherwise auto-applies the company's default sales
+// tax to every new product, and Tlaka Treats isn't VAT registered — no tax belongs here yet.
 async function createOdooProduct(uid: number, reference: string, name: string, incomeAccountId?: number): Promise<number> {
   return odooRpc<number>('object', 'execute_kw', [
     config.odoo.db,
@@ -59,6 +61,7 @@ async function createOdooProduct(uid: number, reference: string, name: string, i
       default_code: reference,
       sale_ok: true,
       purchase_ok: false,
+      taxes_id: [[6, 0, []]],
       ...(incomeAccountId ? { property_account_income_id: incomeAccountId } : {}),
     }],
   ])
@@ -277,6 +280,7 @@ export async function syncProductToOdoo(prisma: PrismaClient, productId: string)
           sale_ok: true,
           purchase_ok: false,
           list_price: 0, // each variant's real price is set as price_extra below
+          taxes_id: [[6, 0, []]], // no default sales tax — Tlaka Treats isn't VAT registered yet
           ...(incomeAccountId ? { property_account_income_id: incomeAccountId } : {}),
           attribute_line_ids: [[0, 0, { attribute_id: attributeId, value_ids: [[6, 0, valueIds]] }]],
         }],
