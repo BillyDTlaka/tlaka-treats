@@ -8,10 +8,41 @@ export function installMockOdoo() {
     companyId: 500,
     nextInvoiceId: 900,
     nextProductId: 200,
+    nextTemplateId: 300,
+    nextAttributeId: 10,
+    nextAttributeValueId: 1000,
+    nextAttributeLineId: 2000,
     invoicesById: new Map<number, any>(),
     productsByCode: new Map<string, any>(),
+    productsById: new Map<number, any>(),
     accountsByCode: new Map<string, any>(),
+    attributesByName: new Map<string, number>(),
+    attributeValuesByKey: new Map<string, number>(),
+    templatesById: new Map<number, any>(),
+    attributeLinesById: new Map<number, any>(),
     searchInvoiceResults: [] as any[],
+  }
+
+  // Simulates Odoo auto-generating a product.product for every value on an attribute line.
+  function generateVariantsForLine(line: any) {
+    for (const valueId of line.value_ids) {
+      const exists = [...state.productsById.values()].some(p => p._templateId === line.product_tmpl_id && p._valueId === valueId)
+      if (!exists) {
+        const id = state.nextProductId++
+        state.productsById.set(id, { id, _templateId: line.product_tmpl_id, _valueId: valueId, default_code: false })
+      }
+    }
+  }
+
+  function applyAttributeLineCommands(templateId: number, attributeLineIds: any[]) {
+    for (const cmd of attributeLineIds) {
+      if (cmd[0] !== 0) continue
+      const lineId = state.nextAttributeLineId++
+      const valueIds = cmd[2].value_ids[0][2] // [[6, 0, [ids]]]
+      const line = { id: lineId, product_tmpl_id: templateId, attribute_id: cmd[2].attribute_id, value_ids: [...valueIds] }
+      state.attributeLinesById.set(lineId, line)
+      generateVariantsForLine(line)
+    }
   }
 
   ;(global as any).fetch = jest.fn(async (_url: string, opts: any) => {
@@ -30,22 +61,92 @@ export function installMockOdoo() {
         result = modelMethod === 'search_read' ? [{ id: 77 }] : 77
       } else if (model === 'res.partner' && modelMethod === 'create') {
         result = 555
+      } else if (model === 'account.account' && modelMethod === 'search_read') {
+        const code = methodArgs[0][0][2]
+        const found = state.accountsByCode.get(code)
+        result = found ? [found] : []
+      } else if (model === 'product.attribute') {
+        if (modelMethod === 'search_read') {
+          const name = methodArgs[0][0][2]
+          const id = state.attributesByName.get(name)
+          result = id ? [{ id }] : []
+        } else if (modelMethod === 'create') {
+          const id = state.nextAttributeId++
+          state.attributesByName.set(methodArgs[0].name, id)
+          result = id
+        }
+      } else if (model === 'product.attribute.value') {
+        if (modelMethod === 'search_read') {
+          const domain = methodArgs[0]
+          const key = `${domain[0][2]}:${domain[1][2]}`
+          const id = state.attributeValuesByKey.get(key)
+          result = id ? [{ id }] : []
+        } else if (modelMethod === 'create') {
+          const vals = methodArgs[0]
+          const id = state.nextAttributeValueId++
+          state.attributeValuesByKey.set(`${vals.attribute_id}:${vals.name}`, id)
+          result = id
+        }
+      } else if (model === 'product.template.attribute.line') {
+        if (modelMethod === 'search_read') {
+          const domain = methodArgs[0]
+          const templateId = domain[0][2]
+          const attributeId = domain[1][2]
+          const lines = [...state.attributeLinesById.values()].filter(l => l.product_tmpl_id === templateId && l.attribute_id === attributeId)
+          result = lines.map(l => ({ id: l.id, value_ids: l.value_ids }))
+        } else if (modelMethod === 'write') {
+          const [ids, vals] = methodArgs
+          const line = state.attributeLinesById.get(ids[0])
+          if (line && vals.value_ids) {
+            for (const cmd of vals.value_ids) {
+              if (cmd[0] === 4 && !line.value_ids.includes(cmd[1])) line.value_ids.push(cmd[1])
+            }
+            generateVariantsForLine(line)
+          }
+          result = true
+        }
+      } else if (model === 'product.template') {
+        if (modelMethod === 'create') {
+          const vals = methodArgs[0]
+          const id = state.nextTemplateId++
+          state.templatesById.set(id, { id, name: vals.name })
+          applyAttributeLineCommands(id, vals.attribute_line_ids || [])
+          result = id
+        } else if (modelMethod === 'write') {
+          const [ids, vals] = methodArgs
+          if (vals.attribute_line_ids) applyAttributeLineCommands(ids[0], vals.attribute_line_ids)
+          result = true
+        }
       } else if (model === 'product.product') {
         if (modelMethod === 'search_read') {
-          const code = methodArgs[0][0][2]
-          const found = state.productsByCode.get(code)
-          result = found ? [found] : []
+          const domain = methodArgs[0]
+          const isTemplateVariantLookup = domain.some((c: any) => c[0] === 'product_tmpl_id')
+          if (isTemplateVariantLookup) {
+            const templateId = domain.find((c: any) => c[0] === 'product_tmpl_id')[2]
+            const valueId = domain.find((c: any) => String(c[0]).startsWith('product_template_attribute_value_ids'))[2]
+            const found = [...state.productsById.values()].find(p => p._templateId === templateId && p._valueId === valueId)
+            result = found ? [{ id: found.id }] : []
+          } else {
+            const code = domain[0][2]
+            const found = state.productsByCode.get(code)
+            result = found ? [found] : []
+          }
         } else if (modelMethod === 'create') {
           const vals = methodArgs[0]
           const id = state.nextProductId++
           const rec = { id, name: vals.name, default_code: vals.default_code }
           state.productsByCode.set(vals.default_code, rec)
+          state.productsById.set(id, rec)
           result = id
+        } else if (modelMethod === 'write') {
+          const [ids, vals] = methodArgs
+          const rec = state.productsById.get(ids[0])
+          if (rec && vals.default_code !== undefined) {
+            rec.default_code = vals.default_code
+            state.productsByCode.set(vals.default_code, rec)
+          }
+          result = true
         }
-      } else if (model === 'account.account' && modelMethod === 'search_read') {
-        const code = methodArgs[0][0][2]
-        const found = state.accountsByCode.get(code)
-        result = found ? [found] : []
       } else if (model === 'account.move') {
         if (modelMethod === 'search_read') {
           result = state.searchInvoiceResults

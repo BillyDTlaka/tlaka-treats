@@ -1,7 +1,7 @@
 import { FastifyPluginAsync } from 'fastify'
 import { ProductService } from './products.service'
 import { authenticate, authorize } from '../../shared/middleware/auth'
-import { syncProductVariantToOdoo } from '../../shared/services/odoo-product.service'
+import { syncProductToOdoo } from '../../shared/services/odoo-product.service'
 
 const productRoutes: FastifyPluginAsync = async (fastify) => {
   const productService = new ProductService(fastify.prisma)
@@ -114,12 +114,14 @@ const productRoutes: FastifyPluginAsync = async (fastify) => {
   })
 
   // POST /products/:id/variants/:variantId/odoo-sync/retry - admin manually (re)runs the Odoo product sync
+  // Note: syncs the whole product (its template + any not-yet-synced variants), not just
+  // this one variant, since Odoo variants are generated per-template, not independently.
   fastify.post('/:id/variants/:variantId/odoo-sync/retry', {
     preHandler: [authenticate, authorize('update', 'product')],
   }, async (request) => {
-    const { variantId } = request.params as { id: string; variantId: string }
+    const { id } = request.params as { id: string; variantId: string }
     try {
-      await syncProductVariantToOdoo(fastify.prisma, variantId)
+      await syncProductToOdoo(fastify.prisma, id)
       return { ok: true }
     } catch (err: any) {
       return { ok: false, error: err?.message || 'Unknown Odoo sync error' }

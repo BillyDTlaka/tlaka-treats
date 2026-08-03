@@ -1,6 +1,6 @@
 import { PrismaClient, PricingTier, ProductClassification } from '@prisma/client'
 import { NotFoundError } from '../../shared/errors'
-import { syncProductVariantToOdoo } from '../../shared/services/odoo-product.service'
+import { syncProductToOdoo } from '../../shared/services/odoo-product.service'
 
 export class ProductService {
   constructor(private prisma: PrismaClient) {}
@@ -140,11 +140,10 @@ export class ProductService {
       include: { variants: { include: { prices: true } }, category: true, supplier: { select: { id: true, name: true } } },
     })
 
-    // Sync each variant to Odoo now, rather than waiting for it to first appear in a
-    // confirmed order — fire-and-forget, failures are visible in the admin monitoring view.
-    for (const variant of product.variants) {
-      syncProductVariantToOdoo(this.prisma, variant.id).catch(err => console.error('[odoo] product sync failed:', err.message))
-    }
+    // Sync the whole product (template + all its variants) to Odoo now, rather than
+    // waiting for it to first appear in a confirmed order — fire-and-forget, failures are
+    // visible in the admin monitoring view.
+    syncProductToOdoo(this.prisma, product.id).catch(err => console.error('[odoo] product sync failed:', err.message))
 
     return product
   }
@@ -177,7 +176,7 @@ export class ProductService {
       include: { prices: true },
     })
 
-    syncProductVariantToOdoo(this.prisma, variant.id).catch(err => console.error('[odoo] product sync failed:', err.message))
+    syncProductToOdoo(this.prisma, productId).catch(err => console.error('[odoo] product sync failed:', err.message))
 
     return variant
   }

@@ -4,6 +4,8 @@ import { odooRpc, getUid, assertOdooConfigured } from './odoo-client'
 
 export class ProductMappingError extends Error {}
 
+const VARIANT_ATTRIBUTE_NAME = 'Variant'
+
 interface OdooProductInfo {
   id: number
   name: string
@@ -25,7 +27,7 @@ async function findOdooProductByReference(uid: number, reference: string): Promi
 
 const incomeAccountCache = new Map<string, number>()
 
-// Resolves an account.account by its code (e.g. "500010"). Returns null when no code is
+// Resolves an account.account by its code (e.g. "500010"). Returns undefined when no code is
 // configured (Odoo then falls back to the product/category default); throws if a code
 // *is* configured but doesn't exist in Odoo, since that's a real misconfiguration worth
 // surfacing rather than silently ignoring.
@@ -40,11 +42,6 @@ async function resolveIncomeAccountId(uid: number, code: string | null | undefin
 
   incomeAccountCache.set(code, accounts[0].id)
   return accounts[0].id
-}
-
-// Exposed for tests only, to reset the module-level cache between cases.
-export function _resetIncomeAccountCacheForTests() {
-  incomeAccountCache.clear()
 }
 
 // Everything created through this integration is something Tlaka Treats sells to
@@ -77,17 +74,16 @@ type VariantForMapping = {
 
 // Derives a stable default_code from the product/variant name when no reference has
 // been set manually, e.g. "Melting Moments" + "5L Bucket" -> "MELTING-MOMENTS-5L-BUCKET".
-function generateReference(variant: VariantForMapping): string {
-  const raw = `${variant.product?.name ?? ''} ${variant.name}`
+function generateReference(productName: string | undefined, variantName: string): string {
+  const raw = `${productName ?? ''} ${variantName}`
   return raw.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 }
 
 // Matching priority: 1) stored odooProductId  2) odooProductReference vs Odoo default_code
-// 3) auto-create (only when ODOO_AUTO_CREATE_PRODUCTS=true) — generating a reference from
-// the product/variant name first if none was set manually. Caches the resolved id (and any
-// generated reference) back onto the variant so subsequent syncs skip the Odoo lookup.
-// The income account is only applied when *creating* a new Odoo product — an existing one
-// is never silently rewritten.
+// 3) auto-create (only when ODOO_AUTO_CREATE_PRODUCTS=true) as a *standalone* product — used
+// as a fallback by the order-invoice flow for a variant that somehow wasn't already synced
+// via syncProductToOdoo (the normal, product-creation-time path — see below — which creates
+// proper Odoo variants grouped under one template instead).
 export async function resolveOdooProductId(prisma: PrismaClient, uid: number, variant: VariantForMapping): Promise<number> {
   if (variant.odooProductId) return variant.odooProductId
 
@@ -98,7 +94,7 @@ export async function resolveOdooProductId(prisma: PrismaClient, uid: number, va
     if (!config.odoo.autoCreateProducts) {
       throw new ProductMappingError(`Product mapping missing for ${label} (no Odoo reference configured on this variant)`)
     }
-    reference = generateReference(variant)
+    reference = generateReference(variant.product?.name, variant.name)
   }
 
   const syncFields = { odooProductSyncStatus: 'SYNCED' as const, odooProductSyncError: null, odooProductSyncedAt: new Date() }
@@ -134,31 +130,169 @@ export async function resolveServiceProductId(uid: number, reference: string, la
   return createOdooProduct(uid, reference, label, incomeAccountId)
 }
 
-// Pushes a single variant to Odoo right away (product creation / admin retry), rather than
-// waiting for it to first appear in a confirmed order. Persists odooProductSyncStatus/Error
-// either way (mirroring syncCustomerToOdoo) but still throws on failure, so callers — the
-// fire-and-forget product-creation hook, and a future retry route — decide for themselves
-// whether to swallow it or surface it.
-export async function syncProductVariantToOdoo(prisma: PrismaClient, variantId: string): Promise<void> {
-  const db = prisma as any
-  const variant = await db.productVariant.findUnique({
-    where: { id: variantId },
-    include: { product: { include: { category: true } } },
+// ── Proper Odoo variants ─────────────────────────────────────────────────────────
+// One product.template per app Product, one shared "Variant" product.attribute, and one
+// product.attribute.value per ProductVariant name. Odoo generates the actual product.product
+// rows itself from the template's attribute line, so e.g. "Choc Chip Biscuits" shows up as a
+// single product in Odoo with 5L/10L/20L Bucket variants underneath, not three unrelated
+// products.
+
+let cachedAttributeId: number | null = null
+
+async function getVariantAttributeId(uid: number): Promise<number> {
+  if (cachedAttributeId) return cachedAttributeId
+  const existing = await odooRpc<Array<{ id: number }>>('object', 'execute_kw', [
+    config.odoo.db, uid, config.odoo.apiKey, 'product.attribute', 'search_read', [[['name', '=', VARIANT_ATTRIBUTE_NAME]]], { fields: ['id'], limit: 1 },
+  ])
+  if (existing.length) {
+    cachedAttributeId = existing[0].id
+    return cachedAttributeId
+  }
+  cachedAttributeId = await odooRpc<number>('object', 'execute_kw', [
+    config.odoo.db, uid, config.odoo.apiKey, 'product.attribute', 'create', [{ name: VARIANT_ATTRIBUTE_NAME, create_variant: 'always' }],
+  ])
+  return cachedAttributeId
+}
+
+// Attribute values are shared/reusable across every product template using this attribute
+// (that's how Odoo's own variant system works), so the same "5L Bucket" value gets reused
+// if it recurs on a different product rather than duplicated.
+const attributeValueCache = new Map<string, number>()
+
+async function findOrCreateAttributeValue(uid: number, attributeId: number, name: string): Promise<number> {
+  const cacheKey = `${attributeId}:${name}`
+  if (attributeValueCache.has(cacheKey)) return attributeValueCache.get(cacheKey)!
+
+  const existing = await odooRpc<Array<{ id: number }>>('object', 'execute_kw', [
+    config.odoo.db, uid, config.odoo.apiKey, 'product.attribute.value', 'search_read',
+    [[['attribute_id', '=', attributeId], ['name', '=', name]]], { fields: ['id'], limit: 1 },
+  ])
+  if (existing.length) {
+    attributeValueCache.set(cacheKey, existing[0].id)
+    return existing[0].id
+  }
+
+  const id = await odooRpc<number>('object', 'execute_kw', [
+    config.odoo.db, uid, config.odoo.apiKey, 'product.attribute.value', 'create', [{ name, attribute_id: attributeId }],
+  ])
+  attributeValueCache.set(cacheKey, id)
+  return id
+}
+
+// Finds the specific product.product Odoo generated for one attribute value combination.
+async function findGeneratedVariant(uid: number, templateId: number, valueId: number): Promise<number | null> {
+  const products = await odooRpc<Array<{ id: number }>>('object', 'execute_kw', [
+    config.odoo.db, uid, config.odoo.apiKey, 'product.product', 'search_read',
+    [[['product_tmpl_id', '=', templateId], ['product_template_attribute_value_ids.product_attribute_value_id', '=', valueId]]],
+    { fields: ['id'], limit: 1 },
+  ])
+  return products[0]?.id ?? null
+}
+
+type VariantRow = { id: string; name: string; odooProductId: number | null; odooProductReference: string | null }
+type ProductForSync = {
+  id: string
+  name: string
+  classification: string
+  odooTemplateId: number | null
+  category?: { odooIncomeAccountCode?: string | null } | null
+  variants: VariantRow[]
+}
+
+async function assignVariantCode(prisma: PrismaClient, uid: number, variant: VariantRow, productProductId: number): Promise<void> {
+  const reference = variant.odooProductReference || generateReference(undefined, variant.name)
+  await odooRpc('object', 'execute_kw', [
+    config.odoo.db, uid, config.odoo.apiKey, 'product.product', 'write', [[productProductId], { default_code: reference }],
+  ])
+  await (prisma as any).productVariant.update({
+    where: { id: variant.id },
+    data: {
+      odooProductId: productProductId,
+      odooProductReference: reference,
+      odooProductSyncStatus: 'SYNCED',
+      odooProductSyncError: null,
+      odooProductSyncedAt: new Date(),
+    },
   })
-  if (!variant) return
-  if (variant.odooProductId) return
-  if (variant.product?.classification && variant.product.classification !== 'SELLABLE') return
+}
+
+// Creates (or extends) the one Odoo product.template for this app Product, adding a real
+// Odoo variant for each local ProductVariant that isn't already synced. Variants synced
+// under the old standalone-product model (odooProductId set, no template) are left as-is.
+export async function syncProductToOdoo(prisma: PrismaClient, productId: string): Promise<void> {
+  const db = prisma as any
+  const product: ProductForSync | null = await db.product.findUnique({
+    where: { id: productId },
+    include: { category: true, variants: true },
+  })
+  if (!product) return
+  if (product.classification !== 'SELLABLE') return
+
+  const pending = product.variants.filter(v => !v.odooProductId)
+  if (!pending.length) return
 
   try {
     assertOdooConfigured()
     const uid = await getUid()
-    await resolveOdooProductId(prisma, uid, variant)
+    const attributeId = await getVariantAttributeId(uid)
+    const valueIds = await Promise.all(pending.map(v => findOrCreateAttributeValue(uid, attributeId, v.name)))
+
+    let templateId = product.odooTemplateId
+
+    if (!templateId) {
+      const incomeAccountId = await resolveIncomeAccountId(uid, product.category?.odooIncomeAccountCode)
+      templateId = await odooRpc<number>('object', 'execute_kw', [
+        config.odoo.db, uid, config.odoo.apiKey, 'product.template', 'create', [{
+          name: product.name,
+          sale_ok: true,
+          purchase_ok: false,
+          ...(incomeAccountId ? { property_account_income_id: incomeAccountId } : {}),
+          attribute_line_ids: [[0, 0, { attribute_id: attributeId, value_ids: [[6, 0, valueIds]] }]],
+        }],
+      ])
+      await db.product.update({ where: { id: productId }, data: { odooTemplateId: templateId } })
+    } else {
+      // Template already exists — add any new values to its "Variant" attribute line.
+      const lines = await odooRpc<Array<{ id: number; value_ids: number[] }>>('object', 'execute_kw', [
+        config.odoo.db, uid, config.odoo.apiKey, 'product.template.attribute.line', 'search_read',
+        [[['product_tmpl_id', '=', templateId], ['attribute_id', '=', attributeId]]], { fields: ['id', 'value_ids'] },
+      ])
+      const newValueIds = valueIds.filter(id => !lines[0]?.value_ids?.includes(id))
+      if (lines.length && newValueIds.length) {
+        await odooRpc('object', 'execute_kw', [
+          config.odoo.db, uid, config.odoo.apiKey, 'product.template.attribute.line', 'write',
+          [[lines[0].id], { value_ids: newValueIds.map(id => [4, id]) }],
+        ])
+      } else if (!lines.length) {
+        await odooRpc('object', 'execute_kw', [
+          config.odoo.db, uid, config.odoo.apiKey, 'product.template', 'write',
+          [[templateId], { attribute_line_ids: [[0, 0, { attribute_id: attributeId, value_ids: [[6, 0, valueIds]] }]] }],
+        ])
+      }
+    }
+
+    for (let i = 0; i < pending.length; i++) {
+      const productProductId = await findGeneratedVariant(uid, templateId, valueIds[i])
+      if (!productProductId) throw new ProductMappingError(`Odoo did not generate a variant for "${pending[i].name}" on template ${templateId}`)
+      await assignVariantCode(prisma, uid, pending[i], productProductId)
+    }
   } catch (err: any) {
     const message = err?.message || 'Unknown Odoo sync error'
-    await db.productVariant.update({
-      where: { id: variantId },
-      data: { odooProductSyncStatus: 'FAILED', odooProductSyncError: message, odooProductSyncedAt: new Date() },
-    }).catch(() => {/* the original error is what matters */})
+    await Promise.all(pending.map(v =>
+      db.productVariant.update({
+        where: { id: v.id },
+        data: { odooProductSyncStatus: 'FAILED', odooProductSyncError: message, odooProductSyncedAt: new Date() },
+      }).catch(() => {/* the original error is what matters */}),
+    ))
     throw err
   }
+}
+
+// Exposed for tests only, to reset module-level caches between cases.
+export function _resetIncomeAccountCacheForTests() {
+  incomeAccountCache.clear()
+}
+export function _resetVariantAttributeCacheForTests() {
+  cachedAttributeId = null
+  attributeValueCache.clear()
 }
