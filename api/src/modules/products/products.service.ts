@@ -191,12 +191,14 @@ export class ProductService {
     classification: ProductClassification
     isActive: boolean
     uomId: string
+    categoryId: string
   }>) {
     const product = await (this.prisma as any).product.findUnique({ where: { id } })
     if (!product) throw new NotFoundError('Product')
     // Sync imageUrl from images array if images are being updated
     const updateData: any = { ...data }
     if (data.supplierId === '') updateData.supplierId = null
+    if (data.categoryId === '') updateData.categoryId = null
     if (data.images) {
       const primary = data.images.find(i => i.isPrimary)?.url ?? data.images[0]?.url
       if (primary && !data.imageUrl) updateData.imageUrl = primary

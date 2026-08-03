@@ -145,6 +145,7 @@ const api = {
     getAll: () => req('GET', '/products'),
     getById: (id) => req('GET', `/products/${id}`),
     getAllAdmin: () => req('GET', '/products/admin'),
+    getCategories: () => req('GET', '/products/categories'),
     create: (data) => req('POST', '/products', data),
     update: (id, data) => req('PATCH', `/products/${id}`, data),
     addVariant: (id, data) => req('POST', `/products/${id}/variants`, data),
@@ -3545,7 +3546,7 @@ function AdminOverviewPage() {
     dataLoaded = false;
     renderContent();
     try {
-      const [orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns, quotes, discountRules, uoms] = await Promise.all([
+      const [orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns, quotes, discountRules, uoms, categories] = await Promise.all([
         api.orders.getAll(), api.ambassadors.getAll(), api.products.getAllAdmin(), api.customers.getAll(),
         api.inventory.getAll().catch(() => []),
         api.suppliers.getAll().catch(() => []),
@@ -3555,8 +3556,9 @@ function AdminOverviewPage() {
         api.quotes.getAll().catch(() => []),
         api.discountRules.getAll().catch(() => []),
         api.uom.getAll().catch(() => []),
+        api.products.getCategories().catch(() => []),
       ]);
-      adminData = { orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns, quotes, discountRules, uoms };
+      adminData = { orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns, quotes, discountRules, uoms, categories };
       dataLoaded = true;
       renderContent();
     } catch {
@@ -9120,7 +9122,7 @@ const CLASSIFICATIONS = {
 
 // ── PRODUCTS MODULE ───────────────────────────────────────────────────────────
 function renderAdminProducts(data, container, reload) {
-  const { products, suppliers = [], uoms = [] } = data;
+  const { products, suppliers = [], uoms = [], categories = [] } = data;
   const page = el('div', { className: 'p-6 max-w-6xl mx-auto' });
 
   // ── Toolbar ──────────────────────────────────────────────────────────────
@@ -9148,7 +9150,7 @@ function renderAdminProducts(data, container, reload) {
 
   const addBtn = el('button', {
     className: 'bg-brand text-white text-sm font-bold px-4 py-2 rounded-lg hover:opacity-90 transition flex-shrink-0',
-    onClick: () => showAddProductModal(reload, suppliers, uoms),
+    onClick: () => showAddProductModal(reload, suppliers, uoms, categories),
   }, '+ Add Product');
 
   toolbar.append(searchInput, classFilter, statusFilter, addBtn);
@@ -9294,7 +9296,7 @@ function renderAdminProducts(data, container, reload) {
           el('div', { className: 'flex items-center justify-end gap-2' },
             el('button', {
               className: 'text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-700 transition',
-              onClick: () => showEditProductModal(product, reload, suppliers, uoms),
+              onClick: () => showEditProductModal(product, reload, suppliers, uoms, categories),
             }, '✏️ Edit'),
             el('button', {
               className: `text-xs font-semibold px-3 py-1.5 rounded-lg transition ${product.isActive ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-green-50 text-green-600 hover:bg-green-100'}`,
@@ -9437,7 +9439,7 @@ function productField(label, key, form, type = 'text', placeholder = '', default
 }
 
 // ── ADD PRODUCT MODAL ─────────────────────────────────────────────────────────
-function showAddProductModal(onSave, suppliers = [], uoms = []) {
+function showAddProductModal(onSave, suppliers = [], uoms = [], categories = []) {
   let classification = null;   // chosen in step 1
   let galleryWidget  = null;
 
@@ -9478,7 +9480,7 @@ function showAddProductModal(onSave, suppliers = [], uoms = []) {
   function renderStep2() {
     const isSellable = classification === 'SELLABLE';
     const meta       = CLASSIFICATIONS[classification];
-    const form       = { name: '', description: '', variantName: '1 Pack', retailPrice: '', ambassadorPrice: '', uomId: '' };
+    const form       = { name: '', description: '', variantName: '1 Pack', retailPrice: '', ambassadorPrice: '', uomId: '', categoryId: '' };
     let   galleryImages = [];
 
     modal.innerHTML = '';
@@ -9531,6 +9533,24 @@ function showAddProductModal(onSave, suppliers = [], uoms = []) {
       )
     );
     modal.append(brandSupplierRow);
+
+    // ── Category ─────────────────────────────────────────────────────────────
+    if (categories.length) {
+      const categoryDropdown = el('select', {
+        className: 'w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand transition mb-4',
+        onChange: (e) => { form.categoryId = e.target.value; },
+      });
+      const noCatOpt = document.createElement('option'); noCatOpt.value = ''; noCatOpt.textContent = '— No category —'; categoryDropdown.append(noCatOpt);
+      categories.forEach(c => {
+        const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; categoryDropdown.append(o);
+      });
+      modal.append(
+        el('div', { className: 'mb-4' },
+          el('label', { className: 'block text-sm font-semibold text-gray-700 mb-1' }, 'Category'),
+          categoryDropdown
+        )
+      );
+    }
 
     // ── Unit of Measure ──────────────────────────────────────────────────────
     if (uoms.length) {
@@ -9659,6 +9679,7 @@ function showAddProductModal(onSave, suppliers = [], uoms = []) {
             brand: form.brand || undefined,
             supplierId: form.supplierId || undefined,
             uomId: form.uomId || undefined,
+            categoryId: form.categoryId || undefined,
             classification,
             imageUrl: primaryImg,
             images: galleryImages.length ? galleryImages : undefined,
@@ -9682,10 +9703,10 @@ function showAddProductModal(onSave, suppliers = [], uoms = []) {
 }
 
 // ── EDIT PRODUCT MODAL ────────────────────────────────────────────────────────
-function showEditProductModal(product, onSave, suppliers = [], uoms = []) {
+function showEditProductModal(product, onSave, suppliers = [], uoms = [], categories = []) {
   const isSellable = product.classification === 'SELLABLE' || !product.classification;
   const meta       = CLASSIFICATIONS[product.classification] || CLASSIFICATIONS.SELLABLE;
-  const form       = { name: product.name, description: product.description || '', brand: product.brand || '', supplierId: product.supplierId || product.supplier?.id || '', uomId: product.uomId || product.uom?.id || '' };
+  const form       = { name: product.name, description: product.description || '', brand: product.brand || '', supplierId: product.supplierId || product.supplier?.id || '', uomId: product.uomId || product.uom?.id || '', categoryId: product.categoryId || product.category?.id || '' };
 
   // Parse existing images
   let galleryImages = [];
@@ -9762,6 +9783,26 @@ function showEditProductModal(product, onSave, suppliers = [], uoms = []) {
       )
     )
   );
+
+  // ── Category (edit modal) ────────────────────────────────────────────────
+  if (categories.length) {
+    const categorySel = el('select', {
+      className: 'w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand transition',
+      onChange: (e) => { form.categoryId = e.target.value; },
+    });
+    const noCatOpt2 = document.createElement('option'); noCatOpt2.value = ''; noCatOpt2.textContent = '— No category —'; categorySel.append(noCatOpt2);
+    categories.forEach(c => {
+      const o = document.createElement('option'); o.value = c.id; o.textContent = c.name;
+      if (form.categoryId === c.id) o.selected = true;
+      categorySel.append(o);
+    });
+    modal.append(
+      el('div', { className: 'mb-5' },
+        el('label', { className: 'block text-sm font-semibold text-gray-700 mb-1' }, 'Category'),
+        categorySel
+      )
+    );
+  }
 
   // ── Unit of Measure (edit modal) ─────────────────────────────────────────
   if (uoms.length) {
@@ -9881,6 +9922,7 @@ function showEditProductModal(product, onSave, suppliers = [], uoms = []) {
           brand:       form.brand       || undefined,
           supplierId:  form.supplierId  || '',
           uomId:       form.uomId       || undefined,
+          categoryId:  form.categoryId  || '',
           imageUrl:    primaryImg,
           images:      galleryImages.length ? galleryImages : undefined,
         });
