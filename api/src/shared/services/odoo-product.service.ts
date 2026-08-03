@@ -23,9 +23,12 @@ async function findOdooProductByReference(uid: number, reference: string): Promi
   return products[0] || null
 }
 
+// Everything created through this integration is something Tlaka Treats sells to
+// customers (a finished good, delivery fee, or discount line) — never an ingredient —
+// so it's marked sellable-only in Odoo, not purchasable, to keep the two apart there too.
 async function createOdooProduct(uid: number, reference: string, name: string): Promise<number> {
   return odooRpc<number>('object', 'execute_kw', [
-    config.odoo.db, uid, config.odoo.apiKey, 'product.product', 'create', [{ name, default_code: reference, sale_ok: true }],
+    config.odoo.db, uid, config.odoo.apiKey, 'product.product', 'create', [{ name, default_code: reference, sale_ok: true, purchase_ok: false }],
   ])
 }
 

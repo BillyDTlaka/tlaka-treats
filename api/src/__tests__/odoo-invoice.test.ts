@@ -134,6 +134,25 @@ describe('syncOrderInvoice', () => {
     expect(failCall[0].data.odooInvoiceSyncError).toMatch(/BISCUIT-BUCKET-140/)
   })
 
+  it('INV-06b — an INGREDIENT/non-SELLABLE item can never be billed to a customer', async () => {
+    prisma.order.findUnique.mockResolvedValueOnce(mappedOrder({
+      items: [{
+        id: 'item-1', variantId: 'variant-1', quantity: 2, unitPrice: 85, subtotal: 170,
+        variant: { id: 'variant-1', name: '25kg Bag', odooProductId: null, odooProductReference: null, product: { name: 'Flour', classification: 'INGREDIENT' } },
+      }],
+    }))
+
+    const result = await syncOrderInvoice(prisma, 'order-1')
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/classified as INGREDIENT, not SELLABLE/)
+    const createCalls = (global.fetch as jest.Mock).mock.calls.filter((call) => {
+      const params = JSON.parse(call[1].body).params
+      return params.args?.[3] === 'account.move' && params.args?.[4] === 'create'
+    })
+    expect(createCalls).toHaveLength(0)
+  })
+
   it('INV-07 — retrying an already-linked order does not create a duplicate invoice', async () => {
     const order = mappedOrder()
     prisma.order.findUnique.mockResolvedValueOnce(order)

@@ -102,6 +102,12 @@ async function buildInvoiceLines(prisma: PrismaClient, uid: number, order: any):
   let expectedTotal = 0
 
   for (const item of order.items) {
+    const classification = item.variant.product?.classification
+    if (classification && classification !== 'SELLABLE') {
+      throw new ProductMappingError(
+        `Order item "${item.variant.product?.name ?? ''} — ${item.variant.name}" is classified as ${classification}, not SELLABLE — an ingredient/packaging/consumable can't be billed to a customer`,
+      )
+    }
     const productId = await resolveOdooProductId(prisma, uid, {
       id: item.variant.id,
       name: item.variant.name,
