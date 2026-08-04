@@ -315,6 +315,120 @@ describe('Order routes', () => {
       expect(res.body.odoo.ok).toBe(false)
       expect(res.body.odoo.error).toMatch(/Odoo is not configured/)
     })
+
+    it('ORD-19 — cancelling a confirmed order restocks items, cancels the commission, and reverses the finance transaction', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'order' }])
+      const orderWithAmbassador = makeOrder({ status: 'CONFIRMED', ambassadorId: 'amb-1', ambassador: makeAmbassador({ status: 'ACTIVE' }) })
+      // 1st findUnique: updateStatus's own lookup. 2nd: cancelOrderInvoice's independent lookup.
+      prisma.order.findUnique
+        .mockResolvedValueOnce(orderWithAmbassador)
+        .mockResolvedValueOnce({ id: 'order-1', odooInvoiceId: null, total: 170 })
+      prisma.order.update.mockResolvedValueOnce(makeOrder({ status: 'CANCELLED' }))
+      prisma.stockMovement.findMany.mockResolvedValueOnce([
+        { stockItemId: 'stock-1', quantity: -2, note: 'Order confirmed — Choc Chip Cookies × 2' },
+      ])
+      prisma.commission.findUnique.mockResolvedValueOnce({ id: 'comm-1', orderId: 'order-1', status: 'PENDING' })
+      prisma.financeTransaction.findUnique.mockResolvedValueOnce({
+        id: 'txn-1', orderId: 'order-1', amount: 170, category: 'Product Sales', accountId: 'acct-1',
+      })
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .patch('/orders/order-1/status')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'CANCELLED' })
+
+      expect(res.status).toBe(200)
+
+      // Stock restored via a new ADJUSTMENT_IN movement + incremented currentStock
+      expect(prisma.stockMovement.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ stockItemId: 'stock-1', type: 'ADJUSTMENT_IN', quantity: 2 }),
+      })
+      expect(prisma.stockItem.update).toHaveBeenCalledWith({
+        where: { id: 'stock-1' },
+        data: { currentStock: { increment: 2 } },
+      })
+
+      // Commission cancelled, not deleted
+      expect(prisma.commission.update).toHaveBeenCalledWith({ where: { orderId: 'order-1' }, data: { status: 'CANCELLED' } })
+
+      // Original income transaction reversed with a negative offsetting entry, not deleted
+      expect(prisma.financeTransaction.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ type: 'INCOME', amount: -170, accountId: 'acct-1' }),
+      })
+    })
+
+    it('ORD-20 — cancelling an order that was never confirmed touches no stock/commission/finance', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'order' }])
+      prisma.order.findUnique
+        .mockResolvedValueOnce(makeOrder({ status: 'PENDING' }))
+        .mockResolvedValueOnce({ id: 'order-1', odooInvoiceId: null, total: 170 })
+      prisma.order.update.mockResolvedValueOnce(makeOrder({ status: 'CANCELLED' }))
+      prisma.stockMovement.findMany.mockResolvedValueOnce([]) // never confirmed — nothing was deducted
+      prisma.commission.findUnique.mockResolvedValueOnce(null)
+      prisma.financeTransaction.findUnique.mockResolvedValueOnce(null)
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .patch('/orders/order-1/status')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'CANCELLED' })
+
+      expect(res.status).toBe(200)
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled()
+      expect(prisma.commission.update).not.toHaveBeenCalled()
+      expect(prisma.financeTransaction.create).not.toHaveBeenCalled()
+    })
+  })
+
+  // ── POST /orders/:id/payment ───────────────────────────────────────────────
+
+  describe('POST /orders/:id/payment', () => {
+    it('ORD-21 — admin records a cash payment', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'order' }])
+      prisma.order.findUnique
+        .mockResolvedValueOnce(makeOrder({ status: 'CONFIRMED' })) // recordPayment's own lookup
+        .mockResolvedValueOnce(makeOrder({ status: 'CONFIRMED', paymentStatus: 'PAID' })) // syncOrderInvoice's lookup
+      prisma.order.update.mockResolvedValueOnce(makeOrder({ status: 'CONFIRMED', paymentMethod: 'CASH', paymentStatus: 'PAID' }))
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .post('/orders/order-1/payment')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ method: 'CASH' })
+
+      expect(res.status).toBe(200)
+      expect(res.body.paymentStatus).toBe('PAID')
+      expect(res.body.odoo).toBeDefined() // Odoo isn't configured in this test env — still returns a result, not a thrown error
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: 'order-1' },
+        data: expect.objectContaining({ paymentMethod: 'CASH', paymentStatus: 'PAID', paymentRef: null }),
+      })
+    })
+
+    it('rejects an invalid payment method', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'order' }])
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .post('/orders/order-1/payment')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ method: 'BITCOIN' })
+
+      expect(res.status).toBe(400)
+    })
+
+    it('returns 403 for a customer attempting to record a payment', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([])
+
+      const token = customerToken(app)
+      const res = await supertest(app.server)
+        .post('/orders/order-1/payment')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ method: 'CASH' })
+
+      expect(res.status).toBe(403)
+    })
   })
 
   // ── PATCH /orders/:id ─────────────────────────────────────────────────────

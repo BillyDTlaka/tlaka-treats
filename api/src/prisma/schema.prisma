@@ -48,6 +48,7 @@ enum OdooInvoiceSyncStatus {
   PAID
   FAILED
   RECONCILIATION_ISSUE
+  CANCELLED
 }
 
 enum OdooSyncStatus {
@@ -60,6 +61,7 @@ enum CommissionStatus {
   PENDING
   APPROVED
   PAID
+  CANCELLED
 }
 
 enum PayoutStatus {
@@ -327,6 +329,14 @@ model Order {
   odooInvoiceStatus    OdooInvoiceSyncStatus @default(NOT_READY)
   odooInvoiceSyncError String?
   odooInvoiceSyncedAt  DateTime?
+
+  // Odoo account.payment.register sync state — separate from the invoice sync above,
+  // since payment can be recorded locally (cash/EFT/card) before or after the invoice
+  // is posted in Odoo. Actual paid/unpaid state is read back via odooInvoiceStatus
+  // (POSTED vs PAID), these fields just track the sync attempt itself.
+  odooPaymentSyncStatus OdooSyncStatus @default(NOT_SYNCED)
+  odooPaymentSyncError  String?
+  odooPaymentSyncedAt   DateTime?
 
   customer   User        @relation(fields: [customerId], references: [id])
   ambassador Ambassador? @relation(fields: [ambassadorId], references: [id])

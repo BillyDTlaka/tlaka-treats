@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify'
 import crypto from 'crypto'
 import { authenticate } from '../../shared/middleware/auth'
 import { AppError } from '../../shared/errors'
+import { syncOrderInvoice } from '../../shared/services/odoo-invoice.service'
 
 // ── PayFast helpers ────────────────────────────────────────────────────────────
 
@@ -18,6 +19,29 @@ function buildPayFastSignature(params: Record<string, string>, passphrase?: stri
     : sorted
 
   return crypto.createHash('md5').update(str).digest('hex')
+}
+
+// PayFast's own recommended ITN check: re-post the received data back to PayFast and let
+// their server confirm it actually originated from a real transaction, rather than trying
+// to re-derive the signature ourselves (order-sensitive and easy to get subtly wrong).
+// Fails closed on an explicit "INVALID" response, fails open (treats as valid) if PayFast
+// itself is unreachable — a network blip shouldn't silently drop a real payment.
+async function isValidPayFastItn(data: Record<string, string>, isSandbox: boolean): Promise<boolean> {
+  const validateUrl = isSandbox
+    ? 'https://sandbox.payfast.co.za/eng/query/validate'
+    : 'https://www.payfast.co.za/eng/query/validate'
+  try {
+    const body = new URLSearchParams(data).toString()
+    const res = await fetch(validateUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    })
+    const text = (await res.text()).trim()
+    return text === 'VALID'
+  } catch {
+    return true
+  }
 }
 
 function getEftDetails() {
@@ -112,6 +136,13 @@ const paymentsRoutes: FastifyPluginAsync = async (fastify) => {
 
     if (!orderId) return reply.code(200).send('OK')
 
+    const isSandbox = process.env.PAYFAST_SANDBOX !== 'false'
+    const isValid = await isValidPayFastItn(data, isSandbox)
+    if (!isValid) {
+      request.log.warn({ orderId, paymentId }, '[payfast] ITN failed postback validation — ignoring')
+      return reply.code(200).send('OK')
+    }
+
     try {
       if (paymentStatus === 'COMPLETE') {
         await (fastify.prisma as any).order.update({
@@ -123,6 +154,9 @@ const paymentsRoutes: FastifyPluginAsync = async (fastify) => {
             paymentRef: paymentId ?? null,
           },
         })
+        // Push to Odoo now if the invoice already exists and is posted; otherwise this is
+        // a safe no-op and gets picked up automatically once the order is confirmed/posted.
+        await syncOrderInvoice(fastify.prisma, orderId).catch(() => {/* tracked on the order itself */})
       } else {
         await (fastify.prisma as any).order.update({
           where: { id: orderId },

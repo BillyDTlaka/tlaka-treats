@@ -252,6 +252,16 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
     const { id } = request.params as { id: string }
     return syncOrderInvoice(fastify.prisma, id)
   })
+
+  // POST /orders/:id/payment - admin records a cash/EFT/manual-card payment
+  fastify.post('/:id/payment', {
+    preHandler: [authenticate, authorize('update', 'order')],
+  }, async (request) => {
+    const { id } = request.params as { id: string }
+    const { method, reference } = request.body as { method: 'CASH' | 'EFT' | 'CARD'; reference?: string }
+    if (!['CASH', 'EFT', 'CARD'].includes(method)) throw new AppError('method must be CASH, EFT, or CARD', 400)
+    return orderService.recordPayment(id, { method, reference })
+  })
 }
 
 export default orderRoutes

@@ -1,7 +1,7 @@
 import { PrismaClient, OrderStatus } from '@prisma/client'
 import { AppError, NotFoundError, ForbiddenError } from '../../shared/errors'
 import { sendOrderStatusEmail, sendOrderStatusWhatsApp } from '../../shared/services/notify.service'
-import { syncOrderInvoice, OdooInvoiceSyncResult } from '../../shared/services/odoo-invoice.service'
+import { syncOrderInvoice, cancelOrderInvoice, OdooInvoiceSyncResult } from '../../shared/services/odoo-invoice.service'
 
 export class OrderService {
   constructor(private prisma: PrismaClient) {}
@@ -131,6 +131,28 @@ export class OrderService {
       }
     }
 
+    // ── Reversal at CANCELLED — undo whatever CONFIRMED did, if it happened ────
+    // Only reverses PENDING commissions and restocks against an actual prior deduction —
+    // never touches an APPROVED/PAID commission (money already committed) or deletes the
+    // original FinanceTransaction (an offsetting entry is booked instead, preserving the
+    // audit trail).
+    if (status === 'CANCELLED') {
+      const priorMovements = await db.stockMovement.findMany({ where: { reference: orderId, type: 'ORDER_FULFILLMENT' } })
+      for (const movement of priorMovements) {
+        const qty = Math.abs(Number(movement.quantity))
+        await db.stockMovement.create({
+          data: {
+            stockItemId: movement.stockItemId,
+            type: 'ADJUSTMENT_IN',
+            quantity: qty,
+            reference: orderId,
+            note: 'Order cancelled — stock restored',
+          },
+        })
+        await db.stockItem.update({ where: { id: movement.stockItemId }, data: { currentStock: { increment: qty } } })
+      }
+    }
+
     const updated = await this.prisma.order.update({
       where: { id: orderId },
       data: {
@@ -138,6 +160,28 @@ export class OrderService {
         statusLogs: { create: { status, note } },
       },
     })
+
+    if (status === 'CANCELLED') {
+      const existingCommission = await this.prisma.commission.findUnique({ where: { orderId } })
+      if (existingCommission && existingCommission.status === 'PENDING') {
+        await this.prisma.commission.update({ where: { orderId }, data: { status: 'CANCELLED' } })
+      }
+
+      const existingTxn = await db.financeTransaction.findUnique({ where: { orderId } })
+      if (existingTxn) {
+        const orderRef = `#${orderId.slice(-8).toUpperCase()}`
+        await db.financeTransaction.create({
+          data: {
+            type: 'INCOME',
+            category: existingTxn.category,
+            amount: -Number(existingTxn.amount),
+            description: `Order cancelled — reversing sale for order ${orderRef}`,
+            reference: orderId,
+            accountId: existingTxn.accountId,
+          },
+        })
+      }
+    }
 
     // Auto-record income finance transaction when confirmed (idempotent — skips if already exists)
     if (status === 'CONFIRMED') {
@@ -186,16 +230,41 @@ export class OrderService {
     }
     this.fireNotification(notifyOrder, order.customer as any)
 
-    // Create/refresh the draft Odoo customer invoice — synchronous for now so the
-    // result is visible immediately. Never throws: Odoo failures are persisted on
+    // Create/refresh the draft Odoo customer invoice, or cancel it — synchronous for now
+    // so the result is visible immediately. Never throws: Odoo failures are persisted on
     // the order (odooInvoiceStatus/odooInvoiceSyncError) but don't affect the
     // already-committed local status change, stock, finance or commission records.
     let odoo: OdooInvoiceSyncResult | undefined
     if (status === 'CONFIRMED') {
       odoo = await syncOrderInvoice(this.prisma, orderId)
+    } else if (status === 'CANCELLED') {
+      odoo = await cancelOrderInvoice(this.prisma, orderId)
     }
 
     return odoo ? { ...updated, odoo } : updated
+  }
+
+  // Records a cash/EFT/manual-card payment against an order (there was previously no way
+  // to do this at all for cash/EFT — only PayFast's webhook ever set paymentStatus). Pushes
+  // to Odoo immediately if the invoice already exists and is posted; otherwise it's picked
+  // up automatically the next time the order's Odoo sync runs (e.g. once Billy posts the
+  // draft invoice, or via the retry endpoint).
+  async recordPayment(orderId: string, data: { method: 'CASH' | 'EFT' | 'CARD'; reference?: string }) {
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } })
+    if (!order) throw new NotFoundError('Order')
+
+    const updated = await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        paymentMethod: data.method,
+        paymentStatus: 'PAID',
+        paidAt: new Date(),
+        paymentRef: data.reference || null,
+      },
+    })
+
+    const odoo = await syncOrderInvoice(this.prisma, orderId)
+    return { ...updated, odoo }
   }
 
   async getForCustomer(customerId: string) {

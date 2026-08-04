@@ -4,7 +4,7 @@ import { odooRpc, getUid, getCompanyId, assertOdooConfigured } from './odoo-clie
 import { syncCustomerToOdoo } from './odoo.service'
 import { resolveOdooProductId, resolveServiceProductId, ProductMappingError } from './odoo-product.service'
 
-export type OdooInvoiceAction = 'CREATED' | 'ALREADY_LINKED' | 'LINKED_BY_ORDER_REFERENCE' | 'UPDATED'
+export type OdooInvoiceAction = 'CREATED' | 'ALREADY_LINKED' | 'LINKED_BY_ORDER_REFERENCE' | 'UPDATED' | 'CANCELLED'
 
 export interface OdooInvoiceSyncResult {
   ok: boolean
@@ -82,6 +82,41 @@ async function updateDraftCustomerInvoice(uid: number, invoiceId: number, lines:
   ])
 }
 
+// Cash/EFT/card all post through the same Bank journal for now — Tlaka Treats' Odoo
+// instance has no dedicated Cash journal yet.
+let cachedBankJournalId: number | null = null
+
+async function getBankJournalId(uid: number, companyId: number): Promise<number> {
+  if (cachedBankJournalId) return cachedBankJournalId
+  const journals = await odooRpc<Array<{ id: number }>>('object', 'execute_kw', [
+    config.odoo.db, uid, config.odoo.apiKey, 'account.journal', 'search_read',
+    [[['type', '=', 'bank'], ['company_id', '=', companyId]]], { fields: ['id'], limit: 1 },
+  ])
+  if (!journals.length) throw new Error('No Bank journal found in Odoo for this company')
+  cachedBankJournalId = journals[0].id
+  return cachedBankJournalId
+}
+
+// Registers a payment against a posted invoice via Odoo's standard "Register Payment"
+// wizard (account.payment.register) — the same flow Odoo uses internally when you click
+// the button in the UI, so reconciliation is handled correctly regardless of version quirks.
+async function registerOdooPayment(uid: number, companyId: number, invoiceId: number, amount: number, paymentDate: string): Promise<void> {
+  const journalId = await getBankJournalId(uid, companyId)
+  const wizardId = await odooRpc<number>('object', 'execute_kw', [
+    config.odoo.db, uid, config.odoo.apiKey, 'account.payment.register', 'create',
+    [{ payment_date: paymentDate, amount, journal_id: journalId }],
+    { context: { active_model: 'account.move', active_ids: [invoiceId], active_id: invoiceId } },
+  ])
+  await odooRpc('object', 'execute_kw', [
+    config.odoo.db, uid, config.odoo.apiKey, 'account.payment.register', 'action_create_payments', [[wizardId]],
+  ])
+}
+
+// Exposed for tests only.
+export function _resetBankJournalCacheForTests() {
+  cachedBankJournalId = null
+}
+
 async function ensureOrderNumber(prisma: PrismaClient, order: { id: string; orderNumber: string | null; orderSeq: number }): Promise<string> {
   if (order.orderNumber) return order.orderNumber
   const orderNumber = `TT-ORD-${String(order.orderSeq).padStart(6, '0')}`
@@ -136,7 +171,8 @@ async function buildInvoiceLines(prisma: PrismaClient, uid: number, order: any):
 }
 
 function mapOdooStateToLocal(invoice: OdooInvoiceFields, mismatch: boolean): string {
-  if (mismatch || invoice.state === 'cancel') return 'RECONCILIATION_ISSUE'
+  if (mismatch) return 'RECONCILIATION_ISSUE'
+  if (invoice.state === 'cancel') return 'CANCELLED'
   if (invoice.payment_state === 'paid') return 'PAID'
   if (invoice.state === 'posted') return 'POSTED'
   return 'DRAFT_CREATED'
@@ -174,6 +210,45 @@ async function finalize(
     paymentState: invoice.payment_state,
     amountTotal: invoice.amount_total,
     reconciliationIssue: status === 'RECONCILIATION_ISSUE',
+  }
+}
+
+// After a successful invoice sync, registers payment in Odoo if the order has been marked
+// PAID locally (cash/EFT/card) but Odoo doesn't reflect that yet. If the invoice is still
+// draft (Billy hasn't reviewed/posted it), this is a no-op for now — Odoo won't accept a
+// payment against an unposted invoice, so it's effectively queued for the next retry/sync
+// once the invoice is posted. A payment-registration failure never overturns an otherwise
+// successful invoice sync — it's tracked separately via odooPaymentSyncStatus/Error.
+async function maybeRegisterPayment(
+  prisma: PrismaClient,
+  uid: number,
+  companyId: number,
+  order: { id: string; paymentStatus?: string | null; total: unknown },
+  result: OdooInvoiceSyncResult,
+): Promise<OdooInvoiceSyncResult> {
+  if (!result.ok || !result.invoiceId) return result
+  if (order.paymentStatus !== 'PAID') return result
+  if (result.state !== 'posted') return result
+  if (result.paymentState === 'paid') return result
+
+  const db = prisma as any
+  try {
+    await registerOdooPayment(uid, companyId, result.invoiceId, Number(order.total), new Date().toISOString().slice(0, 10))
+    const refreshed = await readInvoice(uid, result.invoiceId)
+    if (!refreshed) return result
+    const updatedResult = await finalize(prisma, order, refreshed, 'UPDATED', undefined)
+    await db.order.update({
+      where: { id: order.id },
+      data: { odooPaymentSyncStatus: 'SYNCED', odooPaymentSyncError: null, odooPaymentSyncedAt: new Date() },
+    })
+    return updatedResult
+  } catch (err: any) {
+    const message = err?.message || 'Unknown Odoo payment sync error'
+    await db.order.update({
+      where: { id: order.id },
+      data: { odooPaymentSyncStatus: 'FAILED', odooPaymentSyncError: message, odooPaymentSyncedAt: new Date() },
+    })
+    return result
   }
 }
 
@@ -215,26 +290,82 @@ export async function syncOrderInvoice(prisma: PrismaClient, orderId: string): P
         const { lines, expectedTotal } = await buildInvoiceLines(prisma, uid, order)
         await updateDraftCustomerInvoice(uid, order.odooInvoiceId, lines)
         const refreshed = await readInvoice(uid, order.odooInvoiceId)
-        return finalize(prisma, order, refreshed!, 'UPDATED', expectedTotal)
+        const result = await finalize(prisma, order, refreshed!, 'UPDATED', expectedTotal)
+        return maybeRegisterPayment(prisma, uid, companyId, order, result)
       }
 
       // Posted/paid/cancelled — never silently modify, just refresh local status
-      return finalize(prisma, order, invoice, 'ALREADY_LINKED', undefined)
+      const result = await finalize(prisma, order, invoice, 'ALREADY_LINKED', undefined)
+      return maybeRegisterPayment(prisma, uid, companyId, order, result)
     }
 
     // Not linked locally — check Odoo itself before creating, in case a previous sync
     // succeeded in Odoo but failed to persist the id locally (network blip, crash, etc.)
     const existing = await findInvoiceByOrderReference(uid, orderNumber)
     if (existing) {
-      return finalize(prisma, order, existing, 'LINKED_BY_ORDER_REFERENCE', undefined)
+      const result = await finalize(prisma, order, existing, 'LINKED_BY_ORDER_REFERENCE', undefined)
+      return maybeRegisterPayment(prisma, uid, companyId, order, result)
     }
 
     const { lines, expectedTotal } = await buildInvoiceLines(prisma, uid, order)
     const invoiceId = await createDraftCustomerInvoice(uid, companyId, partnerId, orderNumber, lines)
     const created = await readInvoice(uid, invoiceId)
-    return finalize(prisma, order, created!, 'CREATED', expectedTotal)
+    const result = await finalize(prisma, order, created!, 'CREATED', expectedTotal)
+    return maybeRegisterPayment(prisma, uid, companyId, order, result)
   } catch (err: any) {
     const message = err instanceof ProductMappingError ? err.message : (err?.message || 'Unknown Odoo sync error')
+    await db.order.update({
+      where: { id: orderId },
+      data: { odooInvoiceStatus: 'FAILED', odooInvoiceSyncError: message, odooInvoiceSyncedAt: new Date() },
+    })
+    return { ok: false, error: message }
+  }
+}
+
+// Called when an order is cancelled. A still-draft invoice is safely cancelled outright —
+// it was never posted, so there's no accounting residue. A posted (or paid) invoice is
+// deliberately left alone: reversing it needs a credit note, a real accounting action with
+// consequences (tax periods, reconciled payments) that shouldn't happen automatically. That
+// case is flagged as RECONCILIATION_ISSUE for Billy to handle directly in Odoo.
+export async function cancelOrderInvoice(prisma: PrismaClient, orderId: string): Promise<OdooInvoiceSyncResult> {
+  const db = prisma as any
+  const order = await db.order.findUnique({ where: { id: orderId } })
+  if (!order) return { ok: false, error: 'Order not found' }
+  if (!order.odooInvoiceId) return { ok: true } // no invoice was ever created — nothing to cancel
+
+  try {
+    assertOdooConfigured()
+    const uid = await getUid()
+    const invoice = await readInvoice(uid, order.odooInvoiceId)
+    if (!invoice) {
+      await db.order.update({
+        where: { id: orderId },
+        data: {
+          odooInvoiceStatus: 'RECONCILIATION_ISSUE',
+          odooInvoiceSyncError: `Linked Odoo invoice ${order.odooInvoiceId} could not be found while cancelling the order`,
+          odooInvoiceSyncedAt: new Date(),
+        },
+      })
+      return { ok: true, reconciliationIssue: true }
+    }
+
+    if (invoice.state === 'draft') {
+      await odooRpc('object', 'execute_kw', [config.odoo.db, uid, config.odoo.apiKey, 'account.move', 'button_cancel', [[order.odooInvoiceId]]])
+      const refreshed = await readInvoice(uid, order.odooInvoiceId)
+      return finalize(prisma, order, refreshed!, 'CANCELLED', undefined)
+    }
+
+    await db.order.update({
+      where: { id: orderId },
+      data: {
+        odooInvoiceStatus: 'RECONCILIATION_ISSUE',
+        odooInvoiceSyncError: `Order was cancelled but its Odoo invoice is already ${invoice.state} — a manual credit note is needed in Odoo`,
+        odooInvoiceSyncedAt: new Date(),
+      },
+    })
+    return { ok: true, invoiceId: invoice.id, invoiceNumber: invoice.name, state: invoice.state, reconciliationIssue: true }
+  } catch (err: any) {
+    const message = err?.message || 'Unknown Odoo sync error'
     await db.order.update({
       where: { id: orderId },
       data: { odooInvoiceStatus: 'FAILED', odooInvoiceSyncError: message, odooInvoiceSyncedAt: new Date() },

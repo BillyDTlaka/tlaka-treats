@@ -164,6 +164,7 @@ const api = {
     updateStatus: (id, status, note) => req('PATCH', `/orders/${id}/status`, { status, ...(note ? { note } : {}) }),
     invoice:      (id)               => req('POST',  `/orders/${id}/invoice`),
     retryOdooInvoice: (id)           => req('POST',  `/orders/${id}/odoo-invoice/retry`),
+    recordPayment: (id, method, reference) => req('POST', `/orders/${id}/payment`, { method, reference }),
   },
   addresses: {
     getAll:  ()         => req('GET',    '/addresses'),
@@ -791,6 +792,7 @@ const ODOO_INVOICE_STATUS_STYLE = {
   PAID:                  { label: 'Paid',                 className: 'bg-emerald-50 text-emerald-700' },
   FAILED:                { label: 'Sync failed',          className: 'bg-red-50 text-red-700' },
   RECONCILIATION_ISSUE:  { label: 'Needs review',         className: 'bg-amber-50 text-amber-700' },
+  CANCELLED:             { label: 'Cancelled',            className: 'bg-gray-100 text-gray-600' },
 };
 const ODOO_CUSTOMER_SYNC_STYLE = {
   NOT_SYNCED: { label: 'Not synced', className: 'bg-gray-100 text-gray-500' },
@@ -919,7 +921,7 @@ function showOrderDetail(order) {
     const a = order.address;
     metaSection.append(metaRow('📍', 'Delivery Address', [a.street, a.suburb, a.city].filter(Boolean).join(', ')));
   }
-  if (order.paymentMethod) {
+  if (order.paymentMethod && !store.isAdmin(store.user)) {
     metaSection.append(metaRow('💳', 'Payment',
       (PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod) + (order.paymentStatus ? ` · ${order.paymentStatus}` : '')
     ));
@@ -935,6 +937,51 @@ function showOrderDetail(order) {
   }
   if (order.notes) metaSection.append(metaRow('📝', 'Notes', order.notes));
   if (metaSection.children.length) panel.append(metaSection);
+
+  // Payment — admin only. Shows current status, and lets admin record a cash/EFT/manual-card
+  // payment (there was previously no way to mark cash/EFT orders as paid at all).
+  if (store.isAdmin(store.user)) {
+    const isPaid = order.paymentStatus === 'PAID';
+    const paymentSection = el('div', { className: 'px-5 py-4 border-b border-gray-100' },
+      el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wide mb-3' }, 'Payment')
+    );
+
+    paymentSection.append(
+      el('p', { className: 'text-sm text-gray-700' },
+        order.paymentMethod
+          ? `${PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod}${order.paymentStatus ? ' · ' + order.paymentStatus : ''}`
+          : 'No payment recorded yet'
+      )
+    );
+
+    if (!isPaid) {
+      const methodSelect = el('select', { className: 'border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand' });
+      [['CASH', 'Cash'], ['EFT', 'EFT'], ['CARD', 'Card']].forEach(([val, label]) => {
+        const o = document.createElement('option'); o.value = val; o.textContent = label; methodSelect.append(o);
+      });
+
+      const recordBtn = el('button', {
+        className: 'text-xs font-bold text-brand px-3 py-2 rounded-lg bg-brand/10',
+        onClick: async (e) => {
+          const btn = e.currentTarget;
+          btn.textContent = 'Recording…'; btn.disabled = true;
+          try {
+            await api.orders.recordPayment(order.id, methodSelect.value);
+            const fresh = await api.orders.getById(order.id);
+            sheet.remove();
+            showOrderDetail(fresh);
+          } catch (err) {
+            toast(err.message || 'Failed to record payment');
+            btn.textContent = 'Record Payment'; btn.disabled = false;
+          }
+        },
+      }, 'Record Payment');
+
+      paymentSection.append(el('div', { className: 'flex items-center gap-2 mt-2' }, methodSelect, recordBtn));
+    }
+
+    panel.append(paymentSection);
+  }
 
   // Odoo invoice sync status — admin only, and only once the order has been confirmed
   if (store.isAdmin(store.user) && order.odooInvoiceStatus && order.odooInvoiceStatus !== 'NOT_READY') {
@@ -5663,6 +5710,72 @@ function renderAdminOrders(data, container, reload) {
         )
       );
     }
+
+    // Payment + Odoo invoice status — same two cards shown in the customer-facing detail
+    // sheet, surfaced here too since this full-page view is what admins actually use daily.
+    const statusRow = el('div', { className: 'grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4' });
+
+    const isPaid = order.paymentStatus === 'PAID';
+    const paymentCard = el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
+      el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-2' }, '💳 Payment'),
+      el('p', { className: 'text-sm text-gray-700 mb-2' },
+        order.paymentMethod
+          ? `${PAYMENT_LABELS[order.paymentMethod] || order.paymentMethod}${order.paymentStatus ? ' · ' + order.paymentStatus : ''}`
+          : 'No payment recorded yet'
+      )
+    );
+    if (!isPaid) {
+      const methodSelect = el('select', { className: 'border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand' });
+      [['CASH', 'Cash'], ['EFT', 'EFT'], ['CARD', 'Card']].forEach(([val, label]) => {
+        const o = document.createElement('option'); o.value = val; o.textContent = label; methodSelect.append(o);
+      });
+      const recordBtn = el('button', {
+        className: 'text-xs font-bold text-brand px-3 py-2 rounded-lg bg-brand/10',
+        onClick: async (e) => {
+          const btn = e.currentTarget;
+          btn.textContent = 'Recording…'; btn.disabled = true;
+          try {
+            await api.orders.recordPayment(order.id, methodSelect.value);
+            await refreshDetail(order.id);
+          } catch (err) {
+            toast(err.message || 'Failed to record payment');
+            btn.textContent = 'Record Payment'; btn.disabled = false;
+          }
+        },
+      }, 'Record Payment');
+      paymentCard.append(el('div', { className: 'flex items-center gap-2' }, methodSelect, recordBtn));
+    }
+    statusRow.append(paymentCard);
+
+    if (order.odooInvoiceStatus && order.odooInvoiceStatus !== 'NOT_READY') {
+      statusRow.append(
+        el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
+          el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-2' }, '🔄 Odoo Invoice'),
+          el('div', { className: 'flex items-center justify-between' },
+            el('div', {},
+              odooStatusBadge(ODOO_INVOICE_STATUS_STYLE, order.odooInvoiceStatus),
+              order.odooInvoiceNumber ? el('p', { className: 'text-sm text-gray-700 mt-2 font-mono' }, order.odooInvoiceNumber) : null,
+              order.odooInvoiceSyncError ? el('p', { className: 'text-xs text-red-500 mt-1' }, order.odooInvoiceSyncError) : null,
+            ),
+            el('button', {
+              className: 'text-xs font-bold text-brand px-3 py-2 rounded-lg bg-brand/10 flex-shrink-0',
+              onClick: async (e) => {
+                const btn = e.currentTarget;
+                btn.textContent = 'Retrying…'; btn.disabled = true;
+                try {
+                  await api.orders.retryOdooInvoice(order.id);
+                  await refreshDetail(order.id);
+                } catch (err) {
+                  toast(err.message || 'Retry failed');
+                  btn.textContent = 'Retry'; btn.disabled = false;
+                }
+              },
+            }, 'Retry')
+          )
+        )
+      );
+    }
+    if (statusRow.children.length) wrap.append(statusRow);
 
     // Action panel
     if (!isTerminal) {

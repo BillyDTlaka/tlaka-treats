@@ -74,6 +74,7 @@ export function createMockPrisma() {
     commission: {
       create: jest.fn(),
       findMany: jest.fn(),
+      findUnique: jest.fn(),
       update: jest.fn(),
     },
     payout: {
@@ -97,6 +98,7 @@ export function createMockPrisma() {
     },
     stockMovement: {
       create: jest.fn(),
+      findMany: jest.fn(),
     },
     stockItem: {
       update: jest.fn(),

@@ -1,4 +1,4 @@
-import { syncOrderInvoice } from '../shared/services/odoo-invoice.service'
+import { syncOrderInvoice, cancelOrderInvoice, _resetBankJournalCacheForTests } from '../shared/services/odoo-invoice.service'
 import { _resetOdooClientCacheForTests } from '../shared/services/odoo-client'
 import { createMockPrisma, makeOrder } from './helpers/mock-prisma'
 import { installMockOdoo } from './helpers/mock-odoo'
@@ -26,6 +26,7 @@ describe('syncOrderInvoice', () => {
     prisma = createMockPrisma()
     odoo = installMockOdoo()
     _resetOdooClientCacheForTests()
+    _resetBankJournalCacheForTests()
   })
 
   function mappedOrder(overrides: Record<string, any> = {}) {
@@ -296,5 +297,143 @@ describe('syncOrderInvoice', () => {
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/not CONFIRMED/)
     expect(global.fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('cancelOrderInvoice', () => {
+  let prisma: ReturnType<typeof createMockPrisma>
+  let odoo: ReturnType<typeof installMockOdoo>
+
+  beforeEach(() => {
+    prisma = createMockPrisma()
+    odoo = installMockOdoo()
+    _resetOdooClientCacheForTests()
+  })
+
+  it('cancels a still-draft invoice cleanly', async () => {
+    odoo.invoicesById.set(600, {
+      id: 600, name: '/', state: 'draft', payment_state: 'not_paid',
+      amount_untaxed: 170, amount_tax: 0, amount_total: 170,
+      partner_id: [42, ''], invoice_origin: 'TT-ORD-000001', ref: 'TT-ORD-000001', invoice_date: '2026-08-04',
+    })
+    prisma.order.findUnique.mockResolvedValueOnce({ id: 'order-1', odooInvoiceId: 600, total: 170 })
+
+    const result = await cancelOrderInvoice(prisma, 'order-1')
+
+    expect(result.ok).toBe(true)
+    expect(result.reconciliationIssue).toBeFalsy()
+    expect(odoo.invoicesById.get(600).state).toBe('cancel')
+    const finalUpdate = prisma.order.update.mock.calls[prisma.order.update.mock.calls.length - 1][0]
+    expect(finalUpdate.data.odooInvoiceStatus).toBe('CANCELLED')
+  })
+
+  it('never auto-cancels a posted invoice — flags it for manual review instead', async () => {
+    odoo.invoicesById.set(700, {
+      id: 700, name: 'INV/2026/0001', state: 'posted', payment_state: 'not_paid',
+      amount_untaxed: 170, amount_tax: 0, amount_total: 170,
+      partner_id: [42, ''], invoice_origin: 'TT-ORD-000001', ref: 'TT-ORD-000001', invoice_date: '2026-08-04',
+    })
+    prisma.order.findUnique.mockResolvedValueOnce({ id: 'order-1', odooInvoiceId: 700, total: 170 })
+
+    const result = await cancelOrderInvoice(prisma, 'order-1')
+
+    expect(result.ok).toBe(true)
+    expect(result.reconciliationIssue).toBe(true)
+    expect(odoo.invoicesById.get(700).state).toBe('posted') // untouched
+    const finalUpdate = prisma.order.update.mock.calls[prisma.order.update.mock.calls.length - 1][0]
+    expect(finalUpdate.data.odooInvoiceStatus).toBe('RECONCILIATION_ISSUE')
+    expect(finalUpdate.data.odooInvoiceSyncError).toMatch(/manual credit note/i)
+  })
+
+  it('is a no-op when no Odoo invoice was ever created', async () => {
+    prisma.order.findUnique.mockResolvedValueOnce({ id: 'order-1', odooInvoiceId: null, total: 170 })
+
+    const result = await cancelOrderInvoice(prisma, 'order-1')
+
+    expect(result.ok).toBe(true)
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('syncOrderInvoice — payment registration', () => {
+  let prisma: ReturnType<typeof createMockPrisma>
+  let odoo: ReturnType<typeof installMockOdoo>
+
+  beforeEach(() => {
+    prisma = createMockPrisma()
+    odoo = installMockOdoo()
+    _resetOdooClientCacheForTests()
+    _resetBankJournalCacheForTests()
+  })
+
+  function paidOrder(overrides: Record<string, any> = {}) {
+    return makeOrder({
+      customer: { id: 'user-1', email: 'test@example.com', phone: null, firstName: 'Test', lastName: 'User', odooPartnerId: '42' },
+      items: [{
+        id: 'item-1', variantId: 'variant-1', quantity: 2, unitPrice: 85, subtotal: 170,
+        variant: { id: 'variant-1', name: '12 Pack', odooProductId: 200, odooProductReference: null, product: { name: 'Choc Chip Cookies' } },
+      }],
+      status: 'CONFIRMED',
+      paymentStatus: 'PAID',
+      ...overrides,
+    })
+  }
+
+  it('registers payment against an already-posted invoice and marks it PAID locally', async () => {
+    odoo.invoicesById.set(800, {
+      id: 800, name: 'INV/2026/0002', state: 'posted', payment_state: 'not_paid',
+      amount_untaxed: 170, amount_tax: 0, amount_total: 170,
+      partner_id: [42, ''], invoice_origin: 'TT-ORD-000001', ref: 'TT-ORD-000001', invoice_date: '2026-08-04',
+    })
+    prisma.order.findUnique.mockResolvedValueOnce(paidOrder({ odooInvoiceId: 800, orderNumber: 'TT-ORD-000001' }))
+
+    const result = await syncOrderInvoice(prisma, 'order-1')
+
+    expect(result.ok).toBe(true)
+    expect(result.paymentState).toBe('paid')
+    const paymentCreateCall = (global.fetch as jest.Mock).mock.calls.find((call) => {
+      const params = JSON.parse(call[1].body).params
+      return params.args?.[3] === 'account.payment.register' && params.args?.[4] === 'create'
+    })
+    expect(paymentCreateCall).toBeDefined()
+    const paidUpdate = prisma.order.update.mock.calls.find((c: any) => c[0].data.odooInvoiceStatus === 'PAID')
+    expect(paidUpdate).toBeDefined()
+
+    const paymentSyncUpdate = prisma.order.update.mock.calls.find((c: any) => c[0].data.odooPaymentSyncStatus === 'SYNCED')
+    expect(paymentSyncUpdate).toBeDefined()
+  })
+
+  it('does not attempt payment registration while the invoice is still draft (queued for later)', async () => {
+    prisma.order.findUnique.mockResolvedValueOnce(paidOrder())
+
+    const result = await syncOrderInvoice(prisma, 'order-1')
+
+    expect(result.ok).toBe(true)
+    expect(result.state).toBe('draft')
+    const paymentCreateCall = (global.fetch as jest.Mock).mock.calls.find((call) => {
+      const params = JSON.parse(call[1].body).params
+      return params.args?.[3] === 'account.payment.register'
+    })
+    expect(paymentCreateCall).toBeUndefined()
+    const paymentSyncUpdate = prisma.order.update.mock.calls.find((c: any) => c[0].data.odooPaymentSyncStatus)
+    expect(paymentSyncUpdate).toBeUndefined()
+  })
+
+  it('a payment-registration failure does not undo an otherwise successful invoice sync', async () => {
+    odoo.invoicesById.set(900, {
+      id: 900, name: 'INV/2026/0003', state: 'posted', payment_state: 'not_paid',
+      amount_untaxed: 170, amount_tax: 0, amount_total: 170,
+      partner_id: [42, ''], invoice_origin: 'TT-ORD-000001', ref: 'TT-ORD-000001', invoice_date: '2026-08-04',
+    })
+    // No Bank journal seeded — getBankJournalId will throw
+    prisma.order.findUnique.mockResolvedValueOnce(paidOrder({ odooInvoiceId: 900, orderNumber: 'TT-ORD-000001' }))
+    ;(odoo as any).bankJournalId = undefined
+
+    const result = await syncOrderInvoice(prisma, 'order-1')
+
+    expect(result.ok).toBe(true) // invoice sync itself still succeeded
+    expect(result.action).toBe('ALREADY_LINKED')
+    const paymentFailUpdate = prisma.order.update.mock.calls.find((c: any) => c[0].data.odooPaymentSyncStatus === 'FAILED')
+    expect(paymentFailUpdate).toBeDefined()
   })
 })

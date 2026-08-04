@@ -23,6 +23,9 @@ export function installMockOdoo() {
     nextTemplateAttrValueId: 3000,
     templateAttributeValuesById: new Map<number, any>(),
     searchInvoiceResults: [] as any[],
+    bankJournalId: 700,
+    nextPaymentWizardId: 4000,
+    paymentWizardsById: new Map<number, any>(),
   }
 
   // Simulates Odoo auto-generating a product.product, and its product.template.attribute.value
@@ -198,6 +201,29 @@ export function installMockOdoo() {
             const amountTotal = addedLines.reduce((s: number, l: any) => s + l[2].quantity * l[2].price_unit, 0)
             rec.amount_total = amountTotal
             rec.amount_untaxed = amountTotal
+          }
+          result = true
+        } else if (modelMethod === 'button_cancel') {
+          const [ids] = methodArgs
+          const rec = state.invoicesById.get(ids[0])
+          if (rec) rec.state = 'cancel'
+          result = true
+        }
+      } else if (model === 'account.journal' && modelMethod === 'search_read') {
+        result = state.bankJournalId ? [{ id: state.bankJournalId }] : []
+      } else if (model === 'account.payment.register') {
+        if (modelMethod === 'create') {
+          const kwargs = args[6] || {}
+          const invoiceId = kwargs.context?.active_ids?.[0]
+          const id = state.nextPaymentWizardId++
+          state.paymentWizardsById.set(id, { id, invoiceId, ...methodArgs[0] })
+          result = id
+        } else if (modelMethod === 'action_create_payments') {
+          const [ids] = methodArgs
+          const wizard = state.paymentWizardsById.get(ids[0])
+          if (wizard) {
+            const rec = state.invoicesById.get(wizard.invoiceId)
+            if (rec) rec.payment_state = 'paid'
           }
           result = true
         }
