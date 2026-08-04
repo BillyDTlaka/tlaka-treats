@@ -3374,13 +3374,53 @@ function AdminOverviewPage() {
     if (tabId) sessionStorage.setItem('hub_' + mod, tabId);
     activeModule = mod;
     updateHeader();
+    renderDesktopSidebar();
     renderContent();
   }
 
   function goHome() {
     activeModule = null;
     updateHeader();
+    renderDesktopSidebar();
     renderContent();
+  }
+
+  // ── DESKTOP SIDEBAR (flat, one-click nav — every page directly reachable,
+  // no module-picker screen in between) ─────────────────────────────────
+  const ADMIN_FLAT_NAV = [];
+  HUB_MODULES.forEach(mod => {
+    if (mod.subs && mod.subs.length) {
+      mod.subs.forEach(sub => ADMIN_FLAT_NAV.push({ modId: mod.id, subId: sub.id, icon: sub.icon, label: sub.label }));
+    } else {
+      ADMIN_FLAT_NAV.push({ modId: mod.id, subId: null, icon: mod.icon, label: mod.name });
+    }
+  });
+
+  const desktopSidebar = el('aside', { className: 'w-56 flex-shrink-0 hidden md:block py-4 pl-3 pr-2 overflow-y-auto' });
+  const desktopSidebarBox = el('div', { className: 'bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden sticky top-4' });
+  desktopSidebar.append(desktopSidebarBox);
+
+  function renderDesktopSidebar() {
+    desktopSidebarBox.innerHTML = '';
+    const currentSubId = activeModule ? sessionStorage.getItem('hub_' + activeModule) : null;
+    ADMIN_FLAT_NAV.forEach(item => {
+      const mod = HUB_MODULES.find(m => m.id === item.modId);
+      const defaultSubId = mod?.subs?.[0]?.id ?? null;
+      const effectiveSubId = currentSubId || defaultSubId;
+      const isActive = activeModule === item.modId && item.subId === effectiveSubId;
+      desktopSidebarBox.append(
+        el('button', {
+          className: `w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition border-l-4 ${isActive ? 'bg-brand-light border-brand font-bold text-brand-dark' : 'border-transparent text-gray-700 hover:bg-gray-50 hover:border-gray-200'}`,
+          onClick: () => {
+            if (item.subId) sessionStorage.setItem('hub_' + item.modId, item.subId);
+            navigate(item.modId);
+          },
+        },
+          el('span', { className: 'text-base' }, item.icon),
+          el('span', { className: 'truncate' }, item.label)
+        )
+      );
+    });
   }
 
   function renderContent() {
@@ -3575,8 +3615,12 @@ function AdminOverviewPage() {
     }
   }
 
-  shell.append(header, contentArea);
+  const bodyRow = el('div', { className: 'flex-1 flex overflow-hidden' });
+  bodyRow.append(desktopSidebar, contentArea);
+
+  shell.append(header, bodyRow);
   updateHeader();
+  renderDesktopSidebar();
   reloadData();
   return shell;
 }
