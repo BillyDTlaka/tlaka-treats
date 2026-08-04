@@ -3318,7 +3318,7 @@ const HUB_MODULES = [
 ];
 
 function AdminOverviewPage() {
-  let activeModule = null; // null = hub home screen
+  let activeModule = 'dashboard'; // land on the Dashboard, not the module picker — null = hub home screen (still reachable via the logo)
   let adminData = { orders: [], ambassadors: [], products: [], customers: [], stockItems: [], suppliers: [], purchaseOrders: [], recipes: [], productionRuns: [] };
   let dataLoaded = false;
 
