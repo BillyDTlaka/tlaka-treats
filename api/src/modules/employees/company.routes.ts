@@ -31,6 +31,7 @@ const companyRoutes: FastifyPluginAsync = async (fastify) => {
         phone:          body.phone          ?? company.phone,
         email:          body.email          ?? company.email,
         website:        body.website        ?? company.website,
+        disabledModules: body.disabledModules !== undefined ? body.disabledModules : company.disabledModules,
       },
     })
   })

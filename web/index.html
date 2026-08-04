@@ -3408,10 +3408,14 @@ function AdminOverviewPage() {
   const desktopSidebarBox = el('div', { className: 'bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden sticky top-4' });
   desktopSidebar.append(desktopSidebarBox);
 
+  function isModuleDisabled(modId) {
+    return (adminData.company?.disabledModules || []).includes(modId);
+  }
+
   function renderDesktopSidebar() {
     desktopSidebarBox.innerHTML = '';
     const currentSubId = activeModule ? sessionStorage.getItem('hub_' + activeModule) : null;
-    ADMIN_FLAT_NAV.forEach(item => {
+    ADMIN_FLAT_NAV.filter(item => !isModuleDisabled(item.modId)).forEach(item => {
       const mod = HUB_MODULES.find(m => m.id === item.modId);
       const defaultSubId = mod?.subs?.[0]?.id ?? null;
       const effectiveSubId = currentSubId || defaultSubId;
@@ -3439,6 +3443,7 @@ function AdminOverviewPage() {
       ));
       return;
     }
+    if (activeModule && isModuleDisabled(activeModule)) activeModule = 'dashboard';
     if (!activeModule) { renderHub(); return; }
     renderAdminModule(activeModule, adminData, contentArea, reloadData, navigate);
   }
@@ -3495,7 +3500,7 @@ function AdminOverviewPage() {
 
     // Module grid
     const grid = el('div', { className: 'grid grid-cols-2 gap-3' });
-    HUB_MODULES.forEach(mod => {
+    HUB_MODULES.filter(mod => !isModuleDisabled(mod.id)).forEach(mod => {
       const badge = getBadge(mod.id);
       const card = el('button', {
         className: 'bg-white rounded-2xl p-4 text-left shadow-sm border border-gray-100 active:scale-95 transition-transform relative overflow-hidden',
@@ -3595,7 +3600,7 @@ function AdminOverviewPage() {
     dataLoaded = false;
     renderContent();
     try {
-      const [orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns, quotes, discountRules, uoms, categories] = await Promise.all([
+      const [orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns, quotes, discountRules, uoms, categories, company] = await Promise.all([
         api.orders.getAll(), api.ambassadors.getAll(), api.products.getAllAdmin(), api.customers.getAll(),
         api.inventory.getAll().catch(() => []),
         api.suppliers.getAll().catch(() => []),
@@ -3606,9 +3611,11 @@ function AdminOverviewPage() {
         api.discountRules.getAll().catch(() => []),
         api.uom.getAll().catch(() => []),
         api.products.getCategories().catch(() => []),
+        api.company.get().catch(() => null),
       ]);
-      adminData = { orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns, quotes, discountRules, uoms, categories };
+      adminData = { orders, ambassadors, products, customers, stockItems, suppliers, purchaseOrders, recipes, productionRuns, quotes, discountRules, uoms, categories, company };
       dataLoaded = true;
+      renderDesktopSidebar();
       renderContent();
     } catch {
       contentArea.innerHTML = '';
@@ -16129,6 +16136,49 @@ function renderAdminSettings(data, container, reload) {
     formRow('VAT Number',      'Leave blank if not VAT registered',
       storeInputs.vatNumber = inputField(storeFields.vatNumber, 'e.g. 4123456789', v => storeFields.vatNumber = v)),
     saveBtn('Save Store Info', () => toast('Store info saved ✓', 'success'))
+  ));
+
+  // ── Modules ──────────────────────────────────────────────────────
+  const TOGGLEABLE_MODULES = HUB_MODULES.filter(m => !['dashboard', 'settings', 'users'].includes(m.id));
+
+  const moduleRows = TOGGLEABLE_MODULES.map(mod => {
+    const isDisabled = (data.company?.disabledModules || []).includes(mod.id);
+    const toggle = el('label', { className: 'relative inline-flex items-center cursor-pointer flex-shrink-0' });
+    const inp = el('input', { type: 'checkbox', className: 'sr-only peer' });
+    inp.checked = !isDisabled;
+    inp.addEventListener('change', async () => {
+      inp.disabled = true;
+      const next = new Set(data.company?.disabledModules || []);
+      if (inp.checked) next.delete(mod.id); else next.add(mod.id);
+      try {
+        const updated = await api.company.update({ disabledModules: [...next] });
+        data.company = updated;
+        toast(`${mod.name} ${inp.checked ? 'enabled' : 'disabled'}`, 'success');
+        reload();
+      } catch (err) {
+        toast(err.message || 'Failed to save');
+        inp.checked = !inp.checked;
+      } finally {
+        inp.disabled = false;
+      }
+    });
+    toggle.append(inp,
+      el('div', { className: "w-9 h-5 bg-gray-200 rounded-full peer peer-checked:bg-brand peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all" })
+    );
+    return el('div', { className: 'flex items-center justify-between py-3 border-b border-gray-50 last:border-0' },
+      el('div', { className: 'flex items-center gap-3' },
+        el('span', { className: 'text-lg' }, mod.icon),
+        el('div', {},
+          el('p', { className: 'text-sm font-semibold text-gray-800' }, mod.name),
+          el('p', { className: 'text-xs text-gray-400' }, mod.desc)
+        )
+      ),
+      toggle
+    );
+  });
+
+  page.append(section('Modules', "Turn off sections you don't use — they disappear from the sidebar for everyone",
+    ...moduleRows
   ));
 
   // ── Odoo Revenue Accounts ───────────────────────────────────────

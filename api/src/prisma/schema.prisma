@@ -751,6 +751,7 @@ model Company {
   phone          String?
   email          String?
   website        String?
+  disabledModules String[] @default([])
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }
