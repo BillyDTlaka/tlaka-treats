@@ -3290,13 +3290,21 @@ const HUB_MODULES = [
   {
     id: 'people', icon: '👥', color: '#F59E0B',
     name: 'People', desc: 'HR · Payroll · Scheduling',
+    // Keep in sync with PEOPLE_SECTIONS (defined near renderAdminPeople) — duplicated here
+    // rather than shared because HUB_MODULES is evaluated before that const exists.
     subs: [
-      { id: 'staff',      icon: '🏢', label: 'Staff',      desc: 'Employees, contracts & qualifications' },
-      { id: 'schedule',   icon: '📅', label: 'Schedule',   desc: 'Shift scheduling & rosters' },
-      { id: 'timesheets', icon: '🕐', label: 'Timesheets', desc: 'Time tracking & approvals' },
-      { id: 'leave',      icon: '🌴', label: 'Leave',      desc: 'Leave requests & approvals' },
-      { id: 'payroll',    icon: '💵', label: 'Payroll',    desc: 'Payroll processing & approvals' },
-      { id: 'tasks',      icon: '✅', label: 'Tasks',      desc: 'Task management & assignments' },
+      { id: 'staff',          icon: '👥', label: 'Staff',          desc: 'Employees, contracts & qualifications' },
+      { id: 'company',        icon: '🏢', label: 'Company',        desc: 'Business & registration details' },
+      { id: 'departments',    icon: '🏗', label: 'Departments',    desc: 'Org structure & department list' },
+      { id: 'orgchart',       icon: '🗂', label: 'Org Chart',      desc: 'Reporting lines & hierarchy' },
+      { id: 'casual',         icon: '⏱', label: 'Casual Workers', desc: 'Casual/temp worker records' },
+      { id: 'contracts',      icon: '📄', label: 'Contracts',      desc: 'Employment contracts' },
+      { id: 'qualifications', icon: '🎓', label: 'Qualifications', desc: 'Staff qualifications & certificates' },
+      { id: 'schedule',       icon: '📅', label: 'Schedule',       desc: 'Shift scheduling & rosters' },
+      { id: 'timesheets',     icon: '🕐', label: 'Timesheets',     desc: 'Time tracking & approvals' },
+      { id: 'leave',          icon: '🌴', label: 'Leave',          desc: 'Leave requests & approvals' },
+      { id: 'payroll',        icon: '💵', label: 'Payroll',        desc: 'Payroll processing & approvals' },
+      { id: 'tasks',          icon: '✅', label: 'Tasks',          desc: 'Task management & assignments' },
     ],
   },
   {
@@ -3634,7 +3642,7 @@ function renderAdminModule(module, data, container, reload, navigate) {
     case 'operations': renderAdminOperations(data, container, reload);          break;
     case 'finance':    renderAdminFinanceHub(data, container, reload);          break;
     case 'reports':    renderAdminReports(data, container);                     break;
-    case 'people':     renderAdminPeople(container);                            break;
+    case 'people':     renderAdminPeople(container, sessionStorage.getItem('hub_people'));  break;
     case 'bohlale':    renderAdminBohlale(container);                           break;
     case 'integrations': renderAdminIntegrations(data, container, reload);      break;
     case 'settings':   renderAdminSettings(data, container, reload);            break;
@@ -3918,47 +3926,30 @@ function renderAdminFinanceHub(data, container, reload) {
 }
 
 // ── PEOPLE HUB: Company · Departments · Org Chart · Staff · Schedule · Leave · Payroll · Tasks ──
-function renderAdminPeople(container) {
+// The 12 People & HR sections — consolidated into the main admin sidebar as direct,
+// one-click entries (see HUB_MODULES 'people' subs) instead of a second, nested sidebar
+// living inside this module. renderAdminPeople still owns all the section content/logic;
+// it just renders directly into the content area now, no inner sidebar of its own.
+const PEOPLE_SECTIONS = [
+  { id: 'company',        icon: '🏢', label: 'Company'        },
+  { id: 'departments',    icon: '🏗',  label: 'Departments'    },
+  { id: 'orgchart',       icon: '🗂',  label: 'Org Chart'      },
+  { id: 'staff',          icon: '👥',  label: 'Staff'          },
+  { id: 'casual',         icon: '⏱',  label: 'Casual Workers' },
+  { id: 'contracts',      icon: '📄',  label: 'Contracts'      },
+  { id: 'qualifications', icon: '🎓',  label: 'Qualifications' },
+  { id: 'schedule',       icon: '📅',  label: 'Schedule'       },
+  { id: 'timesheets',     icon: '🕐',  label: 'Timesheets'     },
+  { id: 'leave',          icon: '🌴',  label: 'Leave'          },
+  { id: 'payroll',        icon: '💰',  label: 'Payroll'        },
+  { id: 'tasks',          icon: '✅',  label: 'Tasks'          },
+];
+
+function renderAdminPeople(container, initialSection) {
   container.innerHTML = '';
-  const layout = el('div', { className: 'flex min-h-screen bg-gray-50' });
-  container.append(layout);
-
-  // ── Sidebar nav ──────────────────────────────────────────────────────────
-  const NAV_ITEMS = [
-    { id: 'company',        icon: '🏢', label: 'Company'        },
-    { id: 'departments',    icon: '🏗',  label: 'Departments'    },
-    { id: 'orgchart',       icon: '🗂',  label: 'Org Chart'      },
-    { id: 'staff',          icon: '👥',  label: 'Staff'          },
-    { id: 'casual',         icon: '⏱',  label: 'Casual Workers' },
-    { id: 'contracts',      icon: '📄',  label: 'Contracts'      },
-    { id: 'qualifications', icon: '🎓',  label: 'Qualifications' },
-    { id: 'schedule',       icon: '📅',  label: 'Schedule'       },
-    { id: 'timesheets',     icon: '🕐',  label: 'Timesheets'     },
-    { id: 'leave',          icon: '🌴',  label: 'Leave'          },
-    { id: 'payroll',        icon: '💰',  label: 'Payroll'        },
-    { id: 'tasks',          icon: '✅',  label: 'Tasks'          },
-  ];
-
-  let activeSection = 'staff';
-  const sidebar = el('div', { className: 'w-56 flex-shrink-0 bg-white border-r border-gray-100 min-h-screen p-4' });
-  sidebar.append(el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-widest mb-4 px-2' }, 'People & HR'));
-
-  const mainArea = el('div', { className: 'flex-1 p-6 overflow-auto' });
-  layout.append(sidebar, mainArea);
-
-  function renderSidebar() {
-    sidebar.querySelectorAll('.people-nav-btn').forEach(b => b.remove());
-    NAV_ITEMS.forEach(item => {
-      const btn = el('button', {
-        className: `people-nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold mb-1 transition ${activeSection === item.id ? 'bg-brand/10 text-brand' : 'text-gray-600 hover:bg-gray-50'}`,
-        onClick: () => { activeSection = item.id; renderSidebar(); renderSection(); }
-      },
-        el('span', { className: 'text-base w-5 text-center' }, item.icon),
-        item.label
-      );
-      sidebar.append(btn);
-    });
-  }
+  let activeSection = initialSection || 'staff';
+  const mainArea = el('div', { className: 'p-6 overflow-auto' });
+  container.append(mainArea);
 
   function renderSection() {
     mainArea.innerHTML = '';
@@ -5127,7 +5118,6 @@ function renderAdminPeople(container) {
   }
 
   // ── Init ─────────────────────────────────────────────────────────────────
-  renderSidebar();
   renderSection();
 }
 
