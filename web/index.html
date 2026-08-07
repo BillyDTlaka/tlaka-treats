@@ -3374,7 +3374,7 @@ const HUB_MODULES = [
 ];
 
 function AdminOverviewPage() {
-  let activeModule = 'dashboard'; // land on the Dashboard, not the module picker — null = hub home screen (still reachable via the logo)
+  let activeModule = 'dashboard'; // Dashboard is the permanent landing page — navigation happens via the sidebar
   let adminData = { orders: [], ambassadors: [], products: [], customers: [], stockItems: [], suppliers: [], purchaseOrders: [], recipes: [], productionRuns: [] };
   let dataLoaded = false;
 
@@ -3392,27 +3392,13 @@ function AdminOverviewPage() {
 
   function updateHeader() {
     hLeft.innerHTML = ''; hRight.innerHTML = '';
-    if (activeModule) {
-      const meta = MODULE_META[activeModule] || {};
-      hLeft.append(
-        el('button', {
-          className: 'flex items-center gap-1.5 text-brand font-semibold text-sm hover:opacity-70 transition flex-shrink-0',
-          onClick: goHome,
-        }, '←'),
-        el('div', { className: 'min-w-0' },
-          el('p', { className: 'font-black text-gray-900 text-sm truncate leading-tight' }, meta.title || activeModule),
-          el('p', { className: 'text-xs text-gray-400 truncate' }, meta.subtitle || '')
-        )
-      );
-    } else {
-      hLeft.append(
-        makeLogo(30, 'rounded-lg flex-shrink-0'),
-        el('div', {},
-          el('p', { className: 'font-black text-gray-900 text-sm leading-tight' }, 'Tlaka Treats'),
-          el('p', { className: 'text-xs text-gray-400' }, 'Admin Console')
-        )
-      );
-    }
+    const meta = MODULE_META[activeModule] || {};
+    hLeft.append(
+      el('div', { className: 'min-w-0' },
+        el('p', { className: 'font-black text-gray-900 text-sm truncate leading-tight' }, meta.title || activeModule),
+        el('p', { className: 'text-xs text-gray-400 truncate' }, meta.subtitle || '')
+      )
+    );
     const initials = ((store.user?.firstName?.[0] || '') + (store.user?.lastName?.[0] || '')).toUpperCase() || 'AD';
     hRight.append(
       el('div', { className: 'w-8 h-8 rounded-full bg-brand flex items-center justify-center text-white text-xs font-bold flex-shrink-0' }, initials),
@@ -3429,13 +3415,6 @@ function AdminOverviewPage() {
   function navigate(mod, tabId) {
     if (tabId) sessionStorage.setItem('hub_' + mod, tabId);
     activeModule = mod;
-    updateHeader();
-    renderDesktopSidebar();
-    renderContent();
-  }
-
-  function goHome() {
-    activeModule = null;
     updateHeader();
     renderDesktopSidebar();
     renderContent();
@@ -3475,157 +3454,10 @@ function AdminOverviewPage() {
       ));
       return;
     }
-    if (activeModule && isModuleDisabled(activeModule)) activeModule = 'dashboard';
-    if (!activeModule) { renderHub(); return; }
+    if (isModuleDisabled(activeModule)) activeModule = 'dashboard';
     renderAdminModule(activeModule, adminData, contentArea, reloadData, navigate);
   }
 
-  // ── HUB GRID ─────────────────────────────────────────────────────────
-  function renderHub() {
-    const orders      = adminData.orders     || [];
-    const ambassadors = adminData.ambassadors || [];
-
-    const pendingOrders   = orders.filter(o => o.status === 'PENDING').length;
-    const pendingAmb      = ambassadors.filter(a => a.status === 'PENDING').length;
-    const kycPending      = ambassadors.filter(a => a.kycStatus === 'SUBMITTED').length;
-
-    function getBadge(id) {
-      if (id === 'sales')   return (pendingOrders + pendingAmb + kycPending) || null;
-      if (id === 'people')  return null; // extend later
-      return null;
-    }
-
-    const wrap = el('div', { className: 'p-4 pb-8' });
-
-    // Greeting
-    const hour     = new Date().getHours();
-    const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-    const dateStr  = new Date().toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-    wrap.append(
-      el('div', { className: 'mb-5 pt-1' },
-        el('p', { className: 'text-xl font-black text-gray-900' }, `${greeting}, ${store.user?.firstName || 'Admin'} 👋`),
-        el('p', { className: 'text-sm text-gray-400 mt-0.5' }, dateStr)
-      )
-    );
-
-    // Quick stats strip
-    if (dataLoaded && orders.length) {
-      const today   = orders.filter(o => new Date(o.createdAt).toDateString() === new Date().toDateString());
-      const todayRev = today.reduce((s, o) => s + Number(o.total || 0), 0);
-      wrap.append(
-        el('div', { className: 'grid grid-cols-3 gap-2 mb-5' },
-          el('div', { className: 'bg-white rounded-xl p-3 text-center border border-gray-100 shadow-sm' },
-            el('p', { className: 'text-lg font-black text-gray-900' }, `R${todayRev.toFixed(0)}`),
-            el('p', { className: 'text-xs text-gray-400 mt-0.5' }, "Today's revenue")
-          ),
-          el('div', { className: 'bg-white rounded-xl p-3 text-center border border-gray-100 shadow-sm' },
-            el('p', { className: 'text-lg font-black text-brand' }, String(pendingOrders)),
-            el('p', { className: 'text-xs text-gray-400 mt-0.5' }, 'Pending orders')
-          ),
-          el('div', { className: 'bg-white rounded-xl p-3 text-center border border-gray-100 shadow-sm' },
-            el('p', { className: 'text-lg font-black text-gray-900' }, String(orders.length)),
-            el('p', { className: 'text-xs text-gray-400 mt-0.5' }, 'Total orders')
-          )
-        )
-      );
-    }
-
-    // Module grid
-    const grid = el('div', { className: 'grid grid-cols-2 gap-3' });
-    HUB_MODULES.filter(mod => !isModuleDisabled(mod.id)).forEach(mod => {
-      const badge = getBadge(mod.id);
-      const card = el('button', {
-        className: 'bg-white rounded-2xl p-4 text-left shadow-sm border border-gray-100 active:scale-95 transition-transform relative overflow-hidden',
-        onClick: () => mod.subs?.length ? showModuleOptions(mod) : navigate(mod.id),
-      },
-        // Coloured accent bar at top
-        el('div', { className: 'absolute top-0 left-0 right-0 h-1 rounded-t-2xl', style: { backgroundColor: mod.color } }),
-        // Badge
-        badge ? el('div', {
-          className: 'absolute top-3 right-3 bg-red-500 text-white text-xs font-black rounded-full min-w-5 h-5 flex items-center justify-center px-1',
-        }, String(Math.min(badge, 99))) : null,
-        // Icon
-        el('div', {
-          className: 'w-11 h-11 rounded-xl flex items-center justify-center text-2xl mb-3 mt-1',
-          style: { backgroundColor: mod.color + '18' },
-        }, mod.icon),
-        // Name
-        el('p', { className: 'font-black text-gray-900 text-sm leading-tight' }, mod.name),
-        // Desc
-        el('p', { className: 'text-xs text-gray-400 mt-1 leading-snug' }, mod.desc),
-        // Sub-options hint
-        mod.subs?.length
-          ? el('div', { className: 'flex items-center gap-1 mt-2' },
-              el('span', { className: 'text-xs text-gray-300' }, `${mod.subs.length} sections`),
-              el('span', { className: 'text-xs text-gray-300' }, '›')
-            )
-          : null
-      );
-      grid.append(card);
-    });
-
-    wrap.append(grid);
-    contentArea.append(wrap);
-  }
-
-  // ── MODULE OPTIONS SHEET ─────────────────────────────────────────────
-  function showModuleOptions(mod) {
-    const sheet = el('div', {
-      className: 'fixed inset-0 z-50 flex flex-col',
-      style: { background: 'rgba(0,0,0,0.45)' },
-    });
-    const panel = el('div', {
-      className: 'mt-auto bg-white rounded-t-3xl overflow-y-auto fade-in',
-      style: { maxHeight: '80vh', paddingBottom: 'env(safe-area-inset-bottom, 16px)' },
-    });
-
-    // Sheet header
-    panel.append(
-      el('div', { className: 'flex items-center justify-between px-5 pt-5 pb-4 border-b border-gray-100' },
-        el('div', { className: 'flex items-center gap-3' },
-          el('div', {
-            className: 'w-11 h-11 rounded-xl flex items-center justify-center text-2xl flex-shrink-0',
-            style: { backgroundColor: mod.color + '18' },
-          }, mod.icon),
-          el('div', {},
-            el('p', { className: 'font-black text-gray-900 text-base' }, mod.name),
-            el('p', { className: 'text-xs text-gray-400 mt-0.5' }, mod.desc)
-          )
-        ),
-        el('button', {
-          className: 'w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 font-bold text-lg flex-shrink-0',
-          onClick: () => sheet.remove(),
-        }, '✕')
-      )
-    );
-
-    // Sub-options
-    mod.subs.forEach(sub => {
-      panel.append(
-        el('button', {
-          className: 'w-full flex items-center gap-4 px-5 py-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 active:bg-gray-100 transition text-left',
-          onClick: () => {
-            sheet.remove();
-            sessionStorage.setItem('hub_' + mod.id, sub.id);
-            navigate(mod.id);
-          },
-        },
-          el('div', {
-            className: 'w-11 h-11 rounded-xl bg-gray-100 flex items-center justify-center text-xl flex-shrink-0',
-          }, sub.icon),
-          el('div', { className: 'flex-1 min-w-0' },
-            el('p', { className: 'font-bold text-gray-900 text-sm' }, sub.label),
-            el('p', { className: 'text-xs text-gray-400 mt-0.5 leading-snug' }, sub.desc)
-          ),
-          el('span', { className: 'text-gray-300 text-xl flex-shrink-0' }, '›')
-        )
-      );
-    });
-
-    sheet.addEventListener('click', e => { if (e.target === sheet) sheet.remove(); });
-    sheet.append(panel);
-    document.body.append(sheet);
-  }
 
   // ── DATA LOADING ─────────────────────────────────────────────────────
   async function reloadData() {
