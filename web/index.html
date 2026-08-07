@@ -234,6 +234,7 @@ const api = {
     unmatchBankTxn:    (id)          => req('PATCH',  `/finance/bank-transactions/${id}/unmatch`, {}),
     ignoreBankTxn:     (id)          => req('PATCH',  `/finance/bank-transactions/${id}/ignore`, {}),
     getCommissions:    (p)           => req('GET',    '/finance/commissions' + (p ? '?' + new URLSearchParams(p) : '')),
+    retryCommissionBill:(id)         => req('POST',   `/finance/commissions/${id}/odoo-bill/retry`, {}),
     createPayout:      (data)        => req('POST',   '/finance/payouts', data),
     getPayouts:        ()            => req('GET',    '/finance/payouts'),
     reportPnl:            (p) => req('GET', '/finance/reports/pnl'              + (p ? '?' + new URLSearchParams(p) : '')),
@@ -480,7 +481,7 @@ function el(tag, props = {}, ...children) {
   if (onInput) element.addEventListener('input', onInput);
   Object.entries(rest).forEach(([k, v]) => element.setAttribute(k, v));
   children.flat().forEach(child => {
-    if (child === null || child === undefined) return;
+    if (child === null || child === undefined || child === false || child === true) return;
     element.append(typeof child === 'string' ? document.createTextNode(child) : child);
   });
   return element;
@@ -11045,14 +11046,35 @@ async function renderFinanceCommissions(container) {
 
       const rows = el('div', {});
       group.commissions.forEach(c => {
-        rows.append(el('div', { className: 'flex items-center gap-3 px-4 py-2.5 border-b border-gray-50 last:border-0' },
+        const row = el('div', { className: 'flex items-center gap-3 px-4 py-2.5 border-b border-gray-50 last:border-0' },
           el('div', { className: 'flex-1' },
             el('p', { className: 'text-xs text-gray-700' }, `Order #${c.orderId?.slice(-8)} · ${new Date(c.order.createdAt).toLocaleDateString('en-ZA')}`),
             el('p', { className: 'text-xs text-gray-400' }, `Rate: ${(Number(c.rate) * 100).toFixed(0)}%`),
           ),
           el('p', { className: 'text-sm font-semibold text-gray-900' }, fmt(c.amount)),
           badge(c.status, c.status === 'PAID' ? 'green' : c.status === 'APPROVED' ? 'blue' : 'yellow'),
-        ));
+        );
+        if (c.odooBillStatus && c.odooBillStatus !== 'NOT_READY') {
+          row.append(
+            odooStatusBadge(ODOO_INVOICE_STATUS_STYLE, c.odooBillStatus),
+            el('button', {
+              className: 'text-xs font-bold text-brand px-2 py-1 rounded-lg bg-brand/10 flex-shrink-0',
+              title: c.odooBillSyncError || '',
+              onClick: async (e) => {
+                const btn = e.currentTarget;
+                btn.textContent = 'Retrying…'; btn.disabled = true;
+                try {
+                  await api.finance.retryCommissionBill(c.id);
+                  await load();
+                } catch (err) {
+                  toast(err.message || 'Retry failed');
+                  btn.textContent = 'Retry'; btn.disabled = false;
+                }
+              },
+            }, 'Retry')
+          );
+        }
+        rows.append(row);
       });
 
       card.append(header, rows);
@@ -16332,6 +16354,7 @@ function renderAdminSettings(data, container, reload) {
   // ── Ambassador Defaults ────────────────────────────────────────
   let defaultRate = 10;
   const rateInp = inputField(String(defaultRate), '10', v => defaultRate = Number(v), 'number');
+  const commissionAccountInp = inputField(data.company?.odooCommissionAccountCode || '', 'e.g. 600010', null);
 
   page.append(section('Ambassador Programme', 'Defaults applied to newly approved ambassadors',
     formRow('Default Commission %', 'Rate given to new ambassadors on approval',
@@ -16348,7 +16371,29 @@ function renderAdminSettings(data, container, reload) {
         onClick: () => toast('Navigate to Ambassadors → Pending to review applications', 'info')
       }, `Review ${ambassadors.filter(a=>a.status==='PENDING').length} application(s) →`)
     ),
-    saveBtn('Save Ambassador Settings', () => toast('Ambassador settings saved ✓', 'success'))
+    saveBtn('Save Ambassador Settings', () => toast('Ambassador settings saved ✓', 'success')),
+    formRow('Commission Cost-of-Sale Account', 'The account.account code (e.g. "600010") ambassador commission vendor bills post to in Odoo — required before a commission bill can sync',
+      el('div', { className: 'flex items-center gap-2' },
+        el('div', { className: 'flex-1' }, commissionAccountInp),
+        el('button', {
+          className: 'text-xs font-bold text-brand px-3 py-2 rounded-lg bg-brand/10 flex-shrink-0',
+          onClick: async (e) => {
+            const btn = e.currentTarget;
+            const val = commissionAccountInp.value.trim();
+            btn.textContent = 'Saving…'; btn.disabled = true;
+            try {
+              const updated = await api.company.update({ odooCommissionAccountCode: val || null });
+              data.company = updated;
+              toast('Commission account saved', 'success');
+            } catch (err) {
+              toast(err.message || 'Failed to save');
+            } finally {
+              btn.textContent = 'Save'; btn.disabled = false;
+            }
+          },
+        }, 'Save')
+      )
+    )
   ));
 
   // ── Order Workflow ─────────────────────────────────────────────

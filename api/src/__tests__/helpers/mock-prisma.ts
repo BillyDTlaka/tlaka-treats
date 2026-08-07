@@ -82,6 +82,11 @@ export function createMockPrisma() {
       findMany: jest.fn(),
       update: jest.fn(),
     },
+    company: {
+      findFirst: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
     address: {
       findUnique: jest.fn(),
       findMany: jest.fn(),
@@ -210,6 +215,33 @@ export function makeAmbassador(overrides: Record<string, any> = {}) {
     kycData: null,
     kycNote: null,
     createdAt: new Date(),
+    ...overrides,
+  }
+}
+
+export function makeCommission(overrides: Record<string, any> = {}) {
+  return {
+    id: 'commission-1',
+    orderId: 'order-1',
+    ambassadorId: 'amb-1',
+    amount: 17,
+    rate: 0.1,
+    status: 'PENDING',
+    payoutId: null,
+    odooBillId: null,
+    odooBillNumber: null,
+    odooBillStatus: 'NOT_READY',
+    odooBillSyncError: null,
+    odooBillSyncedAt: null,
+    odooBillPaymentSyncStatus: 'NOT_SYNCED',
+    odooBillPaymentSyncError: null,
+    odooBillPaymentSyncedAt: null,
+    createdAt: new Date(),
+    ambassador: {
+      id: 'amb-1',
+      user: { id: 'amb-user-1', email: 'amb@test.com', phone: null, firstName: 'Amb', lastName: 'One', odooPartnerId: '99' },
+    },
+    order: { id: 'order-1', status: 'DELIVERED', orderNumber: 'TT-ORD-000001', orderSeq: 1 },
     ...overrides,
   }
 }

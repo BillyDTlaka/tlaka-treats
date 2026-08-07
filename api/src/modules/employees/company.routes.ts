@@ -32,6 +32,7 @@ const companyRoutes: FastifyPluginAsync = async (fastify) => {
         email:          body.email          ?? company.email,
         website:        body.website        ?? company.website,
         disabledModules: body.disabledModules !== undefined ? body.disabledModules : company.disabledModules,
+        odooCommissionAccountCode: body.odooCommissionAccountCode !== undefined ? body.odooCommissionAccountCode : company.odooCommissionAccountCode,
       },
     })
   })

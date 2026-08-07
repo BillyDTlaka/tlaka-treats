@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { authenticate, authorize } from '../../shared/middleware/auth'
+import { registerCommissionPayment, syncCommissionBill } from '../../shared/services/odoo-commission-bill.service'
 
 export default async function financeRoutes(fastify: FastifyInstance) {
   const db = fastify.prisma as any
@@ -465,6 +466,12 @@ export default async function financeRoutes(fastify: FastifyInstance) {
     // Mark commissions as PAID
     await db.commission.updateMany({ where: { id: { in: commissionIds } }, data: { status: 'PAID', payoutId: payout.id } })
 
+    // Register the payment against each commission's Odoo vendor bill (if posted already) —
+    // never blocks the payout itself; failures are tracked per-commission for later retry.
+    for (const commissionId of commissionIds) {
+      await registerCommissionPayment(db, commissionId)
+    }
+
     return reply.code(201).send(payout)
   })
 
@@ -476,6 +483,20 @@ export default async function financeRoutes(fastify: FastifyInstance) {
         commissions: { select: { id: true, amount: true, orderId: true } },
       },
     })
+  })
+
+  // POST /finance/commissions/:id/odoo-bill/retry - admin manually (re)runs the Odoo vendor
+  // bill sync for a commission. Idempotent — reuses the same service the DELIVERED-status
+  // hook calls, so it never creates a duplicate bill. If the commission is already PAID
+  // locally, also re-attempts registering the payment against the bill.
+  fastify.post('/commissions/:id/odoo-bill/retry', { preHandler: auth }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const commission = await db.commission.findUnique({ where: { id } })
+    if (!commission) return reply.code(404).send({ message: 'Commission not found' })
+
+    const result = await syncCommissionBill(db, commission.orderId)
+    if (commission.status === 'PAID') await registerCommissionPayment(db, id)
+    return result
   })
 
   // ── REPORTS ────────────────────────────────────────────────────────────────

@@ -100,7 +100,9 @@ async function getBankJournalId(uid: number, companyId: number): Promise<number>
 // Registers a payment against a posted invoice via Odoo's standard "Register Payment"
 // wizard (account.payment.register) — the same flow Odoo uses internally when you click
 // the button in the UI, so reconciliation is handled correctly regardless of version quirks.
-async function registerOdooPayment(uid: number, companyId: number, invoiceId: number, amount: number, paymentDate: string): Promise<void> {
+// Works identically for a customer invoice (out_invoice) or a vendor bill (in_invoice) —
+// Odoo infers the payment direction from the linked move itself.
+export async function registerOdooPayment(uid: number, companyId: number, invoiceId: number, amount: number, paymentDate: string): Promise<void> {
   const journalId = await getBankJournalId(uid, companyId)
   const wizardId = await odooRpc<number>('object', 'execute_kw', [
     config.odoo.db, uid, config.odoo.apiKey, 'account.payment.register', 'create',
@@ -124,7 +126,7 @@ async function ensureOrderNumber(prisma: PrismaClient, order: { id: string; orde
   return orderNumber
 }
 
-async function ensurePartnerId(prisma: PrismaClient, customer: { id: string; email: string; firstName: string; lastName: string; phone?: string | null; odooPartnerId?: string | null }): Promise<number> {
+export async function ensurePartnerId(prisma: PrismaClient, customer: { id: string; email: string; firstName: string; lastName: string; phone?: string | null; odooPartnerId?: string | null }): Promise<number> {
   if (customer.odooPartnerId) return Number(customer.odooPartnerId)
   await syncCustomerToOdoo(prisma, customer)
   const refreshed = await (prisma as any).user.findUnique({ where: { id: customer.id } })

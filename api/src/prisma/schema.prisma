@@ -384,6 +384,21 @@ model Commission {
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 
+  // Odoo account.move (vendor bill, move_type: in_invoice) sync state — created once the
+  // underlying order is DELIVERED, so the commission cost lands in Odoo matched to the
+  // fulfilled sale, as a "cost of sale" line rather than a generic operating expense.
+  odooBillId        Int?
+  odooBillNumber    String?
+  odooBillStatus    OdooInvoiceSyncStatus @default(NOT_READY)
+  odooBillSyncError String?
+  odooBillSyncedAt  DateTime?
+
+  // Tracks the payment-registration attempt separately from the bill's own state, since a
+  // payout can be recorded locally before the bill is posted in Odoo (queued until it is).
+  odooBillPaymentSyncStatus OdooSyncStatus @default(NOT_SYNCED)
+  odooBillPaymentSyncError  String?
+  odooBillPaymentSyncedAt   DateTime?
+
   order      Order      @relation(fields: [orderId], references: [id])
   ambassador Ambassador @relation(fields: [ambassadorId], references: [id])
   payout     Payout?    @relation(fields: [payoutId], references: [id])
@@ -762,6 +777,7 @@ model Company {
   email          String?
   website        String?
   disabledModules String[] @default([])
+  odooCommissionAccountCode String? // account.account code ambassador commission vendor bills post to
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }

@@ -25,22 +25,22 @@ async function findOdooProductByReference(uid: number, reference: string): Promi
   return products[0] || null
 }
 
-const incomeAccountCache = new Map<string, number>()
+const accountIdCache = new Map<string, number>()
 
-// Resolves an account.account by its code (e.g. "500010"). Returns undefined when no code is
-// configured (Odoo then falls back to the product/category default); throws if a code
-// *is* configured but doesn't exist in Odoo, since that's a real misconfiguration worth
-// surfacing rather than silently ignoring.
-async function resolveIncomeAccountId(uid: number, code: string | null | undefined): Promise<number | undefined> {
+// Resolves an account.account by its code (e.g. "500010") — income or expense, any type.
+// Returns undefined when no code is configured (callers then fall back to whatever default
+// Odoo would otherwise use); throws if a code *is* configured but doesn't exist in Odoo,
+// since that's a real misconfiguration worth surfacing rather than silently ignoring.
+export async function resolveAccountIdByCode(uid: number, code: string | null | undefined): Promise<number | undefined> {
   if (!code) return undefined
-  if (incomeAccountCache.has(code)) return incomeAccountCache.get(code)
+  if (accountIdCache.has(code)) return accountIdCache.get(code)
 
   const accounts = await odooRpc<Array<{ id: number }>>('object', 'execute_kw', [
     config.odoo.db, uid, config.odoo.apiKey, 'account.account', 'search_read', [[['code', '=', code]]], { fields: ['id'], limit: 1 },
   ])
-  if (!accounts.length) throw new ProductMappingError(`Odoo income account "${code}" not found (account.account)`)
+  if (!accounts.length) throw new ProductMappingError(`Odoo account "${code}" not found (account.account)`)
 
-  incomeAccountCache.set(code, accounts[0].id)
+  accountIdCache.set(code, accounts[0].id)
   return accounts[0].id
 }
 
@@ -112,7 +112,7 @@ export async function resolveOdooProductId(prisma: PrismaClient, uid: number, va
     throw new ProductMappingError(`Product mapping missing for SKU ${reference}`)
   }
 
-  const incomeAccountId = await resolveIncomeAccountId(uid, variant.product?.category?.odooIncomeAccountCode)
+  const incomeAccountId = await resolveAccountIdByCode(uid, variant.product?.category?.odooIncomeAccountCode)
   const newId = await createOdooProduct(uid, reference, label, incomeAccountId)
   await (prisma as any).productVariant.update({ where: { id: variant.id }, data: { odooProductId: newId, odooProductReference: reference, ...syncFields } })
   return newId
@@ -129,7 +129,7 @@ export async function resolveServiceProductId(uid: number, reference: string, la
     throw new ProductMappingError(`Product mapping missing for SKU ${reference} (${label})`)
   }
 
-  const incomeAccountId = await resolveIncomeAccountId(uid, incomeAccountCode)
+  const incomeAccountId = await resolveAccountIdByCode(uid, incomeAccountCode)
   return createOdooProduct(uid, reference, label, incomeAccountId)
 }
 
@@ -273,7 +273,7 @@ export async function syncProductToOdoo(prisma: PrismaClient, productId: string)
     let templateId = product.odooTemplateId
 
     if (!templateId) {
-      const incomeAccountId = await resolveIncomeAccountId(uid, product.category?.odooIncomeAccountCode)
+      const incomeAccountId = await resolveAccountIdByCode(uid, product.category?.odooIncomeAccountCode)
       templateId = await odooRpc<number>('object', 'execute_kw', [
         config.odoo.db, uid, config.odoo.apiKey, 'product.template', 'create', [{
           name: product.name,
@@ -325,8 +325,8 @@ export async function syncProductToOdoo(prisma: PrismaClient, productId: string)
 }
 
 // Exposed for tests only, to reset module-level caches between cases.
-export function _resetIncomeAccountCacheForTests() {
-  incomeAccountCache.clear()
+export function _resetAccountIdCacheForTests() {
+  accountIdCache.clear()
 }
 export function _resetVariantAttributeCacheForTests() {
   cachedAttributeId = null

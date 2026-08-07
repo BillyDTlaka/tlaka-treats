@@ -2,6 +2,7 @@ import { PrismaClient, OrderStatus } from '@prisma/client'
 import { AppError, NotFoundError, ForbiddenError } from '../../shared/errors'
 import { sendOrderStatusEmail, sendOrderStatusWhatsApp } from '../../shared/services/notify.service'
 import { syncOrderInvoice, cancelOrderInvoice, OdooInvoiceSyncResult } from '../../shared/services/odoo-invoice.service'
+import { syncCommissionBill } from '../../shared/services/odoo-commission-bill.service'
 
 export class OrderService {
   constructor(private prisma: PrismaClient) {}
@@ -241,7 +242,15 @@ export class OrderService {
       odoo = await cancelOrderInvoice(this.prisma, orderId)
     }
 
-    return odoo ? { ...updated, odoo } : updated
+    // The commission cost lands in Odoo once the order is actually delivered — that's when
+    // the sale is fulfilled, so it's matched to the sale rather than posted speculatively at
+    // CONFIRMED (when the order could still fall through before delivery).
+    let commissionOdoo: Awaited<ReturnType<typeof syncCommissionBill>> | undefined
+    if (status === 'DELIVERED') {
+      commissionOdoo = await syncCommissionBill(this.prisma, orderId)
+    }
+
+    return { ...updated, ...(odoo ? { odoo } : {}), ...(commissionOdoo ? { commissionOdoo } : {}) }
   }
 
   // Records a cash/EFT/manual-card payment against an order (there was previously no way

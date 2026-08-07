@@ -1,4 +1,4 @@
-import { syncProductToOdoo, _resetIncomeAccountCacheForTests, _resetVariantAttributeCacheForTests } from '../shared/services/odoo-product.service'
+import { syncProductToOdoo, _resetAccountIdCacheForTests, _resetVariantAttributeCacheForTests } from '../shared/services/odoo-product.service'
 import { _resetOdooClientCacheForTests } from '../shared/services/odoo-client'
 import { createMockPrisma } from './helpers/mock-prisma'
 import { installMockOdoo } from './helpers/mock-odoo'
@@ -28,7 +28,7 @@ describe('syncProductToOdoo — proper Odoo variants (one template, generated pr
     prisma = createMockPrisma()
     odoo = installMockOdoo()
     _resetOdooClientCacheForTests()
-    _resetIncomeAccountCacheForTests()
+    _resetAccountIdCacheForTests()
     _resetVariantAttributeCacheForTests()
     prisma.productVariant.update.mockResolvedValue(undefined)
     prisma.product.update.mockResolvedValue(undefined)
@@ -174,7 +174,7 @@ describe('syncProductToOdoo — proper Odoo variants (one template, generated pr
   it('throws and marks pending variants FAILED when the income account code is misconfigured', async () => {
     prisma.product.findUnique.mockResolvedValueOnce(product) // no account seeded for 500010
 
-    await expect(syncProductToOdoo(prisma, 'product-1')).rejects.toThrow(/income account "500010" not found/)
+    await expect(syncProductToOdoo(prisma, 'product-1')).rejects.toThrow(/account "500010" not found/)
 
     const failCalls = prisma.productVariant.update.mock.calls.filter((c: any) => c[0].data.odooProductSyncStatus === 'FAILED')
     expect(failCalls).toHaveLength(3)
