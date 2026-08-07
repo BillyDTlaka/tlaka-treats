@@ -183,7 +183,9 @@ export function installMockOdoo() {
           const id = state.nextInvoiceId++
           const amountTotal = (vals.invoice_line_ids || []).reduce((s: number, l: any) => s + l[2].quantity * l[2].price_unit, 0)
           const rec = {
-            id, name: '/', state: 'draft', payment_state: 'not_paid',
+            // Odoo leaves the invoice number sequence unassigned (returned as
+            // boolean `false`, not a string) until the invoice is posted.
+            id, name: false as string | false, state: 'draft', payment_state: 'not_paid',
             amount_untaxed: amountTotal, amount_tax: 0, amount_total: amountTotal,
             partner_id: [vals.partner_id, ''], invoice_origin: vals.invoice_origin, ref: vals.ref,
             invoice_date: vals.invoice_date,

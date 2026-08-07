@@ -22,7 +22,7 @@ const MISMATCH_TOLERANCE = 0.05 // rand — accounts for float rounding, not a r
 
 interface OdooInvoiceFields {
   id: number
-  name: string
+  name: string | false
   state: string
   payment_state: string
   amount_untaxed: number
@@ -187,12 +187,15 @@ async function finalize(
 ): Promise<OdooInvoiceSyncResult> {
   const mismatch = expectedTotal !== undefined && Math.abs(expectedTotal - Number(invoice.amount_total)) > MISMATCH_TOLERANCE
   const status = mapOdooStateToLocal(invoice, mismatch)
+  // Odoo's JSON-RPC represents an unset Char field (e.g. the invoice number
+  // sequence, not assigned until posting) as the boolean `false`, not null/"".
+  const invoiceNumber = invoice.name || null
 
   await (prisma as any).order.update({
     where: { id: order.id },
     data: {
       odooInvoiceId: invoice.id,
-      odooInvoiceNumber: invoice.name,
+      odooInvoiceNumber: invoiceNumber,
       odooInvoiceStatus: status,
       odooInvoiceSyncError: mismatch
         ? `Local order total (${Number(order.total).toFixed(2)}) differs from Odoo invoice total (${Number(invoice.amount_total).toFixed(2)})`
@@ -205,7 +208,7 @@ async function finalize(
     ok: true,
     action,
     invoiceId: invoice.id,
-    invoiceNumber: invoice.name,
+    invoiceNumber: invoiceNumber ?? undefined,
     state: invoice.state,
     paymentState: invoice.payment_state,
     amountTotal: invoice.amount_total,
@@ -363,7 +366,7 @@ export async function cancelOrderInvoice(prisma: PrismaClient, orderId: string):
         odooInvoiceSyncedAt: new Date(),
       },
     })
-    return { ok: true, invoiceId: invoice.id, invoiceNumber: invoice.name, state: invoice.state, reconciliationIssue: true }
+    return { ok: true, invoiceId: invoice.id, invoiceNumber: invoice.name || undefined, state: invoice.state, reconciliationIssue: true }
   } catch (err: any) {
     const message = err?.message || 'Unknown Odoo sync error'
     await db.order.update({

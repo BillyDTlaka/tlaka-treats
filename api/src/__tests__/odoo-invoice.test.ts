@@ -55,6 +55,9 @@ describe('syncOrderInvoice', () => {
     const finalUpdate = orderUpdateCalls[orderUpdateCalls.length - 1][0]
     expect(finalUpdate.data.odooInvoiceStatus).toBe('DRAFT_CREATED')
     expect(finalUpdate.data.odooInvoiceId).toBe(result.invoiceId)
+    // Odoo returns `false` (not null/"") for the invoice number sequence until
+    // posting — must never be written to the Prisma string column as-is.
+    expect(finalUpdate.data.odooInvoiceNumber).toBeNull()
   })
 
   it('INV-02 — reuses an existing odooPartnerId instead of creating a new contact', async () => {
