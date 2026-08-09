@@ -9114,8 +9114,34 @@ const CLASSIFICATIONS = {
 
 // ── PRODUCTS MODULE ───────────────────────────────────────────────────────────
 function renderAdminProducts(data, container, reload) {
-  const { products, suppliers = [], uoms = [], categories = [] } = data;
-  const page = el('div', { className: 'p-6 max-w-6xl mx-auto' });
+  const { products, suppliers = [], uoms = [], categories = [], recipes = [] } = data;
+  let detailProduct = null;
+
+  const page = el('div', {});
+  container.append(page);
+
+  // Re-fetches the full admin product list and re-selects the same product, so
+  // editing from the detail view refreshes in place instead of bouncing back to
+  // the list (there's no admin-scoped single-product endpoint, so this reuses
+  // the same /products/admin call the list itself loads from).
+  async function refreshDetail(id) {
+    try {
+      const fresh = await api.products.getAllAdmin();
+      products.splice(0, products.length, ...fresh);
+      detailProduct = products.find(p => p.id === id) || null;
+      renderPage();
+    } catch (e) { toast(e.message || 'Failed to refresh product'); }
+  }
+
+  function renderPage() {
+    page.innerHTML = '';
+    if (detailProduct) { renderDetailView(detailProduct); return; }
+    renderListView();
+  }
+
+  // ── LIST VIEW ────────────────────────────────────────────────────────────
+  function renderListView() {
+  const wrap = el('div', { className: 'p-6 max-w-6xl mx-auto' });
 
   // ── Toolbar ──────────────────────────────────────────────────────────────
   const toolbar = el('div', { className: 'flex flex-wrap gap-3 items-center mb-4' });
@@ -9267,7 +9293,13 @@ function renderAdminProducts(data, container, reload) {
 
       const statusBadge = badge(product.isActive ? 'Active' : 'Inactive', product.isActive ? '#10B981' : '#9CA3AF');
 
-      const row = el('tr', { className: `hover:bg-gray-50 transition ${!product.isActive ? 'opacity-60' : ''}` },
+      const row = el('tr', {
+        className: `cursor-pointer hover:bg-gray-50 transition ${!product.isActive ? 'opacity-60' : ''}`,
+        onClick: (e) => {
+          if (e.target.closest('button') || e.target.closest('input')) return;
+          detailProduct = product; renderPage();
+        },
+      },
         el('td', { className: 'px-4 py-3' }, cb),
         el('td', { className: 'py-3 pr-2' }, thumb),
         el('td', { className: 'px-3 py-3' },
@@ -9312,9 +9344,177 @@ function renderAdminProducts(data, container, reload) {
   classFilter.addEventListener('change', renderRows);
   statusFilter.addEventListener('change', renderRows);
 
-  page.append(toolbar, bulkBar, tableWrap);
+  wrap.append(toolbar, bulkBar, tableWrap);
   renderRows();
-  container.append(page);
+  page.append(wrap);
+  }
+
+  // ── DETAIL VIEW ──────────────────────────────────────────────────────────
+  function renderDetailView(product) {
+    const wrap = el('div', { className: 'p-6 max-w-4xl mx-auto' });
+    const meta = CLASSIFICATIONS[product.classification] || CLASSIFICATIONS.SELLABLE;
+    const isSellable = product.classification === 'SELLABLE' || !product.classification;
+
+    const images = Array.isArray(product.images) && product.images.length
+      ? product.images
+      : (product.imageUrl ? [{ url: product.imageUrl, isPrimary: true }] : []);
+
+    // Header
+    wrap.append(
+      el('div', { className: 'flex items-center justify-between mb-5 flex-wrap gap-3' },
+        el('div', { className: 'flex items-center gap-2' },
+          el('button', {
+            className: 'flex items-center gap-1 text-sm font-semibold text-gray-500 hover:text-gray-900 transition',
+            onClick: () => { detailProduct = null; renderPage(); },
+          }, '← All Products'),
+          el('span', { className: 'text-gray-300' }, '/'),
+          el('span', { className: 'text-sm font-black text-gray-900' }, product.name)
+        ),
+        el('div', { className: 'flex items-center gap-2 flex-wrap' },
+          el('span', {
+            className: 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold',
+            style: { backgroundColor: meta.bg, color: meta.color },
+          }, meta.icon + ' ' + meta.label),
+          badge(product.isActive ? 'Active' : 'Inactive', product.isActive ? '#10B981' : '#9CA3AF'),
+          el('button', {
+            className: 'px-3 py-1.5 bg-white border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-50 transition',
+            onClick: () => showEditProductModal(product, () => refreshDetail(product.id), suppliers, uoms, categories),
+          }, '✏️ Edit'),
+          el('button', {
+            className: `px-3 py-1.5 text-sm font-semibold rounded-xl transition ${product.isActive ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-green-50 text-green-600 hover:bg-green-100'}`,
+            onClick: async (e) => {
+              e.currentTarget.disabled = true;
+              try {
+                await api.products.update(product.id, { isActive: !product.isActive });
+                toast(product.isActive ? 'Deactivated' : 'Activated', 'success');
+                await refreshDetail(product.id);
+              } catch (err) { toast(err.message || 'Failed'); e.currentTarget.disabled = false; }
+            },
+          }, product.isActive ? 'Deactivate' : 'Activate'),
+        )
+      )
+    );
+
+    // Images
+    if (isSellable && images.length) {
+      wrap.append(
+        el('div', { className: 'flex gap-3 mb-5 flex-wrap' },
+          ...images.map(img => el('div', { className: 'relative' },
+            el('img', { className: 'w-24 h-24 rounded-xl object-cover border border-gray-100', src: img.url, alt: product.name }),
+            img.isPrimary ? el('span', { className: 'absolute -top-1.5 -right-1.5 bg-brand text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center' }, '★') : null
+          ))
+        )
+      );
+    }
+
+    // Info grid
+    const infoRow = el('div', { className: 'grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5' },
+      el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
+        el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-1' }, 'Category'),
+        el('p', { className: 'text-sm text-gray-800 font-semibold' }, product.category?.name || '—')
+      ),
+      el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
+        el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-1' }, 'Supplier'),
+        el('p', { className: 'text-sm text-gray-800 font-semibold' }, product.supplier?.name || '—')
+      ),
+      el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
+        el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-1' }, 'Brand'),
+        el('p', { className: 'text-sm text-gray-800 font-semibold' }, product.brand || '—')
+      ),
+      el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
+        el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-1' }, 'Unit of Measure'),
+        el('p', { className: 'text-sm text-gray-800 font-semibold' }, product.uom?.name || '—')
+      ),
+    );
+    wrap.append(infoRow);
+
+    if (product.description) {
+      wrap.append(
+        el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100 mb-5' },
+          el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-1' }, 'Description'),
+          el('p', { className: 'text-sm text-gray-700' }, product.description)
+        )
+      );
+    }
+
+    // Variants & pricing, with per-variant Odoo sync status
+    if (product.variants?.length) {
+      const vTable = el('div', { className: 'bg-white rounded-xl overflow-hidden border border-gray-100 mb-5' });
+      vTable.append(el('div', { className: 'grid grid-cols-12 gap-x-3 px-4 py-2 bg-gray-50 text-xs font-bold text-gray-400 uppercase tracking-wide' },
+        el('div', { className: 'col-span-3' }, 'Variant'),
+        el('div', { className: 'col-span-2 text-right' }, 'Retail'),
+        el('div', { className: 'col-span-2 text-right' }, 'Ambassador'),
+        el('div', { className: 'col-span-3' }, 'Odoo Sync'),
+        el('div', { className: 'col-span-2' }, ''),
+      ));
+      product.variants.forEach(v => {
+        const retail = v.prices?.find(p => p.tier === 'RETAIL')?.price;
+        const amb    = v.prices?.find(p => p.tier === 'AMBASSADOR')?.price;
+        const vRow = el('div', { className: 'grid grid-cols-12 gap-x-3 px-4 py-3 border-t border-gray-50 items-center' },
+          el('div', { className: `col-span-3 text-sm font-semibold text-gray-800 ${!v.isActive ? 'opacity-50' : ''}` }, v.name),
+          el('div', { className: 'col-span-2 text-right text-sm text-gray-700' }, retail != null ? `R${Number(retail).toFixed(2)}` : '—'),
+          el('div', { className: 'col-span-2 text-right text-sm text-gray-500' }, amb != null ? `R${Number(amb).toFixed(2)}` : '—'),
+          el('div', { className: 'col-span-3' }, odooStatusBadge(ODOO_CUSTOMER_SYNC_STYLE, v.odooProductSyncStatus || 'NOT_SYNCED')),
+          el('div', { className: 'col-span-2 text-right' },
+            v.odooProductSyncStatus === 'FAILED'
+              ? el('button', {
+                  className: 'text-xs font-bold text-brand px-2 py-1 rounded-lg bg-brand/10',
+                  title: v.odooProductSyncError || '',
+                  onClick: async (e) => {
+                    e.currentTarget.textContent = 'Retrying…'; e.currentTarget.disabled = true;
+                    try {
+                      await api.products.retryOdooSync(product.id, v.id);
+                      await refreshDetail(product.id);
+                    } catch (err) { toast(err.message || 'Retry failed'); }
+                  },
+                }, 'Retry')
+              : null
+          ),
+        );
+        vTable.append(vRow);
+      });
+      wrap.append(
+        el('div', { className: 'mb-2' }, el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider' }, 'Variants & Pricing')),
+        vTable
+      );
+    }
+
+    // Stock / inventory
+    if (product.stockItem) {
+      const si = product.stockItem;
+      wrap.append(
+        el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100 mb-5' },
+          el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-2' }, '📦 Inventory'),
+          el('div', { className: 'grid grid-cols-3 gap-3' },
+            el('div', {}, el('p', { className: 'text-lg font-black text-gray-900' }, `${Number(si.currentStock).toFixed(2)}`), el('p', { className: 'text-xs text-gray-400' }, `Current stock (${si.uom?.abbreviation || si.unit || 'units'})`)),
+          )
+        )
+      );
+    }
+
+    // Recipe cross-reference — derived client-side from the already-loaded recipes list,
+    // since the admin product list doesn't include the recipesAsOutput relation.
+    const madeBy = recipes.filter(r => r.outputProductId === product.id);
+    if (madeBy.length) {
+      wrap.append(
+        el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100 mb-5' },
+          el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-2' }, '📋 Made By'),
+          ...madeBy.map(r => el('p', { className: 'text-sm text-gray-700' }, `${r.name} — yields ${Number(r.yieldPerBatch || r.yieldQty).toFixed(0)} per batch`))
+        )
+      );
+    }
+
+    // Odoo template status
+    wrap.append(
+      el('p', { className: 'text-xs text-gray-400' },
+        product.odooTemplateId ? `Synced to Odoo as product template #${product.odooTemplateId}` : 'Not yet synced to an Odoo product template'
+      )
+    );
+
+    page.append(wrap);
+  }
+
+  renderPage();
 }
 
 // ── IMAGE HELPER: compress uploaded file to a base64 data URL ─────────────────
