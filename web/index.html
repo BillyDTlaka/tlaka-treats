@@ -469,7 +469,7 @@ function getCurrentPage() { return _currentPage; }
 // ─── HELPERS ──────────────────────────────────────────────────────
 function el(tag, props = {}, ...children) {
   const element = document.createElement(tag);
-  const { className, style, onClick, onInput, placeholder, type, value, disabled, href, ...rest } = props;
+  const { className, style, onClick, onInput, onChange, placeholder, type, value, disabled, href, ...rest } = props;
   if (className) element.className = className;
   if (style) Object.assign(element.style, style);
   if (onClick) element.addEventListener('click', onClick);
@@ -479,6 +479,7 @@ function el(tag, props = {}, ...children) {
   if (disabled) element.disabled = disabled;
   if (href) element.href = href;
   if (onInput) element.addEventListener('input', onInput);
+  if (onChange) element.addEventListener('change', onChange);
   Object.entries(rest).forEach(([k, v]) => element.setAttribute(k, v));
   children.flat().forEach(child => {
     if (child === null || child === undefined || child === false || child === true) return;
