@@ -103,9 +103,16 @@ const inventoryRoutes: FastifyPluginAsync = async (fastify) => {
     await db.stockMovement.create({
       data: { stockItemId, type, quantity: signedQty, unitCost: unitCost || undefined, reference: reference || undefined, note: note || undefined },
     })
+    // A purchase with a unit cost updates costPerUnit to the latest purchase price —
+    // the same "last purchase price" rule the formal Purchase Order → Receive flow
+    // already uses (suppliers.routes.ts), so profitability math stays consistent
+    // regardless of which of the two purchase-recording paths was used.
     const updated = await db.stockItem.update({
       where: { id: stockItemId },
-      data: { currentStock: { increment: signedQty } },
+      data: {
+        currentStock: { increment: signedQty },
+        ...(type === 'PURCHASE' && unitCost ? { costPerUnit: unitCost } : {}),
+      },
       include: { uom: { select: { abbreviation: true } } },
     })
 

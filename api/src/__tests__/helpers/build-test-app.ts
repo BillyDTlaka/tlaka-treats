@@ -14,6 +14,7 @@ import orderRoutes     from '../../modules/orders/orders.routes'
 import ambassadorRoutes from '../../modules/ambassadors/ambassadors.routes'
 import customerRoutes  from '../../modules/customers/customers.routes'
 import paymentsRoutes  from '../../modules/payments/payments.routes'
+import inventoryRoutes from '../../modules/inventory/inventory.routes'
 
 const TEST_JWT_SECRET = 'test-jwt-secret'
 
@@ -51,6 +52,7 @@ export async function buildTestApp(mockPrisma: any): Promise<FastifyInstance> {
   await app.register(ambassadorRoutes, { prefix: '/ambassadors' })
   await app.register(customerRoutes,   { prefix: '/customers'  })
   await app.register(paymentsRoutes,   { prefix: '/payments'   })
+  await app.register(inventoryRoutes,  { prefix: '/inventory'  })
 
   await app.ready()
   return app
