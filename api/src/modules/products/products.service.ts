@@ -140,6 +140,19 @@ export class ProductService {
       include: { variants: { include: { prices: true } }, category: true, supplier: { select: { id: true, name: true } } },
     })
 
+    // Ingredients/packaging/consumables are trackable stock by definition, so create
+    // their StockItem row right away instead of leaving that as a separate manual step
+    // in Operations → Inventory — otherwise a freshly-created ingredient has nothing to
+    // pick from when adding it to a recipe. Sellable finished goods get theirs lazily,
+    // the first time a packaging run completes (see packaging.routes.ts), so they're
+    // deliberately excluded here.
+    const STOCK_TRACKED: ProductClassification[] = ['INGREDIENT', 'PACKAGING', 'CONSUMABLE']
+    if (STOCK_TRACKED.includes(product.classification)) {
+      await (this.prisma as any).stockItem.create({
+        data: { productId: product.id, name: product.name, uomId: product.uomId || undefined },
+      })
+    }
+
     // Sync the whole product (template + all its variants) to Odoo now, rather than
     // waiting for it to first appear in a confirmed order — fire-and-forget, failures are
     // visible in the admin monitoring view.

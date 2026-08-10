@@ -535,7 +535,9 @@ function makeSearchableSelect({ options, value, getLabel, getValue, onChange, pl
     const q = (filterText || '').trim().toLowerCase();
     const filtered = q ? options.filter(o => getLabel(o).toLowerCase().includes(q)) : options;
     if (!filtered.length) {
-      dropdown.append(el('div', { className: 'px-3 py-2 text-sm text-gray-400' }, 'No matches'));
+      dropdown.append(el('div', { className: 'px-3 py-2 text-sm text-gray-400' },
+        options.length ? 'No matches' : 'Nothing to pick from yet — add one in Operations → Inventory first'
+      ));
     }
     filtered.slice(0, 50).forEach(o => {
       dropdown.append(el('div', {

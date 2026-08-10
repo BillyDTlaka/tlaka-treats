@@ -135,6 +135,39 @@ describe('Product routes', () => {
       expect(res.body.name).toBe('Lemon Scones')
     })
 
+    it('PROD-13 — creating an INGREDIENT product also creates its StockItem, so it can be picked as a recipe ingredient right away', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([ADMIN_PERMISSION])
+      const created = makeProduct({ id: 'product-2', name: 'Vanilla Essence', classification: 'INGREDIENT', uomId: 'uom-1' })
+      prisma.product.create.mockResolvedValueOnce(created)
+      prisma.stockItem.create.mockResolvedValueOnce({})
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .post('/products')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Vanilla Essence', classification: 'INGREDIENT', uomId: 'uom-1' })
+
+      expect(res.status).toBe(201)
+      expect(prisma.stockItem.create).toHaveBeenCalledWith({
+        data: { productId: 'product-2', name: 'Vanilla Essence', uomId: 'uom-1' },
+      })
+    })
+
+    it('PROD-14 — creating a SELLABLE product does not create a StockItem (finished goods get theirs lazily at packaging time)', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([ADMIN_PERMISSION])
+      const created = makeProduct({ name: 'Lemon Scones', classification: 'SELLABLE' })
+      prisma.product.create.mockResolvedValueOnce(created)
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .post('/products')
+        .set('Authorization', `Bearer ${token}`)
+        .send(newProduct)
+
+      expect(res.status).toBe(201)
+      expect(prisma.stockItem.create).not.toHaveBeenCalled()
+    })
+
     it('PROD-03 — customer cannot create products (403)', async () => {
       prisma.permission.findMany.mockResolvedValueOnce([])
 
