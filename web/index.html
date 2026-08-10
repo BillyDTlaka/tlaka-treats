@@ -509,6 +509,58 @@ function badge(text, color) {
   return b;
 }
 
+// A type-to-filter combobox — replaces a plain <select> for long lists (stock
+// items, products, etc.) where scrolling a native dropdown is painful. Returns
+// a DOM node with ._getValue()/._setOptions() attached for callers that need
+// to read the current selection or refresh the option list in place.
+function makeSearchableSelect({ options, value, getLabel, getValue, onChange, placeholder }) {
+  const wrap = el('div', { className: 'relative' });
+  const input = el('input', {
+    type: 'text',
+    placeholder: placeholder || 'Search…',
+    className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand',
+  });
+  const dropdown = el('div', { className: 'hidden absolute z-30 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto' });
+
+  let selectedId = value || '';
+
+  function labelFor(id) {
+    const found = options.find(o => getValue(o) === id);
+    return found ? getLabel(found) : '';
+  }
+  input.value = labelFor(selectedId);
+
+  function renderOptions(filterText) {
+    dropdown.innerHTML = '';
+    const q = (filterText || '').trim().toLowerCase();
+    const filtered = q ? options.filter(o => getLabel(o).toLowerCase().includes(q)) : options;
+    if (!filtered.length) {
+      dropdown.append(el('div', { className: 'px-3 py-2 text-sm text-gray-400' }, 'No matches'));
+    }
+    filtered.slice(0, 50).forEach(o => {
+      dropdown.append(el('div', {
+        className: 'px-3 py-2 text-sm hover:bg-brand-light cursor-pointer truncate',
+        onClick: () => {
+          selectedId = getValue(o);
+          input.value = getLabel(o);
+          dropdown.classList.add('hidden');
+          onChange(selectedId, o);
+        },
+      }, getLabel(o)));
+    });
+    dropdown.classList.remove('hidden');
+  }
+
+  input.addEventListener('focus', () => { input.select(); renderOptions(''); });
+  input.addEventListener('input', () => renderOptions(input.value));
+  document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) dropdown.classList.add('hidden'); });
+
+  wrap.append(input, dropdown);
+  wrap._getValue = () => selectedId;
+  wrap._setOptions = (newOptions) => { options = newOptions; };
+  return wrap;
+}
+
 function toast(msg, type = 'error') {
   const t = document.createElement('div');
   t.className = `fixed top-4 right-4 z-50 px-5 py-3 rounded-xl text-white font-semibold shadow-lg fade-in`;
@@ -7983,13 +8035,15 @@ function renderAdminRecipes(data, container, reload) {
   const { recipes = [], stockItems = [], products = [] } = data;
   let searchQ = '';
   let detailRecipe = null;
+  let showEditor = false;
+  let editorRecipe = null; // null = create mode, object = edit mode (only meaningful while showEditor is true)
 
   const page = el('div', {});
   container.append(page);
 
   // Refetches just this one recipe (with ingredients) and re-renders in place —
-  // used after Edit Recipe / Edit Ingredients so the detail view updates
-  // immediately instead of collapsing back to the list on a full reload.
+  // used after Edit Recipe so the detail view updates immediately instead of
+  // collapsing back to the list on a full reload.
   async function refreshDetail(id) {
     try {
       const fresh = await api.recipes.getById(id);
@@ -8002,6 +8056,7 @@ function renderAdminRecipes(data, container, reload) {
 
   function renderPage() {
     page.innerHTML = '';
+    if (showEditor) { renderEditorView(editorRecipe); return; }
     if (detailRecipe) { renderDetailView(detailRecipe); return; }
     renderListView();
   }
@@ -8032,9 +8087,7 @@ function renderAdminRecipes(data, container, reload) {
   });
   const addBtn = el('button', {
     className: 'bg-brand text-white text-sm font-bold px-4 py-2 rounded-xl hover:opacity-90',
-    // Land straight on the new recipe's detail page so adding ingredients is the
-    // obvious next step, instead of leaving the admin back on the bare list.
-    onClick: () => showRecipeForm(null, (saved) => { recipes.push(saved); detailRecipe = saved; renderPage(); }),
+    onClick: () => { showEditor = true; editorRecipe = null; renderPage(); },
   }, '+ New Recipe');
   toolbar.append(searchBox, addBtn);
   wrap.append(toolbar);
@@ -8077,126 +8130,135 @@ function renderAdminRecipes(data, container, reload) {
   page.append(wrap);
   }
 
-  function showRecipeForm(recipe, onDone) {
+  // ── EDITOR VIEW (create + edit, recipe details and ingredients together) ──
+  function renderEditorView(recipe) {
     const isEdit = !!recipe;
-    const modal = el('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4' });
-    const close = () => document.body.removeChild(modal);
+    const wrap = el('div', { className: 'p-6 max-w-3xl mx-auto' });
 
-    const inp = (type, ph, val, extra='') => el('input', { type, placeholder: ph, value: val??'', className: `w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3 ${extra}` });
-    const lbl = txt => el('p', { className: 'text-xs font-bold text-gray-500 uppercase tracking-wide mb-1' }, txt);
+    const lbl = txt => el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-2' }, txt);
+    const card = (...children) => el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100 mb-5' }, ...children);
+    const inp = (type, ph, val, extra='') => el('input', { type, placeholder: ph, value: val??'', className: `w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand ${extra}` });
 
-    const nameInp      = inp('text',   'Recipe name *',                    recipe?.name);
-    const yieldQty     = inp('number', 'Yield quantity per batch',         recipe?.yieldQty ?? '1');
-    yieldQty.step = '0.001';
-    const yieldUnt     = inp('text',   'Yield unit (e.g. loaves, pcs)',    recipe?.yieldUnit ?? 'batch');
-    const notesInp     = el('textarea', { placeholder: 'Internal notes (allergens, tips, storage…)', rows: 2, className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3 resize-none' });
+    // Header
+    wrap.append(
+      el('div', { className: 'flex items-center gap-2 mb-5' },
+        el('button', {
+          className: 'flex items-center gap-1 text-sm font-semibold text-gray-500 hover:text-gray-900 transition',
+          onClick: () => { showEditor = false; if (isEdit) detailRecipe = recipe; renderPage(); },
+        }, '← Cancel'),
+        el('span', { className: 'text-gray-300' }, '/'),
+        el('span', { className: 'text-sm font-black text-gray-900' }, isEdit ? `Edit ${recipe.name}` : 'New Recipe'),
+      )
+    );
+
+    // Recipe details
+    const nameInp  = inp('text', 'Recipe name *', recipe?.name);
+    const yieldQty = inp('number', 'Yield quantity per batch', recipe?.yieldQty ?? '1'); yieldQty.step = '0.001';
+    const yieldUnt = inp('text', 'Yield unit (e.g. loaves, pcs)', recipe?.yieldUnit ?? 'batch');
+    const notesInp = el('textarea', { placeholder: 'Internal notes (allergens, tips, storage…)', rows: 2, className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand resize-none' });
     if (recipe?.notes) notesInp.value = recipe.notes;
-    const instrInp     = el('textarea', { placeholder: 'Step-by-step preparation instructions…\n\n1. Preheat oven to 180°C\n2. Mix dry ingredients…', rows: 6, className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3 resize-none font-mono text-xs' });
-    if (recipe?.instructions) instrInp.value = recipe.instructions;
+    wrap.append(card(
+      lbl('Recipe Details'),
+      el('div', { className: 'mb-3' }, nameInp),
+      el('div', { className: 'grid grid-cols-2 gap-3 mb-3' }, yieldQty, yieldUnt),
+      notesInp,
+    ));
 
-    // Output product selector
+    // Instructions
+    const instrInp = el('textarea', { placeholder: 'Step-by-step preparation instructions…\n\n1. Preheat oven to 180°C\n2. Mix dry ingredients…', rows: 6, className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand resize-none font-mono text-xs' });
+    if (recipe?.instructions) instrInp.value = recipe.instructions;
+    wrap.append(card(lbl('Instructions / Method'), instrInp));
+
+    // Ingredients — the field that used to be missing entirely from creation
+    let lineItems = (recipe?.ingredients || []).map(i => ({ stockItemId: i.stockItemId, quantity: String(i.quantity), unit: i.unit || '' }));
+    const linesDiv = el('div', { className: 'space-y-2 mb-3' });
+    function renderLines() {
+      linesDiv.innerHTML = '';
+      if (!lineItems.length) {
+        linesDiv.append(el('p', { className: 'text-sm text-gray-400 italic' }, 'No ingredients yet — add one below.'));
+      }
+      lineItems.forEach((item, idx) => {
+        const unitLabel = el('span', { className: 'w-14 flex-shrink-0 text-xs text-gray-400 text-center' }, item.unit || '');
+        const stockPicker = makeSearchableSelect({
+          options: stockItems,
+          value: item.stockItemId,
+          getLabel: s => `${s.name} (${s.uom?.abbreviation || s.unit || ''})`,
+          getValue: s => s.id,
+          placeholder: 'Search ingredient…',
+          onChange: (id, s) => {
+            lineItems[idx].stockItemId = id;
+            lineItems[idx].unit = s?.uom?.abbreviation || s?.unit || '';
+            unitLabel.textContent = lineItems[idx].unit;
+          },
+        });
+        const qtyInp = el('input', { type: 'number', step: '0.001', placeholder: 'Qty', value: item.quantity, className: 'w-20 flex-shrink-0 border border-gray-200 rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-brand' });
+        qtyInp.addEventListener('input', () => { lineItems[idx].quantity = qtyInp.value; });
+        const delBtn = el('button', { className: 'text-red-400 hover:text-red-600 font-bold px-1 flex-shrink-0', onClick: () => { lineItems.splice(idx, 1); renderLines(); } }, '×');
+        linesDiv.append(el('div', { className: 'flex gap-2 items-center' }, el('div', { className: 'flex-1' }, stockPicker), qtyInp, unitLabel, delBtn));
+      });
+    }
+    renderLines();
+    const addLineBtn = el('button', { className: 'text-xs font-bold text-brand hover:opacity-80', onClick: () => {
+      lineItems.push({ stockItemId: '', quantity: '', unit: '' });
+      renderLines();
+    }}, '+ Add Ingredient');
+    wrap.append(card(lbl('Ingredients'), linesDiv, addLineBtn));
+
+    // Packaging output
     const sellableProducts = products.filter(p => p.classification === 'SELLABLE' && p.isActive);
-    const outputProdSel = el('select', { className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
-    [{ id: '', name: '— Output Product (optional) —' }, ...sellableProducts].forEach(p => {
-      const o = document.createElement('option'); o.value = p.id; o.textContent = p.name;
-      if (recipe?.outputProductId === p.id) o.selected = true;
-      outputProdSel.append(o);
+    const outputProdPicker = makeSearchableSelect({
+      options: sellableProducts,
+      value: recipe?.outputProductId || '',
+      getLabel: p => p.name,
+      getValue: p => p.id,
+      placeholder: '— Output Product (optional) —',
+      onChange: () => {},
     });
-    const yieldPerBatch = inp('number', 'Sellable units produced per batch', recipe?.yieldPerBatch ?? '0');
-    yieldPerBatch.step = '0.001'; yieldPerBatch.min = '0';
+    const yieldPerBatch = inp('number', 'Sellable units produced per batch', recipe?.yieldPerBatch ?? '0'); yieldPerBatch.step = '0.001'; yieldPerBatch.min = '0';
+    wrap.append(card(
+      lbl('Packaging Output (links recipe to inventory)'),
+      el('div', { className: 'mb-3' }, outputProdPicker),
+      yieldPerBatch,
+    ));
 
     const saveBtn = el('button', {
       className: 'w-full bg-brand text-white font-black py-2.5 rounded-xl hover:opacity-90',
       onClick: async () => {
         if (!nameInp.value.trim()) { toast('Name required', 'error'); return; }
         saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+        const ingredients = lineItems
+          .filter(l => l.stockItemId && l.quantity)
+          .map(l => ({ stockItemId: l.stockItemId, quantity: parseFloat(l.quantity), unit: l.unit || undefined }));
         const payload = {
           name: nameInp.value.trim(),
-          yieldQty: parseFloat(yieldQty.value)||1,
-          yieldUnit: yieldUnt.value.trim()||'batch',
-          outputProductId: outputProdSel.value || undefined,
-          yieldPerBatch: parseFloat(yieldPerBatch.value)||0,
-          notes: notesInp.value.trim()||undefined,
-          instructions: instrInp.value.trim()||undefined,
+          yieldQty: parseFloat(yieldQty.value) || 1,
+          yieldUnit: yieldUnt.value.trim() || 'batch',
+          outputProductId: outputProdPicker._getValue() || undefined,
+          yieldPerBatch: parseFloat(yieldPerBatch.value) || 0,
+          notes: notesInp.value.trim() || undefined,
+          instructions: instrInp.value.trim() || undefined,
         };
         try {
-          const saved = isEdit ? await api.recipes.update(recipe.id, payload) : await api.recipes.create(payload);
-          toast(isEdit ? 'Recipe updated' : 'Recipe created', 'success'); close(); onDone(saved);
-        } catch(err) { toast(err?.message||'Failed','error'); saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
-      }
+          if (isEdit) {
+            await api.recipes.update(recipe.id, payload);
+            await api.recipes.setIngredients(recipe.id, { ingredients });
+            toast('Recipe updated', 'success');
+            showEditor = false;
+            await refreshDetail(recipe.id);
+          } else {
+            const saved = await api.recipes.create({ ...payload, ingredients });
+            toast('Recipe created', 'success');
+            recipes.push(saved);
+            showEditor = false;
+            detailRecipe = saved;
+            renderPage();
+          }
+        } catch (err) { toast(err?.message || 'Failed', 'error'); saveBtn.disabled = false; saveBtn.textContent = 'Save Recipe'; }
+      },
     }, 'Save Recipe');
+    wrap.append(saveBtn);
 
-    modal.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto' },
-      el('div', { className: 'flex items-center justify-between mb-4' },
-        el('h3', { className: 'font-black text-gray-900 text-lg' }, isEdit ? 'Edit Recipe' : 'New Recipe'),
-        el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×')
-      ),
-      lbl('Recipe Details'),
-      nameInp,
-      el('div', { className: 'grid grid-cols-2 gap-3' }, yieldQty, yieldUnt),
-      notesInp,
-      lbl('Instructions / Method'),
-      instrInp,
-      lbl('Packaging Output (links recipe to inventory)'),
-      outputProdSel, yieldPerBatch,
-      saveBtn,
-    ));
-    modal.addEventListener('click', e => { if (e.target === modal) close(); });
-    document.body.appendChild(modal);
-  }
-
-  function showIngredientsForm(recipe, onDone) {
-    const modal = el('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4' });
-    const close = () => document.body.removeChild(modal);
-    const lineItems = recipe.ingredients?.map(i => ({ stockItemId: i.stockItemId, quantity: String(i.quantity), unit: i.unit, notes: i.notes || '' })) || [];
-
-    const linesDiv = el('div', { className: 'space-y-2 mb-4 max-h-64 overflow-y-auto' });
-    function renderLines() {
-      linesDiv.innerHTML = '';
-      lineItems.forEach((item, idx) => {
-        const stockSel = el('select', { className: 'flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand' });
-        stockItems.forEach(s => { const o = document.createElement('option'); o.value = s.id; o.textContent = `${s.name} (${s.uom?.abbreviation || s.unit || ''})`; if (s.id === item.stockItemId) o.selected = true; stockSel.append(o); });
-        const qtyInp  = el('input', { type: 'number', step: '0.001', placeholder: 'Qty', value: item.quantity, className: 'w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand' });
-        qtyInp.addEventListener('input', () => { lineItems[idx].quantity = qtyInp.value; });
-        const unitInp = el('input', { type: 'text', placeholder: 'Unit', readOnly: true, value: item.unit, className: 'w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-gray-50 text-gray-500 cursor-default' });
-        stockSel.addEventListener('change', () => {
-          lineItems[idx].stockItemId = stockSel.value;
-          const found = stockItems.find(s => s.id === stockSel.value);
-          const uom = found?.uom?.abbreviation || found?.unit || '';
-          unitInp.value = uom;
-          lineItems[idx].unit = uom;
-        });
-        const delBtn  = el('button', { className: 'text-red-400 hover:text-red-600 font-bold', onClick: () => { lineItems.splice(idx, 1); renderLines(); } }, '×');
-        linesDiv.append(el('div', { className: 'flex gap-2 items-center' }, stockSel, qtyInp, unitInp, delBtn));
-      });
-    }
-    renderLines();
-
-    const addLineBtn = el('button', { className: 'text-xs font-bold text-brand mb-4 hover:opacity-80', onClick: () => {
-      const firstStock = stockItems[0];
-      lineItems.push({ stockItemId: firstStock?.id || '', quantity: '', unit: firstStock?.uom?.abbreviation || firstStock?.unit || '', notes: '' });
-      renderLines();
-    }}, '+ Add Ingredient');
-
-    const saveBtn = el('button', {
-      className: 'w-full bg-brand text-white font-black py-2.5 rounded-xl hover:opacity-90',
-      onClick: async () => {
-        const valid = lineItems.filter(l => l.stockItemId && l.quantity);
-        if (!valid.length) { toast('Add at least one ingredient', 'error'); return; }
-        saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
-        try {
-          await api.recipes.setIngredients(recipe.id, { ingredients: valid.map(l => ({ stockItemId: l.stockItemId, quantity: parseFloat(l.quantity), unit: l.unit || undefined })) });
-          toast('Ingredients saved', 'success'); close(); onDone();
-        } catch(err) { toast(err?.message||'Failed','error'); saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
-      }
-    }, 'Save Ingredients');
-
-    modal.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto' },
-      el('div', { className: 'flex items-center justify-between mb-4' }, el('h3', { className: 'font-black text-gray-900' }, `Ingredients: ${recipe.name}`), el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×')),
-      linesDiv, addLineBtn, saveBtn,
-    ));
-    modal.addEventListener('click', e => { if (e.target === modal) close(); });
-    document.body.appendChild(modal);
+    page.append(wrap);
   }
 
   // ── DETAIL VIEW ──────────────────────────────────────────────────────────
@@ -8220,12 +8282,8 @@ function renderAdminRecipes(data, container, reload) {
             : el('span', { className: 'text-xs font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500' }, 'Inactive'),
           el('button', {
             className: 'px-3 py-1.5 bg-blue-100 text-blue-700 text-sm font-bold rounded-xl hover:bg-blue-200 transition',
-            onClick: () => showRecipeForm(recipe, () => refreshDetail(recipe.id)),
+            onClick: () => { showEditor = true; editorRecipe = recipe; renderPage(); },
           }, '✏️ Edit Recipe'),
-          el('button', {
-            className: 'px-3 py-1.5 bg-purple-100 text-purple-700 text-sm font-bold rounded-xl hover:bg-purple-200 transition',
-            onClick: () => showIngredientsForm(recipe, () => refreshDetail(recipe.id)),
-          }, '🧪 Edit Ingredients'),
           el('button', {
             className: `px-3 py-1.5 text-sm font-bold rounded-xl transition ${recipe.isActive ? 'bg-gray-100 text-gray-600 hover:bg-gray-200' : 'bg-green-100 text-green-700 hover:bg-green-200'}`,
             onClick: async () => {
@@ -8320,7 +8378,7 @@ function renderAdminRecipes(data, container, reload) {
           el('p', { className: 'text-sm text-gray-400 mb-3' }, 'No ingredients defined yet.'),
           el('button', {
             className: 'text-xs font-bold text-brand px-3 py-1.5 rounded-lg bg-brand/10',
-            onClick: () => showIngredientsForm(recipe, () => refreshDetail(recipe.id)),
+            onClick: () => { showEditor = true; editorRecipe = recipe; renderPage(); },
           }, '🧪 Add Ingredients')
         )
       );
