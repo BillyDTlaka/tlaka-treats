@@ -216,6 +216,22 @@ export class ProductService {
       const primary = data.images.find(i => i.isPrimary)?.url ?? data.images[0]?.url
       if (primary && !data.imageUrl) updateData.imageUrl = primary
     }
-    return (this.prisma as any).product.update({ where: { id }, data: updateData })
+    const updated = await (this.prisma as any).product.update({ where: { id }, data: updateData })
+
+    // StockItem.name/uomId are copied from the Product at creation time (see create()
+    // above) rather than always read live through the relation, so a rename or UOM
+    // change here would otherwise go stale on the ingredient picker and cost
+    // breakdown until someone happened to re-touch the stock item directly.
+    if (data.name !== undefined || data.uomId !== undefined) {
+      await (this.prisma as any).stockItem.updateMany({
+        where: { productId: id },
+        data: {
+          ...(data.name !== undefined ? { name: updated.name } : {}),
+          ...(data.uomId !== undefined ? { uomId: updateData.uomId || null } : {}),
+        },
+      })
+    }
+
+    return updated
   }
 }

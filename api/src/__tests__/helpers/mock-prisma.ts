@@ -108,6 +108,7 @@ export function createMockPrisma() {
     stockItem: {
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     // Prisma transaction support — handles both array and callback forms
     $transaction: jest.fn((arg: any) =>

@@ -204,6 +204,57 @@ describe('Product routes', () => {
       expect(res.status).toBe(200)
       expect(res.body.name).toBe('Updated Name')
     })
+
+    it('PROD-15 — changing a product\'s UOM also updates its linked StockItem, so the recipe ingredient picker doesn\'t show a stale unit', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'product' }])
+      prisma.product.findUnique.mockResolvedValueOnce(makeProduct({ name: 'Margarine', uomId: 'uom-old' }))
+      prisma.product.update.mockResolvedValueOnce(makeProduct({ name: 'Margarine', uomId: 'uom-kg' }))
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .patch('/products/product-1')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ uomId: 'uom-kg' })
+
+      expect(res.status).toBe(200)
+      expect(prisma.stockItem.updateMany).toHaveBeenCalledWith({
+        where: { productId: 'product-1' },
+        data: { uomId: 'uom-kg' },
+      })
+    })
+
+    it('PROD-16 — renaming a product also updates its linked StockItem\'s name', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'product' }])
+      prisma.product.findUnique.mockResolvedValueOnce(makeProduct())
+      prisma.product.update.mockResolvedValueOnce(makeProduct({ name: 'Renamed Margarine' }))
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .patch('/products/product-1')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Renamed Margarine' })
+
+      expect(res.status).toBe(200)
+      expect(prisma.stockItem.updateMany).toHaveBeenCalledWith({
+        where: { productId: 'product-1' },
+        data: { name: 'Renamed Margarine' },
+      })
+    })
+
+    it('PROD-17 — updating unrelated fields does not touch the StockItem at all', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'product' }])
+      prisma.product.findUnique.mockResolvedValueOnce(makeProduct())
+      prisma.product.update.mockResolvedValueOnce(makeProduct({ brand: 'New Brand' }))
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .patch('/products/product-1')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ brand: 'New Brand' })
+
+      expect(res.status).toBe(200)
+      expect(prisma.stockItem.updateMany).not.toHaveBeenCalled()
+    })
   })
 
   // ── POST /products/:id/variants ───────────────────────────────────────────
