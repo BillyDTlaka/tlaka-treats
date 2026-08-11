@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from 'fastify'
 import { authenticate, authorize } from '../../shared/middleware/auth'
+import { AppError, NotFoundError } from '../../shared/errors'
 
 const productionRoutes: FastifyPluginAsync = async (fastify) => {
   const db = fastify.prisma as any
@@ -28,13 +29,15 @@ const productionRoutes: FastifyPluginAsync = async (fastify) => {
         stockMovements: { include: { stockItem: { select: { id: true, name: true, unit: true } } } },
       },
     })
-    if (!run) throw { statusCode: 404, message: 'Production run not found' }
+    if (!run) throw new NotFoundError('Production run')
     return run
   })
 
   // ── POST /production ─── Create a new production run
   fastify.post('/', { preHandler: [authenticate, authorize('manage', 'product')] }, async (req, reply) => {
     const { recipeId, batches, plannedDate, notes } = req.body as any
+    if (!recipeId) throw new AppError('recipeId is required', 400)
+    if (batches != null && Number(batches) <= 0) throw new AppError('batches must be greater than 0', 400)
     const run = await db.productionRun.create({
       data: {
         recipeId,
@@ -68,14 +71,29 @@ const productionRoutes: FastifyPluginAsync = async (fastify) => {
     const run = await db.productionRun.findUnique({
       where: { id },
       include: {
-        recipe: { include: { ingredients: true } },
+        recipe: { include: { ingredients: { include: { stockItem: true } } } },
       },
     })
-    if (!run) throw { statusCode: 404, message: 'Production run not found' }
-    if (run.status === 'COMPLETED') throw { statusCode: 400, message: 'Run already completed' }
-    if (run.status === 'CANCELLED') throw { statusCode: 400, message: 'Run is cancelled' }
+    if (!run) throw new NotFoundError('Production run')
+    if (run.status === 'COMPLETED') throw new AppError('Run already completed', 400)
+    if (run.status === 'CANCELLED') throw new AppError('Run is cancelled', 400)
 
     const batches = Number(run.batches)
+
+    // Refuse to push stock negative — the ingredient panel already shows a "✗ Short"
+    // warning per item before this point, so this is the backend actually enforcing it
+    // rather than only decorating it.
+    const shortages = run.recipe.ingredients
+      .map((ing: any) => ({
+        name: ing.stockItem.name,
+        need: Number(ing.quantity) * batches,
+        have: Number(ing.stockItem.currentStock),
+      }))
+      .filter((s: any) => s.have < s.need)
+    if (shortages.length) {
+      const detail = shortages.map((s: any) => `${s.name} (need ${s.need}, have ${s.have})`).join(', ')
+      throw new AppError(`Not enough stock to complete this run: ${detail}`, 400)
+    }
 
     // Deduct each ingredient × batches from stock
     for (const ingredient of run.recipe.ingredients) {

@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from 'fastify'
 import { authenticate, authorize } from '../../shared/middleware/auth'
+import { AppError, NotFoundError } from '../../shared/errors'
 
 const packagingRoutes: FastifyPluginAsync = async (fastify) => {
   const db = fastify.prisma as any
@@ -39,7 +40,7 @@ const packagingRoutes: FastifyPluginAsync = async (fastify) => {
         items: { include: { stockItem: true } },
       },
     })
-    if (!run) throw { statusCode: 404, message: 'Packaging run not found' }
+    if (!run) throw new NotFoundError('Packaging run')
     return run
   })
 
@@ -89,9 +90,9 @@ const packagingRoutes: FastifyPluginAsync = async (fastify) => {
         items: true,
       },
     })
-    if (!run) throw { statusCode: 404, message: 'Packaging run not found' }
-    if (run.status === 'COMPLETED') throw { statusCode: 400, message: 'Packaging run already completed' }
-    if (run.status === 'CANCELLED') throw { statusCode: 400, message: 'Packaging run is cancelled' }
+    if (!run) throw new NotFoundError('Packaging run')
+    if (run.status === 'COMPLETED') throw new AppError('Packaging run already completed', 400)
+    if (run.status === 'CANCELLED') throw new AppError('Packaging run is cancelled', 400)
 
     const recipe = run.productionRun.recipe
     const batchCount = run.batchCount

@@ -110,6 +110,18 @@ export function createMockPrisma() {
       update: jest.fn(),
       updateMany: jest.fn(),
     },
+    productionRun: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    packagingRun: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+    },
     // Prisma transaction support — handles both array and callback forms
     $transaction: jest.fn((arg: any) =>
       Array.isArray(arg) ? Promise.all(arg) : arg(mock)

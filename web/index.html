@@ -125,9 +125,13 @@ const headers = () => ({
 });
 
 const req = async (method, path, body) => {
+  // Only send Content-Type: application/json when there's actually a body — Fastify's
+  // JSON parser rejects a request that declares that header but sends no body at all,
+  // which silently turned every body-less POST (e.g. .../complete, .../retry actions)
+  // into a generic 500 "Something went wrong" instead of doing anything.
   const res = await fetch(API_BASE + path, {
     method,
-    headers: headers(),
+    headers: body ? headers() : { ...(token() ? { Authorization: `Bearer ${token()}` } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
@@ -562,6 +566,29 @@ function makeSearchableSelect({ options, value, getLabel, getValue, onChange, pl
   wrap._setOptions = (newOptions) => { options = newOptions; };
   wrap._setValue = (id) => { selectedId = id; input.value = labelFor(id); };
   return wrap;
+}
+
+// In-app confirm modal — used instead of the native window.confirm(), which blocks
+// the whole page (and, worse, hangs any browser-automation session driving it) until
+// a human physically clicks it. Matches the styling of the rest of the app's modals.
+function showConfirm({ title = 'Are you sure?', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false } = {}, onConfirm) {
+  const modal = el('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4' });
+  const close = () => document.body.removeChild(modal);
+  const confirmBtn = el('button', {
+    className: `flex-1 text-white font-black py-2.5 rounded-xl hover:opacity-90 ${danger ? 'bg-red-500' : 'bg-brand'}`,
+    onClick: () => { close(); onConfirm(); },
+  }, confirmLabel);
+  const cancelBtn = el('button', {
+    className: 'flex-1 bg-white border border-gray-200 text-gray-600 font-bold py-2.5 rounded-xl hover:bg-gray-50',
+    onClick: close,
+  }, cancelLabel);
+  modal.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl' },
+    el('h3', { className: 'font-black text-gray-900 text-lg mb-2' }, title),
+    message ? el('p', { className: 'text-sm text-gray-500 mb-5' }, message) : null,
+    el('div', { className: 'flex gap-2' }, cancelBtn, confirmBtn),
+  ));
+  modal.addEventListener('click', e => { if (e.target === modal) close(); });
+  document.body.appendChild(modal);
 }
 
 function toast(msg, type = 'error') {
@@ -8363,13 +8390,22 @@ function renderAdminRecipes(data, container, reload) {
 
     // Recipe details
     const nameInp  = inp('text', 'Recipe name *', recipe?.name);
-    const yieldQty = inp('number', 'Yield quantity per batch', recipe?.yieldQty ?? '1'); yieldQty.step = '0.001';
-    const yieldUnt = inp('text', 'Yield unit (e.g. loaves, pcs)', recipe?.yieldUnit ?? 'batch');
+    // A single "how much does one batch make" number drives both the display yield
+    // (yieldQty/yieldUnit) and the packaging→inventory math (yieldPerBatch) — these
+    // used to be two separate inputs that defaulted to "1"/"batch" and were easy to
+    // leave unchanged, which is how production runs ended up showing meaningless text
+    // like "yields 1.00 batch" instead of "yields 40 scones". Left blank here (not
+    // pre-filled) so a real number has to be typed in.
+    const existingYield = recipe && Number(recipe.yieldPerBatch) > 0 ? recipe.yieldPerBatch : (recipe && Number(recipe.yieldQty) > 1 ? recipe.yieldQty : '');
+    const yieldQty = inp('number', 'e.g. 40', existingYield); yieldQty.step = '0.001'; yieldQty.min = '0.001';
+    const existingUnit = recipe?.yieldUnit && recipe.yieldUnit !== 'batch' ? recipe.yieldUnit : '';
+    const yieldUnt = inp('text', 'e.g. scones, loaves, cakes', existingUnit);
     const notesInp = el('textarea', { placeholder: 'Internal notes (allergens, tips, storage…)', rows: 2, className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand resize-none' });
     if (recipe?.notes) notesInp.value = recipe.notes;
     wrap.append(card(
       lbl('Recipe Details'),
       el('div', { className: 'mb-3' }, nameInp),
+      el('p', { className: 'text-xs text-gray-400 mb-1' }, 'How many units does one batch produce?'),
       el('div', { className: 'grid grid-cols-2 gap-3 mb-3' }, yieldQty, yieldUnt),
       notesInp,
     ));
@@ -8424,27 +8460,29 @@ function renderAdminRecipes(data, container, reload) {
       placeholder: '— Output Product (optional) —',
       onChange: () => {},
     });
-    const yieldPerBatch = inp('number', 'Sellable units produced per batch', recipe?.yieldPerBatch ?? '0'); yieldPerBatch.step = '0.001'; yieldPerBatch.min = '0';
     wrap.append(card(
       lbl('Packaging Output (links recipe to inventory)'),
-      el('div', { className: 'mb-3' }, outputProdPicker),
-      yieldPerBatch,
+      el('div', { className: 'mb-2' }, outputProdPicker),
+      el('p', { className: 'text-xs text-gray-400' }, 'When packaging is completed, the batch yield above is added to this product\'s stock.'),
     ));
 
     const saveBtn = el('button', {
       className: 'w-full bg-brand text-white font-black py-2.5 rounded-xl hover:opacity-90',
       onClick: async () => {
         if (!nameInp.value.trim()) { toast('Name required', 'error'); return; }
+        const yieldNum = parseFloat(yieldQty.value);
+        if (!yieldNum || yieldNum <= 0) { toast('Enter how many units one batch produces', 'error'); return; }
+        if (!yieldUnt.value.trim()) { toast('Enter a unit label (e.g. scones, loaves)', 'error'); return; }
         saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
         const ingredients = lineItems
           .filter(l => l.stockItemId && l.quantity)
           .map(l => ({ stockItemId: l.stockItemId, quantity: parseFloat(l.quantity), unit: l.unit || undefined }));
         const payload = {
           name: nameInp.value.trim(),
-          yieldQty: parseFloat(yieldQty.value) || 1,
-          yieldUnit: yieldUnt.value.trim() || 'batch',
+          yieldQty: yieldNum,
+          yieldUnit: yieldUnt.value.trim(),
           outputProductId: outputProdPicker._getValue() || undefined,
-          yieldPerBatch: parseFloat(yieldPerBatch.value) || 0,
+          yieldPerBatch: yieldNum,
           notes: notesInp.value.trim() || undefined,
           instructions: instrInp.value.trim() || undefined,
         };
@@ -8505,17 +8543,15 @@ function renderAdminRecipes(data, container, reload) {
       )
     );
 
-    // Info grid
+    // Info grid — yieldQty/yieldUnit and yieldPerBatch are always kept equal by the
+    // editor now (a single "units per batch" input drives both), so only one yield
+    // tile is shown instead of two overlapping ones.
     const outputProduct = products.find(p => p.id === recipe.outputProductId);
     wrap.append(
-      el('div', { className: 'grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5' },
+      el('div', { className: 'grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5' },
         el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
           el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-1' }, 'Yield per Batch'),
-          el('p', { className: 'text-sm text-gray-800 font-semibold' }, `${Number(recipe.yieldQty).toFixed(3)} ${recipe.yieldUnit}`)
-        ),
-        el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
-          el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-1' }, 'Sellable Units / Batch'),
-          el('p', { className: 'text-sm text-gray-800 font-semibold' }, recipe.yieldPerBatch ? Number(recipe.yieldPerBatch).toFixed(0) : '—')
+          el('p', { className: 'text-sm text-gray-800 font-semibold' }, `${Number(recipe.yieldQty).toFixed(recipe.yieldQty % 1 === 0 ? 0 : 3)} ${recipe.yieldUnit}`)
         ),
         el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
           el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-1' }, 'Output Product'),
@@ -8693,14 +8729,28 @@ function renderAdminProduction(data, container, reload) {
           }, '▶ Start') : null,
           run.status === 'IN_PROGRESS' ? el('button', {
             className: 'text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-lg hover:bg-green-200',
-            onClick: async () => {
-              if (!confirm(`Complete "${run.recipe?.name}"? This will deduct ingredients from stock and create a packaging run.`)) return;
-              try { await api.production.complete(run.id); toast('Production completed — packaging run created ✅','success'); reload(); } catch(e) { toast(e?.message||'Failed','error'); }
+            onClick: () => {
+              showConfirm({
+                title: 'Complete this production run?',
+                message: `This will deduct ingredients for "${run.recipe?.name}" from stock and create a packaging run.`,
+                confirmLabel: 'Complete Run',
+              }, async () => {
+                try { await api.production.complete(run.id); toast('Production completed — packaging run created ✅','success'); reload(); } catch(e) { toast(e?.message||'Failed','error'); }
+              });
             }
           }, '✅ Done') : null,
           !['COMPLETED','CANCELLED'].includes(run.status) ? el('button', {
             className: 'text-xs font-bold bg-red-100 text-red-500 px-2 py-1 rounded-lg hover:bg-red-200',
-            onClick: async () => { if (!confirm('Cancel this run?')) return; try { await api.production.update(run.id, { status: 'CANCELLED' }); toast('Run cancelled','success'); reload(); } catch(e) { toast(e?.message||'Failed','error'); } }
+            onClick: () => {
+              showConfirm({
+                title: 'Cancel this run?',
+                message: 'This cannot be undone.',
+                confirmLabel: 'Cancel Run',
+                danger: true,
+              }, async () => {
+                try { await api.production.update(run.id, { status: 'CANCELLED' }); toast('Run cancelled','success'); reload(); } catch(e) { toast(e?.message||'Failed','error'); }
+              });
+            }
           }, '✕') : null,
         ].filter(Boolean)),
       );
@@ -8770,14 +8820,19 @@ function renderAdminProduction(data, container, reload) {
             if (pr.status === 'IN_PROGRESS') {
               const completeBtn = el('button', {
                 className: 'text-xs font-bold bg-green-500 text-white px-3 py-1 rounded-lg hover:bg-green-600',
-                onClick: async () => {
-                  if (!confirm('Complete packaging? This will add finished goods to inventory.')) return;
-                  try {
-                    const result = await api.packaging.complete(pr.id);
-                    const units = result?.unitsProduced;
-                    toast(units ? `Packaging done — ${units} unit(s) added to inventory ✅` : 'Packaging completed ✅', 'success');
-                    reload();
-                  } catch(e) { toast(e?.message || 'Failed', 'error'); }
+                onClick: () => {
+                  showConfirm({
+                    title: 'Complete packaging?',
+                    message: 'This will add finished goods to inventory.',
+                    confirmLabel: 'Complete Packaging',
+                  }, async () => {
+                    try {
+                      const result = await api.packaging.complete(pr.id);
+                      const units = result?.unitsProduced;
+                      toast(units ? `Packaging done — ${units} unit(s) added to inventory ✅` : 'Packaging completed ✅', 'success');
+                      reload();
+                    } catch(e) { toast(e?.message || 'Failed', 'error'); }
+                  });
                 }
               }, '✅ Complete Packaging');
               btnRow.append(completeBtn);
