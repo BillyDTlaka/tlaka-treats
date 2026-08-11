@@ -33,6 +33,8 @@ const companyRoutes: FastifyPluginAsync = async (fastify) => {
         website:        body.website        ?? company.website,
         disabledModules: body.disabledModules !== undefined ? body.disabledModules : company.disabledModules,
         odooCommissionAccountCode: body.odooCommissionAccountCode !== undefined ? body.odooCommissionAccountCode : company.odooCommissionAccountCode,
+        odooCogsExpenseAccountCode: body.odooCogsExpenseAccountCode !== undefined ? body.odooCogsExpenseAccountCode : company.odooCogsExpenseAccountCode,
+        odooCogsClearingAccountCode: body.odooCogsClearingAccountCode !== undefined ? body.odooCogsClearingAccountCode : company.odooCogsClearingAccountCode,
       },
     })
   })

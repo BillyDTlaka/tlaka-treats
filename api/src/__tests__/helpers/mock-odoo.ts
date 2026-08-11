@@ -24,6 +24,7 @@ export function installMockOdoo() {
     templateAttributeValuesById: new Map<number, any>(),
     searchInvoiceResults: [] as any[],
     bankJournalId: 700,
+    generalJournalId: 701,
     nextPaymentWizardId: 4000,
     paymentWizardsById: new Map<number, any>(),
   }
@@ -181,14 +182,20 @@ export function installMockOdoo() {
         } else if (modelMethod === 'create') {
           const vals = methodArgs[0]
           const id = state.nextInvoiceId++
-          const amountTotal = (vals.invoice_line_ids || []).reduce((s: number, l: any) => s + l[2].quantity * l[2].price_unit, 0)
+          // invoice_line_ids (customer invoices / vendor bills) price by quantity × unit
+          // price; line_ids (plain journal entries, move_type 'entry') carry debit/credit
+          // directly — sum the debit side as the entry's total.
+          const amountTotal = vals.invoice_line_ids
+            ? (vals.invoice_line_ids || []).reduce((s: number, l: any) => s + l[2].quantity * l[2].price_unit, 0)
+            : (vals.line_ids || []).reduce((s: number, l: any) => s + (l[2].debit || 0), 0)
           const rec = {
             // Odoo leaves the invoice number sequence unassigned (returned as
             // boolean `false`, not a string) until the invoice is posted.
             id, name: false as string | false, state: 'draft', payment_state: 'not_paid',
             amount_untaxed: amountTotal, amount_tax: 0, amount_total: amountTotal,
-            partner_id: [vals.partner_id, ''], invoice_origin: vals.invoice_origin, ref: vals.ref,
-            invoice_date: vals.invoice_date,
+            partner_id: vals.partner_id ? [vals.partner_id, ''] : false,
+            invoice_origin: vals.invoice_origin, ref: vals.ref,
+            invoice_date: vals.invoice_date, move_type: vals.move_type, line_ids: vals.line_ids,
           }
           state.invoicesById.set(id, rec)
           result = id
@@ -212,7 +219,10 @@ export function installMockOdoo() {
           result = true
         }
       } else if (model === 'account.journal' && modelMethod === 'search_read') {
-        result = state.bankJournalId ? [{ id: state.bankJournalId }] : []
+        const domain = methodArgs[0]
+        const wantsGeneral = domain.some((c: any) => Array.isArray(c) && c[0] === 'type' && c[2] === 'general')
+        const journalId = wantsGeneral ? state.generalJournalId : state.bankJournalId
+        result = journalId ? [{ id: journalId }] : []
       } else if (model === 'account.payment.register') {
         if (modelMethod === 'create') {
           const kwargs = args[6] || {}

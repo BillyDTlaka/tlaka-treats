@@ -66,6 +66,11 @@ export function createMockPrisma() {
       deleteMany: jest.fn(),
       create: jest.fn(),
       createMany: jest.fn(),
+      update: jest.fn(),
+    },
+    recipe: {
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
     },
     orderStatusLog: {
       create: jest.fn(),
@@ -199,6 +204,13 @@ export function makeOrder(overrides: Record<string, any> = {}) {
     odooInvoiceStatus: 'NOT_READY',
     odooInvoiceSyncError: null,
     odooInvoiceSyncedAt: null,
+    cogsAmount: null,
+    cogsComputedAt: null,
+    odooCogsMoveId: null,
+    odooCogsMoveNumber: null,
+    odooCogsStatus: 'NOT_READY',
+    odooCogsSyncError: null,
+    odooCogsSyncedAt: null,
     createdAt: new Date(),
     items: [
       {
@@ -207,7 +219,8 @@ export function makeOrder(overrides: Record<string, any> = {}) {
         quantity: 2,
         unitPrice: 85,
         subtotal: 170,
-        variant: { id: 'variant-1', name: '12 Pack', odooProductId: null, odooProductReference: null, product: { name: 'Choc Chip Cookies' } },
+        unitCost: null,
+        variant: { id: 'variant-1', name: '12 Pack', odooProductId: null, odooProductReference: null, product: { id: 'product-1', name: 'Choc Chip Cookies' } },
       },
     ],
     ambassador: null,

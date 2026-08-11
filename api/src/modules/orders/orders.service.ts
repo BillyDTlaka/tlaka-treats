@@ -3,6 +3,7 @@ import { AppError, NotFoundError, ForbiddenError } from '../../shared/errors'
 import { sendOrderStatusEmail, sendOrderStatusWhatsApp } from '../../shared/services/notify.service'
 import { syncOrderInvoice, cancelOrderInvoice, OdooInvoiceSyncResult } from '../../shared/services/odoo-invoice.service'
 import { syncCommissionBill } from '../../shared/services/odoo-commission-bill.service'
+import { syncOrderCogs } from '../../shared/services/odoo-cogs.service'
 
 export class OrderService {
   constructor(private prisma: PrismaClient) {}
@@ -246,11 +247,13 @@ export class OrderService {
     // the sale is fulfilled, so it's matched to the sale rather than posted speculatively at
     // CONFIRMED (when the order could still fall through before delivery).
     let commissionOdoo: Awaited<ReturnType<typeof syncCommissionBill>> | undefined
+    let cogsOdoo: Awaited<ReturnType<typeof syncOrderCogs>> | undefined
     if (status === 'DELIVERED') {
       commissionOdoo = await syncCommissionBill(this.prisma, orderId)
+      cogsOdoo = await syncOrderCogs(this.prisma, orderId)
     }
 
-    return { ...updated, ...(odoo ? { odoo } : {}), ...(commissionOdoo ? { commissionOdoo } : {}) }
+    return { ...updated, ...(odoo ? { odoo } : {}), ...(commissionOdoo ? { commissionOdoo } : {}), ...(cogsOdoo ? { cogsOdoo } : {}) }
   }
 
   // Records a cash/EFT/manual-card payment against an order (there was previously no way

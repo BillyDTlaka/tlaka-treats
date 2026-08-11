@@ -338,6 +338,21 @@ model Order {
   odooPaymentSyncError  String?
   odooPaymentSyncedAt   DateTime?
 
+  // Cost of goods sold — computed from each item's recipe (ingredient cost ÷ yield),
+  // snapshotted here once (not live-recomputed) so it doesn't silently drift after the
+  // Odoo entry below is created. See order-cost.service.ts.
+  cogsAmount     Decimal?  @db.Decimal(10, 2)
+  cogsComputedAt DateTime?
+
+  // Odoo account.move (move_type: entry — a journal entry, not a bill; there's no vendor
+  // for an internal cost reclass) sync state, created once DELIVERED — same "cost of sale,
+  // matched to the fulfilled order" timing as the commission bill above.
+  odooCogsMoveId     Int?
+  odooCogsMoveNumber String?
+  odooCogsStatus     OdooInvoiceSyncStatus @default(NOT_READY)
+  odooCogsSyncError  String?
+  odooCogsSyncedAt   DateTime?
+
   customer   User        @relation(fields: [customerId], references: [id])
   ambassador Ambassador? @relation(fields: [ambassadorId], references: [id])
   address    Address?    @relation(fields: [addressId], references: [id])
@@ -356,6 +371,9 @@ model OrderItem {
   quantity  Int
   unitPrice Decimal @db.Decimal(10, 2)
   subtotal  Decimal @db.Decimal(10, 2)
+  // Ingredient cost per unit, snapshotted at the same time as Order.cogsAmount — null
+  // when this item's product has no linked recipe to cost it from.
+  unitCost  Decimal? @db.Decimal(10, 4)
 
   order   Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
   variant ProductVariant @relation(fields: [variantId], references: [id])
@@ -778,6 +796,12 @@ model Company {
   website        String?
   disabledModules String[] @default([])
   odooCommissionAccountCode String? // account.account code ambassador commission vendor bills post to
+  // Odoo COGS journal entry — two account.account codes for the balanced entry posted when
+  // an order is DELIVERED: debit the expense account (the cost actually incurred), credit
+  // the clearing account (reclassifying it out of the general ingredients bucket so it's
+  // matched to this specific sale) — see odoo-cogs.service.ts.
+  odooCogsExpenseAccountCode  String?
+  odooCogsClearingAccountCode String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }

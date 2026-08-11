@@ -168,6 +168,7 @@ const api = {
     updateStatus: (id, status, note) => req('PATCH', `/orders/${id}/status`, { status, ...(note ? { note } : {}) }),
     invoice:      (id)               => req('POST',  `/orders/${id}/invoice`),
     retryOdooInvoice: (id)           => req('POST',  `/orders/${id}/odoo-invoice/retry`),
+    retryOdooCogs:    (id)           => req('POST',  `/orders/${id}/odoo-cogs/retry`),
     recordPayment: (id, method, reference) => req('POST', `/orders/${id}/payment`, { method, reference }),
   },
   addresses: {
@@ -884,6 +885,17 @@ const ODOO_CUSTOMER_SYNC_STYLE = {
   SYNCED:     { label: 'Synced',     className: 'bg-emerald-50 text-emerald-700' },
   FAILED:     { label: 'Sync failed', className: 'bg-red-50 text-red-700' },
 };
+// Reuses the OdooInvoiceSyncStatus enum values (same field type as odooInvoiceStatus) but
+// with labels that make sense for a plain journal entry — it never reaches PAID or
+// RECONCILIATION_ISSUE, those states just don't apply to a cost-of-sale entry.
+const ODOO_COGS_STATUS_STYLE = {
+  NOT_READY:     { label: 'Not ready',           className: 'bg-gray-100 text-gray-500' },
+  SYNCING:       { label: 'Syncing…',            className: 'bg-gray-100 text-gray-600' },
+  DRAFT_CREATED: { label: 'Draft entry created', className: 'bg-blue-50 text-blue-700' },
+  POSTED:        { label: 'Posted',              className: 'bg-emerald-50 text-emerald-700' },
+  FAILED:        { label: 'Sync failed',         className: 'bg-red-50 text-red-700' },
+  CANCELLED:     { label: 'Cancelled',           className: 'bg-gray-100 text-gray-600' },
+};
 function odooStatusBadge(style, key) {
   const s = style[key] || { label: key, className: 'bg-gray-100 text-gray-600' };
   return el('span', { className: `inline-block text-xs font-bold px-2 py-1 rounded-full ${s.className}` }, s.label);
@@ -1098,6 +1110,40 @@ function showOrderDetail(order) {
       )
     );
     panel.append(odooSection);
+  }
+
+  // Cost of sale (Odoo journal entry) — admin only, only once DELIVERED has attempted a sync
+  if (store.isAdmin(store.user) && order.odooCogsStatus && order.odooCogsStatus !== 'NOT_READY') {
+    const margin = order.cogsAmount != null ? Number(order.total) - Number(order.cogsAmount) : null;
+    const cogsSection = el('div', { className: 'px-5 py-4 border-b border-gray-100' },
+      el('p', { className: 'text-xs font-bold text-gray-400 uppercase tracking-wide mb-3' }, 'Cost of Sale (Odoo)'),
+      el('div', { className: 'flex items-center justify-between' },
+        el('div', {},
+          odooStatusBadge(ODOO_COGS_STATUS_STYLE, order.odooCogsStatus),
+          order.cogsAmount != null ? el('p', { className: 'text-sm text-gray-700 mt-2' }, `Cost: R${Number(order.cogsAmount).toFixed(2)}${margin != null ? ` · Margin: R${margin.toFixed(2)}` : ''}`) : null,
+          order.odooCogsMoveNumber ? el('p', { className: 'text-xs text-gray-500 mt-1 font-mono' }, order.odooCogsMoveNumber) : null,
+          order.odooCogsSyncError ? el('p', { className: 'text-xs text-red-500 mt-1' }, order.odooCogsSyncError) : null,
+        ),
+        el('button', {
+          className: 'text-xs font-bold text-brand px-3 py-2 rounded-lg bg-brand/10',
+          onClick: async (e) => {
+            e.target.textContent = 'Retrying…';
+            e.target.disabled = true;
+            try {
+              await api.orders.retryOdooCogs(order.id);
+              const fresh = await api.orders.getById(order.id);
+              sheet.remove();
+              showOrderDetail(fresh);
+            } catch (err) {
+              toast(err.message || 'Retry failed');
+              e.target.textContent = 'Retry';
+              e.target.disabled = false;
+            }
+          },
+        }, 'Retry')
+      )
+    );
+    panel.append(cogsSection);
   }
 
   sheet.addEventListener('click', e => { if (e.target === sheet) sheet.remove(); });
@@ -5681,6 +5727,37 @@ function renderAdminOrders(data, container, reload) {
                 btn.textContent = 'Retrying…'; btn.disabled = true;
                 try {
                   await api.orders.retryOdooInvoice(order.id);
+                  await refreshDetail(order.id);
+                } catch (err) {
+                  toast(err.message || 'Retry failed');
+                  btn.textContent = 'Retry'; btn.disabled = false;
+                }
+              },
+            }, 'Retry')
+          )
+        )
+      );
+    }
+
+    if (order.odooCogsStatus && order.odooCogsStatus !== 'NOT_READY') {
+      const margin = order.cogsAmount != null ? Number(order.total) - Number(order.cogsAmount) : null;
+      statusRow.append(
+        el('div', { className: 'bg-white rounded-xl p-4 border border-gray-100' },
+          el('p', { className: 'text-xs font-black text-gray-400 uppercase tracking-wider mb-2' }, '💰 Cost of Sale (Odoo)'),
+          el('div', { className: 'flex items-center justify-between' },
+            el('div', {},
+              odooStatusBadge(ODOO_COGS_STATUS_STYLE, order.odooCogsStatus),
+              order.cogsAmount != null ? el('p', { className: 'text-sm text-gray-700 mt-2' }, `Cost: R${Number(order.cogsAmount).toFixed(2)}${margin != null ? ` · Margin: R${margin.toFixed(2)}` : ''}`) : null,
+              order.odooCogsMoveNumber ? el('p', { className: 'text-xs text-gray-500 mt-1 font-mono' }, order.odooCogsMoveNumber) : null,
+              order.odooCogsSyncError ? el('p', { className: 'text-xs text-red-500 mt-1' }, order.odooCogsSyncError) : null,
+            ),
+            el('button', {
+              className: 'text-xs font-bold text-brand px-3 py-2 rounded-lg bg-brand/10 flex-shrink-0',
+              onClick: async (e) => {
+                const btn = e.currentTarget;
+                btn.textContent = 'Retrying…'; btn.disabled = true;
+                try {
+                  await api.orders.retryOdooCogs(order.id);
                   await refreshDetail(order.id);
                 } catch (err) {
                   toast(err.message || 'Retry failed');
@@ -16808,6 +16885,38 @@ function renderAdminSettings(data, container, reload) {
     });
     page.append(section('Odoo Revenue Accounts', 'The account.account code (e.g. "500010") each category\'s products post revenue to in Odoo', ...catRows));
   }
+
+  // ── Cost of Sale (COGS) Accounts ────────────────────────────────
+  // When an order is delivered, a draft journal entry is posted to Odoo debiting the
+  // expense account below (the cost actually incurred, computed from the recipe that made
+  // it) and crediting the clearing account (reclassifying it out of the general ingredients
+  // expense so it's matched to this specific sale) — see odoo-cogs.service.ts.
+  const cogsExpenseInp = inputField(data.company?.odooCogsExpenseAccountCode || '', 'e.g. 500110', null);
+  const cogsClearingInp = inputField(data.company?.odooCogsClearingAccountCode || '', 'e.g. 500010', null);
+  const cogsSaveBtn = el('button', {
+    className: 'text-xs font-bold text-brand px-3 py-2 rounded-lg bg-brand/10 flex-shrink-0',
+    onClick: async (e) => {
+      const btn = e.currentTarget;
+      btn.textContent = 'Saving…'; btn.disabled = true;
+      try {
+        const updated = await api.company.update({
+          odooCogsExpenseAccountCode: cogsExpenseInp.value.trim() || null,
+          odooCogsClearingAccountCode: cogsClearingInp.value.trim() || null,
+        });
+        data.company = updated;
+        toast('Cost of sale accounts saved', 'success');
+      } catch (err) {
+        toast(err.message || 'Failed to save');
+      } finally {
+        btn.textContent = 'Save'; btn.disabled = false;
+      }
+    },
+  }, 'Save');
+  page.append(section('Cost of Sale (Odoo)', 'The account.account codes a delivered order\'s ingredient cost posts to in Odoo — both are required before a cost-of-sale entry can sync',
+    formRow('Expense Account (debit)', 'The account the cost actually lands in, e.g. "500110 Cost of Goods Sold"', cogsExpenseInp),
+    formRow('Clearing Account (credit)', 'The account it\'s reclassified out of, e.g. "500010 Ingredients"', cogsClearingInp),
+    el('div', { className: 'flex justify-end' }, cogsSaveBtn),
+  ));
 
   // ── Ambassador Defaults ────────────────────────────────────────
   let defaultRate = 10;

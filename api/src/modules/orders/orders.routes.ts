@@ -4,6 +4,7 @@ import { OrderService } from './orders.service'
 import { authenticate, authorize } from '../../shared/middleware/auth'
 import { AppError, NotFoundError } from '../../shared/errors'
 import { syncOrderInvoice } from '../../shared/services/odoo-invoice.service'
+import { syncOrderCogs } from '../../shared/services/odoo-cogs.service'
 
 const orderRoutes: FastifyPluginAsync = async (fastify) => {
   const orderService = new OrderService(fastify.prisma)
@@ -251,6 +252,15 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
   }, async (request) => {
     const { id } = request.params as { id: string }
     return syncOrderInvoice(fastify.prisma, id)
+  })
+
+  // POST /orders/:id/odoo-cogs/retry - admin manually (re)runs the Odoo cost-of-sale sync.
+  // Idempotent — reuses the same service the DELIVERED-status hook calls.
+  fastify.post('/:id/odoo-cogs/retry', {
+    preHandler: [authenticate, authorize('manage', 'order')],
+  }, async (request) => {
+    const { id } = request.params as { id: string }
+    return syncOrderCogs(fastify.prisma, id)
   })
 
   // POST /orders/:id/payment - admin records a cash/EFT/manual-card payment
