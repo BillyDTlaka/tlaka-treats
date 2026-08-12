@@ -104,6 +104,15 @@ const productRoutes: FastifyPluginAsync = async (fastify) => {
     return productService.updateVariantPrice(variantId, request.body as any)
   })
 
+  // PATCH /products/:id/variants/:variantId/units-per-pack - how many stock units this variant represents
+  fastify.patch('/:id/variants/:variantId/units-per-pack', {
+    preHandler: [authenticate, authorize('update', 'product')],
+  }, async (request) => {
+    const { variantId } = request.params as { id: string; variantId: string }
+    const { unitsPerPack } = request.body as { unitsPerPack: number }
+    return productService.updateVariantUnitsPerPack(variantId, Number(unitsPerPack))
+  })
+
   // PATCH /products/:id/variants/:variantId/odoo-mapping - set the Odoo default_code this variant maps to
   fastify.patch('/:id/variants/:variantId/odoo-mapping', {
     preHandler: [authenticate, authorize('update', 'product')],

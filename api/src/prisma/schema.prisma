@@ -262,6 +262,14 @@ model ProductVariant {
   name        String // e.g. "12 Pack", "24 Pack"
   description String?
   isActive    Boolean @default(true)
+  // How many individual stock units one of this variant represents — e.g. a "12 Pack"
+  // variant is 12. Defaults to 1 (a single discrete item) since variant names aren't
+  // reliably parseable (real data includes things like "50"/"200" or "5L"/"20L" with no
+  // consistent convention), so this has to be set explicitly per variant rather than
+  // inferred. Used wherever OrderItem.quantity (a count of *this variant*, e.g. "2 packs")
+  // needs to become a count of physical stock units — stock deduction on order CONFIRMED,
+  // and order cost-of-sale computation.
+  unitsPerPack Int @default(1)
 
   // Odoo product.product mapping — set manually by an admin, matched against Odoo's default_code
   odooProductId        Int?
@@ -371,8 +379,10 @@ model OrderItem {
   quantity  Int
   unitPrice Decimal @db.Decimal(10, 2)
   subtotal  Decimal @db.Decimal(10, 2)
-  // Ingredient cost per unit, snapshotted at the same time as Order.cogsAmount — null
-  // when this item's product has no linked recipe to cost it from.
+  // Ingredient cost per *ordered* unit (i.e. per variant/pack — already multiplied by
+  // ProductVariant.unitsPerPack, matching what `quantity` above counts), snapshotted at
+  // the same time as Order.cogsAmount — null when this item's product has no linked
+  // recipe to cost it from.
   unitCost  Decimal? @db.Decimal(10, 4)
 
   order   Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)

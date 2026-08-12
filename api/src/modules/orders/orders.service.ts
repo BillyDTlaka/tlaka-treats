@@ -116,7 +116,9 @@ export class OrderService {
       )
       for (const item of sellableItems) {
         const stockItem = item.variant.product.stockItem
-        const qty = Number(item.quantity)
+        // item.quantity counts how many of *this variant* were ordered (e.g. "2 packs") —
+        // unitsPerPack converts that into a count of individual stock units to deduct.
+        const qty = Number(item.quantity) * Number(item.variant.unitsPerPack || 1)
         await db.stockMovement.create({
           data: {
             stockItemId: stockItem.id,

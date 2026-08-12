@@ -154,6 +154,7 @@ const api = {
     create: (data) => req('POST', '/products', data),
     update: (id, data) => req('PATCH', `/products/${id}`, data),
     addVariant: (id, data) => req('POST', `/products/${id}/variants`, data),
+    updateVariantUnitsPerPack: (id, variantId, unitsPerPack) => req('PATCH', `/products/${id}/variants/${variantId}/units-per-pack`, { unitsPerPack }),
     retryOdooSync: (id, variantId) => req('POST', `/products/${id}/variants/${variantId}/odoo-sync/retry`),
   },
   orders: {
@@ -9953,7 +9954,10 @@ function renderAdminProducts(data, container, reload) {
         const retail = v.prices?.find(p => p.tier === 'RETAIL')?.price;
         const amb    = v.prices?.find(p => p.tier === 'AMBASSADOR')?.price;
         const vRow = el('div', { className: 'grid grid-cols-12 gap-x-3 px-4 py-3 border-t border-gray-50 items-center' },
-          el('div', { className: `col-span-3 text-sm font-semibold text-gray-800 ${!v.isActive ? 'opacity-50' : ''}` }, v.name),
+          el('div', { className: `col-span-3 text-sm font-semibold text-gray-800 ${!v.isActive ? 'opacity-50' : ''}` },
+            v.name,
+            Number(v.unitsPerPack) > 1 ? el('span', { className: 'block text-xs font-normal text-gray-400' }, `= ${v.unitsPerPack} units`) : null,
+          ),
           el('div', { className: 'col-span-2 text-right text-sm text-gray-700' }, retail != null ? `R${Number(retail).toFixed(2)}` : '—'),
           el('div', { className: 'col-span-2 text-right text-sm text-gray-500' }, amb != null ? `R${Number(amb).toFixed(2)}` : '—'),
           el('div', { className: 'col-span-3' }, odooStatusBadge(ODOO_CUSTOMER_SYNC_STYLE, v.odooProductSyncStatus || 'NOT_SYNCED')),
@@ -10537,12 +10541,39 @@ function showEditProductModal(product, onSave, suppliers = [], uoms = [], catego
       existingVariants.forEach(v => {
         const retail  = v.prices?.find(p => p.tier === 'RETAIL')?.price;
         const amb     = v.prices?.find(p => p.tier === 'AMBASSADOR')?.price;
+
+        const packInp = el('input', { type: 'number', min: '1', step: '1', value: String(v.unitsPerPack ?? 1),
+          className: 'w-14 border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:ring-2 focus:ring-brand' });
+        const packSaveBtn = el('button', {
+          type: 'button', className: 'text-xs font-bold text-brand px-2 py-1 rounded-lg bg-brand/10 hover:opacity-80',
+          onClick: async () => {
+            const n = parseInt(packInp.value, 10);
+            if (!n || n < 1) return toast('Units per pack must be at least 1');
+            packSaveBtn.disabled = true; packSaveBtn.textContent = '…';
+            try {
+              await api.products.updateVariantUnitsPerPack(product.id, v.id, n);
+              v.unitsPerPack = n;
+              toast(`"${v.name}" now costs/deducts as ${n} unit(s)`, 'success');
+            } catch (err) {
+              toast(err.message || 'Failed');
+            } finally {
+              packSaveBtn.disabled = false; packSaveBtn.textContent = 'Save';
+            }
+          },
+        }, 'Save');
+
         list.append(
-          el('div', { className: 'flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg border border-gray-100 text-sm' },
-            el('span', { className: 'font-semibold text-gray-800' }, v.name),
-            el('div', { className: 'flex gap-3 text-xs text-gray-500' },
-              retail ? el('span', {}, `Retail R${Number(retail).toFixed(2)}`) : null,
-              amb    ? el('span', { className: 'text-brand' }, `Amb R${Number(amb).toFixed(2)}`) : null,
+          el('div', { className: 'px-3 py-2 bg-gray-50 rounded-lg border border-gray-100 text-sm' },
+            el('div', { className: 'flex items-center justify-between' },
+              el('span', { className: 'font-semibold text-gray-800' }, v.name),
+              el('div', { className: 'flex gap-3 text-xs text-gray-500' },
+                retail ? el('span', {}, `Retail R${Number(retail).toFixed(2)}`) : null,
+                amb    ? el('span', { className: 'text-brand' }, `Amb R${Number(amb).toFixed(2)}`) : null,
+              )
+            ),
+            el('div', { className: 'flex items-center gap-2 mt-1.5 pt-1.5 border-t border-gray-100' },
+              el('span', { className: 'text-xs text-gray-400' }, 'Units per pack'),
+              packInp, packSaveBtn,
             )
           )
         );
@@ -10560,7 +10591,7 @@ function showEditProductModal(product, onSave, suppliers = [], uoms = [], catego
       onClick: () => { showingAddForm = !showingAddForm; addForm.classList.toggle('hidden', !showingAddForm); addVariantBtn.textContent = showingAddForm ? '− Cancel' : '+ Add size'; },
     }, '+ Add size');
 
-    const newV = { name: '', retailPrice: '', ambassadorPrice: '' };
+    const newV = { name: '', retailPrice: '', ambassadorPrice: '', unitsPerPack: '1' };
     const addForm = el('div', { className: 'hidden mt-3 p-3 bg-orange-50 rounded-xl border border-brand border-opacity-20 space-y-2' });
     addForm.append(
       el('p', { className: 'text-xs font-semibold text-gray-600 mb-1' }, 'New size'),
@@ -10574,7 +10605,13 @@ function showEditProductModal(product, onSave, suppliers = [], uoms = [], catego
         el('input', { type: 'number', placeholder: 'Ambassador price (opt)',
           className: 'border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-brand',
           onInput: (e) => newV.ambassadorPrice = e.target.value })
-      )
+      ),
+      el('div', {},
+        el('input', { type: 'number', min: '1', step: '1', placeholder: 'Units per pack (e.g. 6)', value: '1',
+          className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-brand',
+          onInput: (e) => newV.unitsPerPack = e.target.value }),
+        el('p', { className: 'text-xs text-gray-400 mt-1' }, 'How many individual stock units one of this size represents — drives stock deduction and cost-of-sale when this size is ordered.'),
+      ),
     );
     const saveVariantBtn = el('button', {
       type: 'button',
@@ -10586,6 +10623,7 @@ function showEditProductModal(product, onSave, suppliers = [], uoms = [], catego
         try {
           await api.products.addVariant(product.id, {
             name: newV.name.trim(),
+            unitsPerPack: parseInt(newV.unitsPerPack, 10) || 1,
             prices: [
               { tier: 'RETAIL', price: parseFloat(newV.retailPrice) },
               ...(newV.ambassadorPrice ? [{ tier: 'AMBASSADOR', price: parseFloat(newV.ambassadorPrice) }] : []),

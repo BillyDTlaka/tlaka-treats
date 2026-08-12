@@ -1,5 +1,5 @@
 import { PrismaClient, PricingTier, ProductClassification } from '@prisma/client'
-import { NotFoundError } from '../../shared/errors'
+import { AppError, NotFoundError } from '../../shared/errors'
 import { syncProductToOdoo } from '../../shared/services/odoo-product.service'
 
 export class ProductService {
@@ -42,6 +42,17 @@ export class ProductService {
 
   // Sets the Odoo default_code this variant should match against product.product.
   // Clears any cached odooProductId so the next invoice sync re-resolves against the new reference.
+  // How many individual stock units one of this variant represents (e.g. a "12 Pack" is
+  // 12) — used to convert an order's quantity-of-this-variant into a physical stock-unit
+  // count for stock deduction and cost-of-sale. A separate narrow endpoint, same pattern
+  // as price/odoo-mapping, since it's edited independently of the rest of the variant.
+  async updateVariantUnitsPerPack(variantId: string, unitsPerPack: number) {
+    if (!Number.isInteger(unitsPerPack) || unitsPerPack < 1) {
+      throw new AppError('unitsPerPack must be a whole number of at least 1', 400)
+    }
+    return this.prisma.productVariant.update({ where: { id: variantId }, data: { unitsPerPack } })
+  }
+
   async updateVariantOdooMapping(variantId: string, data: { odooProductReference?: string | null }) {
     return this.prisma.productVariant.update({
       where: { id: variantId },
@@ -177,6 +188,7 @@ export class ProductService {
   async addVariant(productId: string, data: {
     name: string
     prices: Array<{ tier: PricingTier; price: number }>
+    unitsPerPack?: number
   }) {
     const product = await this.prisma.product.findUnique({ where: { id: productId } })
     if (!product) throw new NotFoundError('Product')
@@ -184,6 +196,7 @@ export class ProductService {
       data: {
         productId,
         name: data.name,
+        unitsPerPack: data.unitsPerPack && data.unitsPerPack >= 1 ? Math.round(data.unitsPerPack) : 1,
         prices: { create: data.prices },
       },
       include: { prices: true },

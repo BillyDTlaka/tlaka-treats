@@ -358,6 +358,42 @@ describe('Order routes', () => {
       })
     })
 
+    it('ORD-19b — confirming an order deducts stock by quantity × the variant\'s unitsPerPack, not quantity alone', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'order' }])
+      const orderWithPackedVariant = makeOrder({
+        status: 'PENDING',
+        items: [{
+          id: 'item-1', variantId: 'variant-1', quantity: 2, unitPrice: 65, subtotal: 130,
+          variant: {
+            id: 'variant-1', name: '6 Pack', unitsPerPack: 6, odooProductId: null, odooProductReference: null,
+            product: { id: 'product-1', name: 'Classic Vanilla Scones', classification: 'SELLABLE', stockItem: { id: 'stock-1' } },
+          },
+        }],
+      })
+      prisma.order.findUnique
+        .mockResolvedValueOnce(orderWithPackedVariant)
+        .mockResolvedValueOnce(orderWithPackedVariant)
+      prisma.order.update.mockResolvedValueOnce(makeOrder({ status: 'CONFIRMED' }))
+      prisma.financeTransaction.findUnique.mockResolvedValueOnce(null)
+      prisma.financeAccount.findFirst.mockResolvedValueOnce(null)
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .patch('/orders/order-1/status')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'CONFIRMED' })
+
+      expect(res.status).toBe(200)
+      // 2 packs × 6 units per pack = 12 individual stock units, not 2.
+      expect(prisma.stockMovement.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ stockItemId: 'stock-1', type: 'ORDER_FULFILLMENT', quantity: -12 }),
+      })
+      expect(prisma.stockItem.update).toHaveBeenCalledWith({
+        where: { id: 'stock-1' },
+        data: { currentStock: { decrement: 12 } },
+      })
+    })
+
     it('ORD-20 — cancelling an order that was never confirmed touches no stock/commission/finance', async () => {
       prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'order' }])
       prisma.order.findUnique

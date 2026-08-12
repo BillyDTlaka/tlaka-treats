@@ -89,4 +89,20 @@ describe('computeOrderCost', () => {
     expect(result.total).toBeCloseTo(11.12, 5)
     expect(result.uncostedItems).toEqual([])
   })
+
+  it('COST-05 — a packed variant costs by units-per-pack, not by quantity alone', async () => {
+    // 2× a "6 Pack" variant of a product whose recipe costs R0.56 per individual unit —
+    // should cost 6 individual units per pack ordered, not 1.
+    prisma.order.findUnique.mockResolvedValueOnce(makeOrderForCost({
+      items: [{ id: 'item-1', quantity: 2, variant: { unitsPerPack: 6, product: { id: 'product-1' } } }],
+    }))
+    prisma.recipe.findMany.mockResolvedValueOnce([makeRecipe()])
+
+    const result = await computeOrderCost(prisma, 'order-1')
+
+    // per-pack cost = 0.56 × 6 = 3.36; line total = 3.36 × 2 = 6.72
+    expect(result.total).toBeCloseTo(6.72, 5)
+    const itemUpdateCall = prisma.orderItem.update.mock.calls[0][0]
+    expect(itemUpdateCall.data.unitCost).toBeCloseTo(3.36, 5)
+  })
 })

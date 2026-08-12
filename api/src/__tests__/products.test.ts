@@ -274,6 +274,57 @@ describe('Product routes', () => {
 
       expect(res.status).toBe(201)
       expect(res.body.name).toBe('24 Pack')
+      // No unitsPerPack sent — defaults to 1 (a single discrete item), not left unset.
+      expect(prisma.productVariant.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ unitsPerPack: 1 }),
+      }))
+    })
+
+    it('PROD-18 — a variant\'s unitsPerPack can be set at creation, e.g. for a "6 Pack"', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'product' }])
+      prisma.product.findUnique.mockResolvedValueOnce(makeProduct())
+      prisma.productVariant.create.mockResolvedValueOnce({ id: 'variant-2', name: '6 Pack', unitsPerPack: 6, isActive: true, prices: [] })
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .post('/products/product-1/variants')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: '6 Pack', unitsPerPack: 6, prices: [{ tier: 'RETAIL', price: 65 }] })
+
+      expect(res.status).toBe(201)
+      expect(prisma.productVariant.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ unitsPerPack: 6 }),
+      }))
+    })
+  })
+
+  describe('PATCH /products/:id/variants/:variantId/units-per-pack', () => {
+    it('PROD-19 — admin corrects an existing variant\'s unitsPerPack', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'product' }])
+      prisma.productVariant.update.mockResolvedValueOnce({ id: 'variant-1', unitsPerPack: 12 })
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .patch('/products/product-1/variants/variant-1/units-per-pack')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ unitsPerPack: 12 })
+
+      expect(res.status).toBe(200)
+      expect(res.body.unitsPerPack).toBe(12)
+      expect(prisma.productVariant.update).toHaveBeenCalledWith({ where: { id: 'variant-1' }, data: { unitsPerPack: 12 } })
+    })
+
+    it('PROD-20 — rejects a non-positive or fractional unitsPerPack', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'product' }])
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .patch('/products/product-1/variants/variant-1/units-per-pack')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ unitsPerPack: 0 })
+
+      expect(res.status).toBe(400)
+      expect(prisma.productVariant.update).not.toHaveBeenCalled()
     })
   })
 })

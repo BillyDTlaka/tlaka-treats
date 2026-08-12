@@ -56,8 +56,14 @@ export async function computeOrderCost(prisma: PrismaClient, orderId: string): P
 
   for (const item of order.items) {
     const recipe = recipeByProductId.get(item.variant.product.id)
-    const unitCost = recipe ? unitCostFromRecipe(recipe) : 0
+    const perStockUnitCost = recipe ? unitCostFromRecipe(recipe) : 0
     if (!recipe) uncostedItems.push(item.variant.product.name)
+
+    // item.quantity counts how many of *this variant* were ordered (e.g. "2 packs"), not
+    // individual stock units — unitsPerPack converts the recipe's per-stock-unit cost into
+    // a cost per *ordered* unit, matching what quantity actually counts (see the field's
+    // schema comment, and the same conversion in orders.service.ts's stock deduction).
+    const unitCost = perStockUnitCost * Number(item.variant.unitsPerPack || 1)
 
     await db.orderItem.update({ where: { id: item.id }, data: { unitCost } })
     total += unitCost * Number(item.quantity)
