@@ -3517,9 +3517,14 @@ function AdminOverviewPage() {
     className: 'bg-white border-b border-gray-100 flex items-center justify-between px-4 flex-shrink-0',
     style: { minHeight: '56px', paddingTop: 'env(safe-area-inset-top, 0px)' },
   });
+  const hamburgerBtn = el('button', {
+    className: 'md:hidden -ml-1 mr-1 p-2 rounded-lg text-gray-500 hover:bg-gray-100 flex-shrink-0',
+    onClick: () => openMobileNav(),
+    'aria-label': 'Open menu',
+  }, svgIcon('M3 6h18|M3 12h18|M3 18h18', 20));
   const hLeft  = el('div', { className: 'flex items-center gap-3 flex-1 min-w-0' });
   const hRight = el('div', { className: 'flex items-center gap-2 flex-shrink-0' });
-  header.append(hLeft, hRight);
+  header.append(hamburgerBtn, hLeft, hRight);
 
   function updateHeader() {
     hLeft.innerHTML = ''; hRight.innerHTML = '';
@@ -3569,6 +3574,53 @@ function AdminOverviewPage() {
         el('button', {
           className: `w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition border-l-4 ${isActive ? 'bg-brand-light border-brand font-bold text-brand-dark' : 'border-transparent text-gray-700 hover:bg-gray-50 hover:border-gray-200'}`,
           onClick: () => navigate(mod.id),
+        },
+          el('span', { className: 'text-base' }, mod.icon),
+          el('span', { className: 'truncate' }, mod.name)
+        )
+      );
+    });
+  }
+
+  // ── MOBILE NAV (drawer — same modules as the desktop sidebar, since the
+  // sidebar itself is hidden below the md breakpoint) ────────────────────
+  const mobileNavOverlay = el('div', { className: 'md:hidden fixed inset-0 z-50 hidden' });
+  const mobileNavBackdrop = el('div', {
+    className: 'absolute inset-0 bg-black/50',
+    onClick: () => closeMobileNav(),
+  });
+  const mobileNavPanel = el('div', {
+    className: 'absolute left-0 top-0 bottom-0 w-72 max-w-[80vw] bg-white shadow-xl overflow-y-auto',
+    style: { paddingTop: 'env(safe-area-inset-top, 0px)' },
+  });
+  mobileNavOverlay.append(mobileNavBackdrop, mobileNavPanel);
+
+  function openMobileNav() {
+    renderMobileNav();
+    mobileNavOverlay.classList.remove('hidden');
+  }
+  function closeMobileNav() {
+    mobileNavOverlay.classList.add('hidden');
+  }
+
+  function renderMobileNav() {
+    mobileNavPanel.innerHTML = '';
+    mobileNavPanel.append(
+      el('div', { className: 'px-4 py-3 border-b border-gray-100 flex items-center justify-between' },
+        el('p', { className: 'font-black text-gray-900 text-sm' }, 'Menu'),
+        el('button', {
+          className: 'p-1.5 rounded-lg text-gray-400 hover:bg-gray-100',
+          onClick: () => closeMobileNav(),
+          'aria-label': 'Close menu',
+        }, svgIcon('M18 6L6 18|M6 6l12 12', 18))
+      )
+    );
+    HUB_MODULES.filter(mod => !isModuleDisabled(mod.id)).forEach(mod => {
+      const isActive = activeModule === mod.id;
+      mobileNavPanel.append(
+        el('button', {
+          className: `w-full flex items-center gap-3 px-4 py-3 text-sm text-left transition border-l-4 ${isActive ? 'bg-brand-light border-brand font-bold text-brand-dark' : 'border-transparent text-gray-700 hover:bg-gray-50'}`,
+          onClick: () => { navigate(mod.id); closeMobileNav(); },
         },
           el('span', { className: 'text-base' }, mod.icon),
           el('span', { className: 'truncate' }, mod.name)
@@ -3628,7 +3680,7 @@ function AdminOverviewPage() {
   const bodyRow = el('div', { className: 'flex-1 flex overflow-hidden' });
   bodyRow.append(desktopSidebar, contentArea);
 
-  shell.append(header, bodyRow);
+  shell.append(header, bodyRow, mobileNavOverlay);
   updateHeader();
   renderDesktopSidebar();
   reloadData();
