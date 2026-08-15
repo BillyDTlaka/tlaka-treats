@@ -7859,18 +7859,35 @@ function renderAdminInventory(data, container, reload) {
 
   function showMovementForm(item, type, onDone) {
     const LABELS = { PURCHASE: 'Record Purchase (Stock In)', ADJUSTMENT_OUT: 'Adjustment / Write-off', WASTE: 'Record Waste' };
+    const isPurchase = type === 'PURCHASE';
+    const uomLabel = item.uom?.abbreviation || item.unit || 'unit';
     const modal = el('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4' });
     const close = () => document.body.removeChild(modal);
     const qtyInp  = el('input', { type: 'number', step: '0.001', placeholder: 'Quantity', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
-    const costInp = el('input', { type: 'number', step: '0.0001', placeholder: 'Unit cost (optional)', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
+    // For a purchase, the user enters what the receipt actually shows — total
+    // amount paid — and we derive the per-unit cost from qty, rather than
+    // asking them to pre-divide (e.g. "2L for R50" → R25/L computed here).
+    const costInp = el('input', { type: 'number', step: '0.0001', placeholder: isPurchase ? 'Total paid R (optional)' : 'Unit cost (optional)', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-1' });
+    const costPreview = el('p', { className: 'text-xs text-gray-400 mb-3 h-4' }, '');
+    function updateCostPreview() {
+      if (!isPurchase) return;
+      const qty = parseFloat(qtyInp.value);
+      const total = parseFloat(costInp.value);
+      costPreview.textContent = (qty > 0 && total >= 0 && !isNaN(total)) ? `= R${(total / qty).toFixed(4)} per ${uomLabel}` : '';
+    }
+    qtyInp.addEventListener('input', updateCostPreview);
+    costInp.addEventListener('input', updateCostPreview);
     const noteInp = el('input', { type: 'text', placeholder: 'Note / reference', className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3' });
     const saveBtn = el('button', {
       className: 'w-full bg-brand text-white font-black py-2.5 rounded-xl hover:opacity-90',
       onClick: async () => {
         if (!qtyInp.value) { toast('Enter a quantity', 'error'); return; }
+        const qty = parseFloat(qtyInp.value);
+        const rawCost = costInp.value ? parseFloat(costInp.value) : undefined;
+        const unitCost = isPurchase && rawCost !== undefined ? rawCost / qty : rawCost;
         saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
         try {
-          await api.inventory.movement({ stockItemId: item.id, type, quantity: parseFloat(qtyInp.value), unitCost: costInp.value || undefined, note: noteInp.value || undefined });
+          await api.inventory.movement({ stockItemId: item.id, type, quantity: qty, unitCost, note: noteInp.value || undefined });
           toast('Movement recorded', 'success'); close(); onDone();
         } catch(err) { toast(err?.message || 'Failed', 'error'); saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
       }
@@ -7881,7 +7898,7 @@ function renderAdminInventory(data, container, reload) {
         el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×'),
       ),
       el('p', { className: 'text-sm text-gray-500 mb-4' }, `Item: ${item.name} (current: ${Number(item.currentStock).toFixed(3)} ${item.unit})`),
-      qtyInp, costInp, noteInp, saveBtn,
+      qtyInp, costInp, costPreview, noteInp, saveBtn,
     ));
     modal.addEventListener('click', e => { if (e.target === modal) close(); });
     document.body.appendChild(modal);
@@ -7941,8 +7958,10 @@ function renderAdminInventory(data, container, reload) {
     const linesDiv = el('div', { className: 'space-y-3' });
     const totalEl = el('p', { className: 'text-right font-black text-brand text-lg mt-2' }, 'Total: R 0.00');
 
+    // Line items collect Qty + Total Paid (what the receipt shows) — unit cost
+    // is derived (total / qty) rather than asking the user to pre-divide it.
     function recalcTotal() {
-      const t = lineItems.reduce((s, l) => s + (parseFloat(l.qtyInp.value) || 0) * (parseFloat(l.costInp.value) || 0), 0);
+      const t = lineItems.reduce((s, l) => s + (parseFloat(l.totalInp.value) || 0), 0);
       totalEl.textContent = `Total: R ${t.toFixed(2)}`;
     }
 
@@ -7953,14 +7972,26 @@ function renderAdminInventory(data, container, reload) {
         getLabel: i => `${i.name} (${i.uom?.abbreviation || i.unit || ''})`,
         getValue: i => i.id,
         placeholder: 'Search product…',
-        onChange: () => {},
+        onChange: () => updateUnitCostPreview(),
       });
       const qtyInp = el('input', { type: 'number', step: '0.001', placeholder: 'Qty',
-        className: 'w-24 border border-gray-200 rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-brand', onInput: recalcTotal });
-      const costInp = el('input', { type: 'number', step: '0.0001', placeholder: 'Unit price R',
-        className: 'w-28 border border-gray-200 rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-brand', onInput: recalcTotal });
+        className: 'w-24 border border-gray-200 rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-brand' });
+      const totalInp = el('input', { type: 'number', step: '0.01', placeholder: 'Total paid R',
+        className: 'w-28 border border-gray-200 rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-brand' });
+      const unitCostPreview = el('p', { className: 'text-xs text-gray-400 mt-1' }, '');
 
-      const lineObj = { picker, qtyInp, costInp };
+      function updateUnitCostPreview() {
+        const qty = parseFloat(qtyInp.value);
+        const total = parseFloat(totalInp.value);
+        const stockItem = stockItems.find(i => i.id === picker._getValue());
+        const uomLabel = stockItem?.uom?.abbreviation || stockItem?.unit || 'unit';
+        unitCostPreview.textContent = (qty > 0 && total >= 0 && !isNaN(total)) ? `= R${(total / qty).toFixed(4)} per ${uomLabel}` : '';
+        recalcTotal();
+      }
+      qtyInp.addEventListener('input', updateUnitCostPreview);
+      totalInp.addEventListener('input', updateUnitCostPreview);
+
+      const lineObj = { picker, qtyInp, costInp: totalInp };
       const removeBtn = el('button', { type: 'button', className: 'text-red-400 hover:text-red-600 font-bold text-lg px-2',
         onClick: () => { lineItems.splice(lineItems.indexOf(lineObj), 1); rowWrap.remove(); recalcTotal(); } }, '×');
       const newProductBtn = el('button', { type: 'button', className: 'text-xs font-bold text-brand hover:underline mt-1',
@@ -7968,6 +7999,7 @@ function renderAdminInventory(data, container, reload) {
           showQuickProductForm((createdStockItem) => {
             stockItems.push(createdStockItem);
             picker._setValue(createdStockItem.id);
+            updateUnitCostPreview();
           });
         },
       }, "Can't find it? + Add new product");
@@ -7975,7 +8007,9 @@ function renderAdminInventory(data, container, reload) {
       const rowWrap = el('div', { className: 'border border-gray-100 rounded-xl p-3' },
         el('div', { className: 'flex gap-2 items-start' },
           el('div', { className: 'flex-1' }, picker, newProductBtn),
-          qtyInp, costInp, removeBtn,
+          el('div', {}, qtyInp),
+          el('div', {}, totalInp, unitCostPreview),
+          removeBtn,
         )
       );
       lineItems.push(lineObj);
@@ -8000,9 +8034,13 @@ function renderAdminInventory(data, container, reload) {
         const supplierId = supplierPicker._getValue();
         if (!supplierId) { toast('Select a shop/supplier', 'error'); return; }
         const items = lineItems
-          .map(l => ({ stockItemId: l.picker._getValue(), orderedQty: parseFloat(l.qtyInp.value), unitCost: parseFloat(l.costInp.value) }))
+          .map(l => {
+            const orderedQty = parseFloat(l.qtyInp.value);
+            const totalPaid = parseFloat(l.costInp.value);
+            return { stockItemId: l.picker._getValue(), orderedQty, unitCost: orderedQty > 0 ? totalPaid / orderedQty : NaN };
+          })
           .filter(i => i.stockItemId && i.orderedQty > 0 && !isNaN(i.unitCost) && i.unitCost >= 0);
-        if (!items.length) { toast('Add at least one item with a product, quantity and price', 'error'); return; }
+        if (!items.length) { toast('Add at least one item with a product, quantity and total paid', 'error'); return; }
         saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
         try {
           const po = await api.suppliers.createPO({ supplierId, expectedDate: dateInp.value || undefined, notes: notesInp.value || undefined, items });
@@ -8342,20 +8380,34 @@ function renderAdminSuppliers(data, container, reload) {
     const linesDiv = el('div', { className: 'space-y-2 mb-3' });
     const totalEl = el('p', { className: 'text-sm font-bold text-brand mb-3' }, 'Total: R 0.00');
 
+    // Qty + Total (est.) R — unit cost is derived (total / qty) rather than
+    // asking the user to pre-divide it, same as the Record Purchase flow.
     function recalcTotal() {
-      const t = lineItems.reduce((s, l) => s + (parseFloat(l.qty.value)||0) * (parseFloat(l.cost.value)||0), 0);
+      const t = lineItems.reduce((s, l) => s + (parseFloat(l.cost.value)||0), 0);
       totalEl.textContent = `Total: R ${t.toFixed(2)}`;
     }
     function addLine() {
       const stockSel = el('select', { className: 'flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand' });
       const emOpt = document.createElement('option'); emOpt.value = ''; emOpt.textContent = '— Select Item —'; stockSel.append(emOpt);
       stockItems.forEach(i => { const o = document.createElement('option'); o.value = i.id; o.textContent = `${i.name} (${i.uom?.abbreviation || i.unit || ''})`; stockSel.append(o); });
-      const qtyInp  = el('input', { type: 'number', step: '0.001', placeholder: 'Qty', className: 'w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand', onInput: recalcTotal });
-      const costInp = el('input', { type: 'number', step: '0.0001', placeholder: 'Unit R', className: 'w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand', onInput: recalcTotal });
+      const qtyInp  = el('input', { type: 'number', step: '0.001', placeholder: 'Qty', className: 'w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand' });
+      const costInp = el('input', { type: 'number', step: '0.01', placeholder: 'Total (est.) R', className: 'w-24 border border-gray-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-brand' });
+      const unitCostPreview = el('span', { className: 'text-xs text-gray-400 whitespace-nowrap' }, '');
+      function updatePreview() {
+        const qty = parseFloat(qtyInp.value);
+        const total = parseFloat(costInp.value);
+        const stockItem = stockItems.find(i => i.id === stockSel.value);
+        const uomLabel = stockItem?.uom?.abbreviation || stockItem?.unit || 'unit';
+        unitCostPreview.textContent = (qty > 0 && total >= 0 && !isNaN(total)) ? `= R${(total / qty).toFixed(4)}/${uomLabel}` : '';
+        recalcTotal();
+      }
+      qtyInp.addEventListener('input', updatePreview);
+      costInp.addEventListener('input', updatePreview);
+      stockSel.addEventListener('change', updatePreview);
       const lineObj = { sel: stockSel, qty: qtyInp, cost: costInp };
       lineItems.push(lineObj);
       const removeBtn = el('button', { className: 'text-red-400 hover:text-red-600 font-bold text-sm', onClick: () => { lineItems.splice(lineItems.indexOf(lineObj), 1); line.remove(); recalcTotal(); } }, '×');
-      const line = el('div', { className: 'flex gap-2 items-center' }, stockSel, qtyInp, costInp, removeBtn);
+      const line = el('div', { className: 'flex gap-2 items-center' }, stockSel, qtyInp, costInp, unitCostPreview, removeBtn);
       linesDiv.append(line);
     }
     addLine();
@@ -8365,7 +8417,11 @@ function renderAdminSuppliers(data, container, reload) {
       onClick: async () => {
         if (!suppSel.value) { toast('Select a supplier', 'error'); return; }
         const items = lineItems.filter(l => l.sel.value && l.qty.value && l.cost.value)
-          .map(l => ({ stockItemId: l.sel.value, orderedQty: parseFloat(l.qty.value), unitCost: parseFloat(l.cost.value) }));
+          .map(l => {
+            const orderedQty = parseFloat(l.qty.value);
+            return { stockItemId: l.sel.value, orderedQty, unitCost: orderedQty > 0 ? parseFloat(l.cost.value) / orderedQty : NaN };
+          })
+          .filter(i => !isNaN(i.unitCost) && i.unitCost >= 0);
         if (!items.length) { toast('Add at least one item', 'error'); return; }
         saveBtn.disabled = true; saveBtn.textContent = 'Creating…';
         try {
