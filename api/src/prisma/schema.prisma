@@ -209,6 +209,14 @@ model UnitOfMeasure {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  // How many of this unit equal one base unit of its `type` (kg for WEIGHT, l for
+  // VOLUME) — e.g. g = 0.001, ml = 0.001. Lets recipe ingredient quantities and stock
+  // item costs be safely auto-converted when their units differ (250g flour costed
+  // against a kg-priced stock item). Only used when both units share the same WEIGHT
+  // or VOLUME type; COUNT/LENGTH/OTHER units aren't auto-converted since a "bag" or
+  // "box" has no fixed universal size.
+  toBaseFactor Decimal  @default(1) @db.Decimal(18, 8)
+
   products          Product[]
   stockItems        StockItem[]
   recipeIngredients RecipeIngredient[]

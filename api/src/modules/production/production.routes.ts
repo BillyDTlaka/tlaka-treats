@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify'
 import { authenticate, authorize } from '../../shared/middleware/auth'
 import { AppError, NotFoundError } from '../../shared/errors'
+import { convertQuantity } from '../../shared/services/uom.service'
 
 const productionRoutes: FastifyPluginAsync = async (fastify) => {
   const db = fastify.prisma as any
@@ -71,7 +72,7 @@ const productionRoutes: FastifyPluginAsync = async (fastify) => {
     const run = await db.productionRun.findUnique({
       where: { id },
       include: {
-        recipe: { include: { ingredients: { include: { stockItem: true } } } },
+        recipe: { include: { ingredients: { include: { stockItem: { include: { uom: true } }, uom: true } } } },
       },
     })
     if (!run) throw new NotFoundError('Production run')
@@ -80,13 +81,18 @@ const productionRoutes: FastifyPluginAsync = async (fastify) => {
 
     const batches = Number(run.batches)
 
+    // ingredient.quantity is recorded in the ingredient's own uom, converted here into
+    // the stock item's uom (the unit currentStock/costPerUnit are tracked in) — a no-op
+    // when the two units already match, which is the common case.
+    const consumeFor = (ing: any) => convertQuantity(Number(ing.quantity), ing.uom, ing.stockItem.uom) * batches
+
     // Refuse to push stock negative — the ingredient panel already shows a "✗ Short"
     // warning per item before this point, so this is the backend actually enforcing it
     // rather than only decorating it.
     const shortages = run.recipe.ingredients
       .map((ing: any) => ({
         name: ing.stockItem.name,
-        need: Number(ing.quantity) * batches,
+        need: consumeFor(ing),
         have: Number(ing.stockItem.currentStock),
       }))
       .filter((s: any) => s.have < s.need)
@@ -97,7 +103,7 @@ const productionRoutes: FastifyPluginAsync = async (fastify) => {
 
     // Deduct each ingredient × batches from stock
     for (const ingredient of run.recipe.ingredients) {
-      const consume = Number(ingredient.quantity) * batches
+      const consume = consumeFor(ingredient)
       await db.stockMovement.create({
         data: {
           stockItemId:    ingredient.stockItemId,

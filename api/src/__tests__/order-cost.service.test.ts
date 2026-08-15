@@ -90,6 +90,36 @@ describe('computeOrderCost', () => {
     expect(result.uncostedItems).toEqual([])
   })
 
+  it('COST-06 — an ingredient recorded in a different (but compatible) unit than its stock item is converted before costing', async () => {
+    // Recipe calls for 250g of flour; the stock item is costed per kilogram (R20/kg).
+    // Without conversion this would wrongly compute 250 × 20 = R5000 instead of R5.
+    const kg = { id: 'uom-kg', abbreviation: 'kg', type: 'WEIGHT', toBaseFactor: 1 }
+    const g  = { id: 'uom-g',  abbreviation: 'g',  type: 'WEIGHT', toBaseFactor: 0.001 }
+    prisma.order.findUnique.mockResolvedValueOnce(makeOrderForCost({
+      items: [{ id: 'item-1', quantity: 1, variant: { product: { id: 'product-1' } } }],
+    }))
+    prisma.recipe.findMany.mockResolvedValueOnce([makeRecipe({
+      yieldQty: 1,
+      ingredients: [{ quantity: 250, uom: g, stockItem: { costPerUnit: 20, uom: kg } }],
+    })])
+
+    const result = await computeOrderCost(prisma, 'order-1')
+
+    // 250g = 0.25kg; 0.25 × R20/kg = R5 per batch, yieldQty 1 → unitCost R5
+    expect(result.total).toBeCloseTo(5, 5)
+    const itemUpdateCall = prisma.orderItem.update.mock.calls[0][0]
+    expect(itemUpdateCall.data.unitCost).toBeCloseTo(5, 5)
+  })
+
+  it('COST-07 — an ingredient with no uom set (the pre-existing default) costs exactly as before, no conversion applied', async () => {
+    prisma.order.findUnique.mockResolvedValueOnce(makeOrderForCost())
+    prisma.recipe.findMany.mockResolvedValueOnce([makeRecipe()]) // no uom fields at all
+
+    const result = await computeOrderCost(prisma, 'order-1')
+
+    expect(result.total).toBeCloseTo(1.12, 5)
+  })
+
   it('COST-05 — a packed variant costs by units-per-pack, not by quantity alone', async () => {
     // 2× a "6 Pack" variant of a product whose recipe costs R0.56 per individual unit —
     // should cost 6 individual units per pack ordered, not 1.

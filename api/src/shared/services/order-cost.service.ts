@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client'
+import { convertQuantity, UomLite } from './uom.service'
 
 export interface OrderCostResult {
   total: number
@@ -10,12 +11,18 @@ export interface OrderCostResult {
 // Cost per single unit of a recipe's output: sum(ingredient qty × its stock item's current
 // costPerUnit) ÷ the recipe's yield. Same formula the recipe detail page has shown live
 // since earlier this session — this is the first place it gets persisted anywhere.
-function unitCostFromRecipe(recipe: { yieldQty: unknown; ingredients: Array<{ quantity: unknown; stockItem: { costPerUnit: unknown } | null }> }): number {
+// The ingredient's quantity is recorded in its own uom (ing.uom), which is converted into
+// the stock item's uom before multiplying by costPerUnit (costPerUnit is priced per stock
+// item unit) — a no-op when the two units already match, which is the common case.
+function unitCostFromRecipe(recipe: {
+  yieldQty: unknown
+  ingredients: Array<{ quantity: unknown; uom: UomLite | null; stockItem: { costPerUnit: unknown; uom: UomLite | null } | null }>
+}): number {
   const yieldQty = Number(recipe.yieldQty) || 1
-  const costPerBatch = recipe.ingredients.reduce(
-    (sum, ing) => sum + Number(ing.quantity) * Number(ing.stockItem?.costPerUnit ?? 0),
-    0,
-  )
+  const costPerBatch = recipe.ingredients.reduce((sum, ing) => {
+    const qty = convertQuantity(Number(ing.quantity), ing.uom, ing.stockItem?.uom)
+    return sum + qty * Number(ing.stockItem?.costPerUnit ?? 0)
+  }, 0)
   return costPerBatch / yieldQty
 }
 
@@ -42,7 +49,7 @@ export async function computeOrderCost(prisma: PrismaClient, orderId: string): P
   const productIds: string[] = [...new Set(order.items.map((i: any) => i.variant.product.id) as string[])]
   const recipes = await db.recipe.findMany({
     where: { outputProductId: { in: productIds }, isActive: true },
-    include: { ingredients: { include: { stockItem: true } } },
+    include: { ingredients: { include: { stockItem: { include: { uom: true } }, uom: true } } },
   })
   // First active recipe found per output product — a product with more than one active
   // recipe pointing to it is a data setup issue outside this function's scope to resolve.

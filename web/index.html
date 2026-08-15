@@ -8453,9 +8453,19 @@ function renderAdminSuppliers(data, container, reload) {
   container.append(page);
 }
 
+// Converts a quantity from one uom to another — mirrors api/src/shared/services/uom.service.ts.
+// Same unit (or either side missing, the default for every ingredient today) is a no-op.
+// Only WEIGHT/VOLUME units convert automatically (fixed physical ratio via toBaseFactor);
+// anything else with mismatched units is a data problem, not something to guess at.
+function convertQty(qty, fromUom, toUom) {
+  if (!fromUom || !toUom || fromUom.id === toUom.id) return qty;
+  if (fromUom.type !== toUom.type || !['WEIGHT', 'VOLUME'].includes(fromUom.type)) return NaN;
+  return qty * (Number(fromUom.toBaseFactor) / Number(toUom.toBaseFactor));
+}
+
 // ── RECIPE MANAGEMENT ─────────────────────────────────────────────────────────
 function renderAdminRecipes(data, container, reload) {
-  const { recipes = [], stockItems = [], products = [] } = data;
+  const { recipes = [], stockItems = [], products = [], uoms = [] } = data;
   let searchQ = '';
   let detailRecipe = null;
   let showEditor = false;
@@ -8601,8 +8611,14 @@ function renderAdminRecipes(data, container, reload) {
     if (recipe?.instructions) instrInp.value = recipe.instructions;
     wrap.append(card(lbl('Instructions / Method'), instrInp));
 
-    // Ingredients — the field that used to be missing entirely from creation
-    let lineItems = (recipe?.ingredients || []).map(i => ({ stockItemId: i.stockItemId, quantity: String(i.quantity), unit: i.unit || '' }));
+    // Ingredients — the field that used to be missing entirely from creation.
+    // Quantity is entered in `uomId` (defaults to the stock item's own unit); when the
+    // stock item's unit is WEIGHT or VOLUME, a compatible-unit picker lets the recipe be
+    // written in a more natural unit (e.g. 250g flour against a kg-costed stock item) —
+    // convertQty() handles the math everywhere this ingredient's cost/stock is used.
+    let lineItems = (recipe?.ingredients || []).map(i => ({
+      stockItemId: i.stockItemId, quantity: String(i.quantity), uomId: i.uomId || i.stockItem?.uomId || '',
+    }));
     const linesDiv = el('div', { className: 'space-y-2 mb-3' });
     function renderLines() {
       linesDiv.innerHTML = '';
@@ -8610,7 +8626,33 @@ function renderAdminRecipes(data, container, reload) {
         linesDiv.append(el('p', { className: 'text-sm text-gray-400 italic' }, 'No ingredients yet — add one below.'));
       }
       lineItems.forEach((item, idx) => {
-        const unitLabel = el('span', { className: 'w-14 flex-shrink-0 text-xs text-gray-400 text-center' }, item.unit || '');
+        const unitLabel = el('span', { className: 'w-14 flex-shrink-0 text-xs text-gray-400 text-center' }, '');
+        const unitSelectWrap = el('div', { className: 'w-20 flex-shrink-0' });
+
+        function renderUnitPicker(stockItem) {
+          unitSelectWrap.innerHTML = '';
+          unitLabel.textContent = '';
+          const stockUom = stockItem?.uom;
+          if (!stockUom || !['WEIGHT', 'VOLUME'].includes(stockUom.type)) {
+            // No compatible-unit conversion possible (count/other/legacy) — just show
+            // the stock item's own unit, same as before.
+            item.uomId = stockUom?.id || '';
+            unitLabel.textContent = stockUom?.abbreviation || stockItem?.unit || '';
+            unitSelectWrap.append(unitLabel);
+            return;
+          }
+          const compatible = uoms.filter(u => u.type === stockUom.type);
+          const sel = el('select', { className: 'w-full border border-gray-200 rounded-lg px-1 py-2 text-xs outline-none focus:ring-2 focus:ring-brand' });
+          compatible.forEach(u => {
+            const o = document.createElement('option'); o.value = u.id; o.textContent = u.abbreviation;
+            if ((item.uomId || stockUom.id) === u.id) o.selected = true;
+            sel.append(o);
+          });
+          if (!item.uomId) item.uomId = stockUom.id;
+          sel.addEventListener('change', () => { item.uomId = sel.value; });
+          unitSelectWrap.append(sel);
+        }
+
         const stockPicker = makeSearchableSelect({
           options: stockItems,
           value: item.stockItemId,
@@ -8619,14 +8661,15 @@ function renderAdminRecipes(data, container, reload) {
           placeholder: 'Search ingredient…',
           onChange: (id, s) => {
             lineItems[idx].stockItemId = id;
-            lineItems[idx].unit = s?.uom?.abbreviation || s?.unit || '';
-            unitLabel.textContent = lineItems[idx].unit;
+            lineItems[idx].uomId = ''; // reset to the new stock item's own unit
+            renderUnitPicker(s);
           },
         });
+        renderUnitPicker(stockItems.find(s => s.id === item.stockItemId));
         const qtyInp = el('input', { type: 'number', step: '0.001', placeholder: 'Qty', value: item.quantity, className: 'w-20 flex-shrink-0 border border-gray-200 rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-brand' });
         qtyInp.addEventListener('input', () => { lineItems[idx].quantity = qtyInp.value; });
         const delBtn = el('button', { className: 'text-red-400 hover:text-red-600 font-bold px-1 flex-shrink-0', onClick: () => { lineItems.splice(idx, 1); renderLines(); } }, '×');
-        linesDiv.append(el('div', { className: 'flex gap-2 items-center' }, el('div', { className: 'flex-1' }, stockPicker), qtyInp, unitLabel, delBtn));
+        linesDiv.append(el('div', { className: 'flex gap-2 items-center' }, el('div', { className: 'flex-1' }, stockPicker), qtyInp, unitSelectWrap, delBtn));
       });
     }
     renderLines();
@@ -8662,7 +8705,7 @@ function renderAdminRecipes(data, container, reload) {
         saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
         const ingredients = lineItems
           .filter(l => l.stockItemId && l.quantity)
-          .map(l => ({ stockItemId: l.stockItemId, quantity: parseFloat(l.quantity), unit: l.unit || undefined }));
+          .map(l => ({ stockItemId: l.stockItemId, quantity: parseFloat(l.quantity), uomId: l.uomId || undefined }));
         const payload = {
           name: nameInp.value.trim(),
           yieldQty: yieldNum,
@@ -8771,15 +8814,21 @@ function renderAdminRecipes(data, container, reload) {
         el('div', { className: 'col-span-2 text-right' }, 'Status'),
       ));
       recipe.ingredients.forEach(ing => {
-        const needed  = Number(ing.quantity);
+        const enteredQty  = Number(ing.quantity);
+        // Ingredient quantity is entered in ing.uom; convert into the stock item's uom
+        // (what currentStock/costPerUnit are tracked in) before costing/comparing — a
+        // no-op today since the ingredient editor always matches the two, but correct
+        // if that ever diverges (e.g. a future recipe written in a different unit).
+        const needed  = convertQty(enteredQty, ing.uom, ing.stockItem?.uom);
         const inStock = Number(ing.stockItem?.currentStock ?? 0);
         const cost    = needed * Number(ing.stockItem?.costPerUnit ?? 0);
         costPerBatch += cost;
         const sufficient = inStock >= needed;
         const uom = ing.stockItem?.uom?.abbreviation || ing.stockItem?.unit || ing.unit || '';
+        const enteredUom = ing.uom?.abbreviation || uom;
         ingTable.append(el('div', { className: 'grid grid-cols-12 gap-x-2 px-4 py-2.5 border-t border-gray-50 items-center' },
           el('div', { className: 'col-span-4 font-semibold text-sm text-gray-800 truncate' }, ing.stockItem?.name || ing.stockItemId),
-          el('div', { className: 'col-span-2 text-right text-sm text-gray-600' }, `${needed % 1 === 0 ? needed : needed.toFixed(3)} ${uom}`),
+          el('div', { className: 'col-span-2 text-right text-sm text-gray-600' }, `${enteredQty % 1 === 0 ? enteredQty : enteredQty.toFixed(3)} ${enteredUom}`),
           el('div', { className: 'col-span-2 text-right text-sm text-gray-400' }, `${Number(inStock).toFixed(2)} ${uom}`),
           el('div', { className: 'col-span-2 text-right text-xs font-semibold text-gray-600' }, cost > 0 ? `R${cost.toFixed(2)}` : '—'),
           el('div', { className: 'col-span-2 text-right' },
@@ -8957,12 +9006,13 @@ function renderAdminProduction(data, container, reload) {
             el('div', { className: 'col-span-2 text-right' }, 'Feasible?'),
           ));
           recipeData.ingredients.forEach(ing => {
-            const needed  = Number(ing.quantity) * batches;
+            const needed  = convertQty(Number(ing.quantity), ing.uom, ing.stockItem?.uom) * batches;
             const inStock = Number(ing.stockItem?.currentStock ?? 0);
             const ok      = inStock >= needed;
+            const uom = ing.stockItem?.uom?.abbreviation || ing.stockItem?.unit || ing.unit || '';
             ingTable.append(el('div', { className: 'grid grid-cols-12 px-3 py-2 border-t border-gray-50 items-center' },
               el('div', { className: 'col-span-4 font-semibold text-sm text-gray-800' }, ing.stockItem?.name || ing.stockItemId),
-              el('div', { className: 'col-span-3 text-right text-sm text-gray-600' }, `${needed.toFixed(3)} ${ing.unit}`),
+              el('div', { className: 'col-span-3 text-right text-sm text-gray-600' }, `${needed.toFixed(3)} ${uom}`),
               el('div', { className: 'col-span-3 text-right text-sm text-gray-500' }, `${inStock.toFixed(3)}`),
               el('div', { className: 'col-span-2 text-right' },
                 el('span', { className: `text-xs font-bold px-1.5 py-0.5 rounded-full ${ok ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}` }, ok ? '✓' : '✗ Short')

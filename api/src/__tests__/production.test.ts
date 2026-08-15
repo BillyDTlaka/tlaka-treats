@@ -60,6 +60,39 @@ describe('POST /production/:id/complete', () => {
     expect(prisma.packagingRun.create).toHaveBeenCalledTimes(1)
   })
 
+  it('PROD-RUN-04 — an ingredient recorded in a different (but compatible) unit than its stock item converts before deducting stock', async () => {
+    // Recipe calls for 500ml of milk; the stock item tracks currentStock in litres.
+    // Without conversion this would wrongly try to decrement 500 (not 0.5) litres.
+    const l  = { id: 'uom-l',  abbreviation: 'l',  type: 'VOLUME', toBaseFactor: 1 }
+    const ml = { id: 'uom-ml', abbreviation: 'ml', type: 'VOLUME', toBaseFactor: 0.001 }
+    prisma.permission.findMany.mockResolvedValueOnce([ADMIN_PRODUCT_PERMISSION])
+    prisma.productionRun.findUnique.mockResolvedValueOnce(makeRun({
+      recipe: {
+        id: 'recipe-1',
+        name: 'Custard Scones (40)',
+        ingredients: [
+          { id: 'ri-1', stockItemId: 'stock-milk', quantity: 500, uom: ml, stockItem: { id: 'stock-milk', name: 'Milk', currentStock: 10, uom: l } },
+        ],
+      },
+    }))
+    prisma.stockMovement.create.mockResolvedValue({})
+    prisma.stockItem.update.mockResolvedValue({})
+    prisma.productionRun.update.mockResolvedValueOnce({ id: 'run-1', status: 'COMPLETED' })
+    prisma.packagingRun.create.mockResolvedValueOnce({ id: 'pkg-1' })
+
+    const token = adminToken(app)
+    const res = await supertest(app.server)
+      .post('/production/run-1/complete')
+      .set('Authorization', `Bearer ${token}`)
+      .send()
+
+    expect(res.status).toBe(200)
+    expect(prisma.stockItem.update).toHaveBeenCalledWith({
+      where: { id: 'stock-milk' },
+      data: { currentStock: { decrement: 0.5 } },
+    })
+  })
+
   it('PROD-RUN-02 — refuses to complete when an ingredient is short, and touches no stock', async () => {
     prisma.permission.findMany.mockResolvedValueOnce([ADMIN_PRODUCT_PERMISSION])
     prisma.productionRun.findUnique.mockResolvedValueOnce(makeRun({

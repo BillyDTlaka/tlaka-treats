@@ -9,7 +9,10 @@ const recipeRoutes: FastifyPluginAsync = async (fastify) => {
     return db.recipe.findMany({
       include: {
         ingredients: {
-          include: { stockItem: { select: { id: true, name: true, unit: true, currentStock: true, costPerUnit: true, uom: { select: { abbreviation: true } } } } },
+          include: {
+            uom: true,
+            stockItem: { select: { id: true, name: true, unit: true, currentStock: true, costPerUnit: true, uom: { select: { id: true, abbreviation: true, type: true } } } },
+          },
         },
         _count: { select: { productionRuns: true } },
       },
@@ -24,7 +27,7 @@ const recipeRoutes: FastifyPluginAsync = async (fastify) => {
       where: { id },
       include: {
         ingredients: {
-          include: { stockItem: true },
+          include: { stockItem: { include: { uom: true } }, uom: true },
         },
         productionRuns: { orderBy: { createdAt: 'desc' }, take: 10 },
       },
@@ -47,10 +50,10 @@ const recipeRoutes: FastifyPluginAsync = async (fastify) => {
         notes,
         instructions: instructions || undefined,
         ingredients: ingredients?.length
-          ? { create: ingredients.map((i: any) => ({ stockItemId: i.stockItemId, quantity: i.quantity, unit: i.unit, notes: i.notes })) }
+          ? { create: ingredients.map((i: any) => ({ stockItemId: i.stockItemId, quantity: i.quantity, unit: i.unit, uomId: i.uomId || undefined, notes: i.notes })) }
           : undefined,
       },
-      include: { ingredients: { include: { stockItem: true } } },
+      include: { ingredients: { include: { stockItem: { include: { uom: true } }, uom: true } } },
     })
     return reply.code(201).send(recipe)
   })
@@ -81,11 +84,12 @@ const recipeRoutes: FastifyPluginAsync = async (fastify) => {
             stockItemId: i.stockItemId,
             quantity: i.quantity,
             unit: i.unit,
+            uomId: i.uomId || undefined,
             notes: i.notes || undefined,
           })),
         },
       },
-      include: { ingredients: { include: { stockItem: true } } },
+      include: { ingredients: { include: { stockItem: { include: { uom: true } }, uom: true } } },
     })
     return reply.code(200).send(updated)
   })
