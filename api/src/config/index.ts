@@ -38,6 +38,7 @@ export const config = {
     username:    process.env.ODOO_USERNAME     || '',
     apiKey:      process.env.ODOO_API_KEY      || '',
     companyName: process.env.ODOO_COMPANY_NAME || '',
+    timeoutMs:   Number(process.env.ODOO_TIMEOUT_MS) || 15_000,
 
     // Order → invoice sync
     autoCreateProducts: process.env.ODOO_AUTO_CREATE_PRODUCTS === 'true',
