@@ -273,8 +273,15 @@ export async function syncOrderInvoice(prisma: PrismaClient, orderId: string): P
   })
   if (!order) return { ok: false, error: 'Order not found' }
 
-  if (order.status !== 'CONFIRMED') {
-    return { ok: false, error: `Order is ${order.status}, not CONFIRMED — invoice sync only runs for confirmed orders` }
+  // Only genuinely blocks the two statuses where invoicing makes no sense: PENDING (never
+  // confirmed, nothing to invoice yet) and CANCELLED (cancelOrderInvoice is the dedicated
+  // handler for that transition). Every other status (CONFIRMED and everything after it —
+  // BAKING, READY, OUT_FOR_DELIVERY, DELIVERED) is allowed through, since an order that's
+  // moved on still needs its already-linked invoice refreshed/kept in sync — this used to
+  // hard-require CONFIRMED specifically, which silently broke both the DELIVERED refresh
+  // and the manual admin "Retry" button for any order past CONFIRMED.
+  if (order.status === 'PENDING' || order.status === 'CANCELLED') {
+    return { ok: false, error: `Order is ${order.status} — invoice sync only runs once an order has been confirmed` }
   }
 
   try {
@@ -377,4 +384,40 @@ export async function cancelOrderInvoice(prisma: PrismaClient, orderId: string):
     })
     return { ok: false, error: message }
   }
+}
+
+// syncOrderInvoice only ever runs when something happens locally (order confirmed,
+// cancelled, delivered, or a payment recorded) — nothing re-checks Odoo's side on its
+// own, so an invoice posted or paid directly in Odoo leaves the local status stale until
+// one of those events happens to fire again. This sweeps every order with a linked
+// invoice that isn't already in a final state (PAID/CANCELLED) and re-syncs it, so status
+// catches up on its own — see server.ts for the periodic call, and the manual admin
+// "reconcile now" endpoint in orders.routes.ts for an on-demand version of the same thing.
+export interface ReconcileResult {
+  checked: number
+  succeeded: number
+  failed: number
+  results: Array<{ orderId: string; ok: boolean; error?: string }>
+}
+
+export async function reconcileOpenOrderInvoices(prisma: PrismaClient, limit = 50): Promise<ReconcileResult> {
+  const db = prisma as any
+  const orders = await db.order.findMany({
+    where: { odooInvoiceId: { not: null }, odooInvoiceStatus: { notIn: ['PAID', 'CANCELLED'] } },
+    select: { id: true },
+    orderBy: { odooInvoiceSyncedAt: 'asc' }, // stalest first
+    take: limit,
+  })
+
+  const results: ReconcileResult['results'] = []
+  let succeeded = 0
+  let failed = 0
+
+  for (const order of orders) {
+    const result = await syncOrderInvoice(prisma, order.id)
+    result.ok ? succeeded++ : failed++
+    results.push({ orderId: order.id, ok: result.ok, error: result.error })
+  }
+
+  return { checked: orders.length, succeeded, failed, results }
 }

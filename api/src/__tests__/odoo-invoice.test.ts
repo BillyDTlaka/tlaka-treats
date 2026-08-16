@@ -1,4 +1,4 @@
-import { syncOrderInvoice, cancelOrderInvoice, _resetBankJournalCacheForTests } from '../shared/services/odoo-invoice.service'
+import { syncOrderInvoice, cancelOrderInvoice, reconcileOpenOrderInvoices, _resetBankJournalCacheForTests } from '../shared/services/odoo-invoice.service'
 import { _resetOdooClientCacheForTests } from '../shared/services/odoo-client'
 import { createMockPrisma, makeOrder } from './helpers/mock-prisma'
 import { installMockOdoo } from './helpers/mock-odoo'
@@ -292,14 +292,33 @@ describe('syncOrderInvoice', () => {
     expect(finalUpdate.data.odooInvoiceSyncError).toMatch(/differs/i)
   })
 
-  it('does not sync orders that are not CONFIRMED', async () => {
+  it('does not sync a PENDING order — nothing to invoice before it is confirmed', async () => {
     prisma.order.findUnique.mockResolvedValueOnce(mappedOrder({ status: 'PENDING' }))
 
     const result = await syncOrderInvoice(prisma, 'order-1')
 
     expect(result.ok).toBe(false)
-    expect(result.error).toMatch(/not CONFIRMED/)
+    expect(result.error).toMatch(/PENDING/)
     expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it('does not sync a CANCELLED order — cancelOrderInvoice is the dedicated handler for that', async () => {
+    prisma.order.findUnique.mockResolvedValueOnce(mappedOrder({ status: 'CANCELLED' }))
+
+    const result = await syncOrderInvoice(prisma, 'order-1')
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/CANCELLED/)
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it('DOES sync an order past CONFIRMED (e.g. DELIVERED) — regression: this used to hard-require exactly CONFIRMED, which silently broke refreshing an already-linked invoice once the order moved on', async () => {
+    prisma.order.findUnique.mockResolvedValueOnce(mappedOrder({ status: 'DELIVERED' }))
+
+    const result = await syncOrderInvoice(prisma, 'order-1')
+
+    expect(result.ok).toBe(true)
+    expect(result.action).toBe('CREATED')
   })
 })
 
@@ -438,5 +457,93 @@ describe('syncOrderInvoice — payment registration', () => {
     expect(result.action).toBe('ALREADY_LINKED')
     const paymentFailUpdate = prisma.order.update.mock.calls.find((c: any) => c[0].data.odooPaymentSyncStatus === 'FAILED')
     expect(paymentFailUpdate).toBeDefined()
+  })
+})
+
+describe('reconcileOpenOrderInvoices', () => {
+  let prisma: ReturnType<typeof createMockPrisma>
+  let odoo: ReturnType<typeof installMockOdoo>
+
+  beforeEach(() => {
+    prisma = createMockPrisma()
+    odoo = installMockOdoo()
+    _resetOdooClientCacheForTests()
+    _resetBankJournalCacheForTests()
+  })
+
+  function linkedOrder(overrides: Record<string, any> = {}) {
+    return makeOrder({
+      customer: { id: 'user-1', email: 'test@example.com', phone: null, firstName: 'Test', lastName: 'User', odooPartnerId: '42' },
+      items: [{
+        id: 'item-1', variantId: 'variant-1', quantity: 2, unitPrice: 85, subtotal: 170,
+        variant: { id: 'variant-1', name: '12 Pack', odooProductId: 200, odooProductReference: null, product: { name: 'Choc Chip Cookies' } },
+      }],
+      status: 'DELIVERED',
+      ...overrides,
+    })
+  }
+
+  it('only queries orders with a linked invoice that is not already PAID/CANCELLED', async () => {
+    prisma.order.findMany.mockResolvedValueOnce([])
+
+    await reconcileOpenOrderInvoices(prisma)
+
+    expect(prisma.order.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { odooInvoiceId: { not: null }, odooInvoiceStatus: { notIn: ['PAID', 'CANCELLED'] } },
+    }))
+  })
+
+  it('re-syncs every order found and reports how many succeeded', async () => {
+    odoo.invoicesById.set(901, {
+      id: 901, name: 'INV/2026/0010', state: 'posted', payment_state: 'not_paid',
+      amount_untaxed: 170, amount_tax: 0, amount_total: 170,
+      partner_id: [42, ''], invoice_origin: 'TT-ORD-000010', ref: 'TT-ORD-000010', invoice_date: '2026-08-04',
+    })
+    odoo.invoicesById.set(902, {
+      id: 902, name: 'INV/2026/0011', state: 'paid', payment_state: 'paid',
+      amount_untaxed: 170, amount_tax: 0, amount_total: 170,
+      partner_id: [42, ''], invoice_origin: 'TT-ORD-000011', ref: 'TT-ORD-000011', invoice_date: '2026-08-04',
+    })
+    prisma.order.findMany.mockResolvedValueOnce([{ id: 'order-1' }, { id: 'order-2' }])
+    prisma.order.findUnique
+      .mockResolvedValueOnce(linkedOrder({ id: 'order-1', odooInvoiceId: 901 }))
+      .mockResolvedValueOnce(linkedOrder({ id: 'order-2', odooInvoiceId: 902 }))
+
+    const result = await reconcileOpenOrderInvoices(prisma)
+
+    expect(result).toEqual({
+      checked: 2,
+      succeeded: 2,
+      failed: 0,
+      results: [
+        { orderId: 'order-1', ok: true, error: undefined },
+        { orderId: 'order-2', ok: true, error: undefined },
+      ],
+    })
+  })
+
+  it('a failure on one order does not stop the rest from being checked', async () => {
+    prisma.order.findMany.mockResolvedValueOnce([{ id: 'order-1' }, { id: 'order-2' }])
+    prisma.order.findUnique
+      .mockResolvedValueOnce(null) // order-1 vanished — syncOrderInvoice reports "Order not found"
+      .mockResolvedValueOnce(linkedOrder({ id: 'order-2', status: 'PENDING' })) // order-2 blocked by its own guard
+
+    const result = await reconcileOpenOrderInvoices(prisma)
+
+    expect(result.checked).toBe(2)
+    expect(result.succeeded).toBe(0)
+    expect(result.failed).toBe(2)
+    expect(result.results).toEqual([
+      { orderId: 'order-1', ok: false, error: 'Order not found' },
+      { orderId: 'order-2', ok: false, error: expect.stringContaining('PENDING') },
+    ])
+  })
+
+  it('respects a custom limit', async () => {
+    prisma.order.findMany.mockResolvedValueOnce([])
+
+    await reconcileOpenOrderInvoices(prisma, 5)
+
+    expect(prisma.order.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 5 }))
   })
 })

@@ -552,6 +552,31 @@ describe('Order routes', () => {
         data: expect.objectContaining({ recipeId: 'recipe-1', orderId: 'order-1' }),
       })
     })
+
+    it('ORD-25 — delivering an order also refreshes its invoice status, not just COGS/commission (regression: DELIVERED used to never touch the invoice at all, so it stayed frozen at whatever it was when confirmed)', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'order' }])
+      const deliveredOrder = makeOrder({ status: 'DELIVERED', cogsAmount: 50, odooCogsMoveId: 999 })
+      prisma.order.findUnique
+        .mockResolvedValueOnce(deliveredOrder)       // updateStatus's own lookup
+        .mockResolvedValueOnce(deliveredOrder)       // syncOrderInvoice's independent lookup
+        .mockResolvedValueOnce(deliveredOrder)       // syncOrderCogs's independent lookup
+      prisma.order.update
+        .mockResolvedValueOnce(makeOrder({ status: 'DELIVERED' })) // DELIVERED transition
+        .mockResolvedValueOnce({}) // syncOrderInvoice persisting its own FAILED status (Odoo unconfigured)
+        .mockResolvedValueOnce({}) // syncOrderCogs persisting its own FAILED status (Odoo unconfigured)
+      prisma.commission.findUnique.mockResolvedValueOnce(null) // no ambassador — nothing to bill
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .patch('/orders/order-1/status')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'DELIVERED' })
+
+      expect(res.status).toBe(200)
+      // Previously `odoo` was only ever set for CONFIRMED/CANCELLED — now DELIVERED sets it too.
+      expect(res.body.odoo).toBeDefined()
+      expect(res.body.odoo.error).toMatch(/Odoo is not configured/)
+    })
   })
 
   // ── POST /orders/:id/payment ───────────────────────────────────────────────
@@ -647,6 +672,34 @@ describe('Order routes', () => {
       const token = customerToken(app)
       const res = await supertest(app.server)
         .post('/orders/order-1/odoo-invoice/retry')
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(res.status).toBe(403)
+    })
+  })
+
+  // ── POST /orders/odoo-invoice/reconcile ───────────────────────────────────
+
+  describe('POST /orders/odoo-invoice/reconcile', () => {
+    it('admin can trigger the reconciliation sweep on demand', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([ADMIN_PERMISSION])
+      prisma.order.findMany.mockResolvedValueOnce([])
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .post('/orders/odoo-invoice/reconcile')
+        .set('Authorization', `Bearer ${token}`)
+
+      expect(res.status).toBe(200)
+      expect(res.body).toEqual({ checked: 0, succeeded: 0, failed: 0, results: [] })
+    })
+
+    it('returns 403 for a customer attempting to trigger it', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([])
+
+      const token = customerToken(app)
+      const res = await supertest(app.server)
+        .post('/orders/odoo-invoice/reconcile')
         .set('Authorization', `Bearer ${token}`)
 
       expect(res.status).toBe(403)

@@ -321,8 +321,13 @@ export class OrderService {
     // so the result is visible immediately. Never throws: Odoo failures are persisted on
     // the order (odooInvoiceStatus/odooInvoiceSyncError) but don't affect the
     // already-committed local status change, stock, finance or commission records.
+    // DELIVERED also re-syncs (not just CONFIRMED) — otherwise the invoice's local status
+    // freezes at whatever it was when the order was confirmed and never learns that it
+    // was later posted/paid in Odoo, even though the order itself keeps moving. This is
+    // the same idempotent function either way — re-reads Odoo's live invoice state and
+    // only pushes updated lines if it's still draft.
     let odoo: OdooInvoiceSyncResult | undefined
-    if (status === 'CONFIRMED') {
+    if (status === 'CONFIRMED' || status === 'DELIVERED') {
       odoo = await syncOrderInvoice(this.prisma, orderId)
     } else if (status === 'CANCELLED') {
       odoo = await cancelOrderInvoice(this.prisma, orderId)

@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs'
 import { OrderService } from './orders.service'
 import { authenticate, authorize } from '../../shared/middleware/auth'
 import { AppError, NotFoundError } from '../../shared/errors'
-import { syncOrderInvoice } from '../../shared/services/odoo-invoice.service'
+import { syncOrderInvoice, reconcileOpenOrderInvoices } from '../../shared/services/odoo-invoice.service'
 import { syncOrderCogs } from '../../shared/services/odoo-cogs.service'
 
 const orderRoutes: FastifyPluginAsync = async (fastify) => {
@@ -261,6 +261,16 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
   }, async (request) => {
     const { id } = request.params as { id: string }
     return syncOrderCogs(fastify.prisma, id)
+  })
+
+  // POST /orders/odoo-invoice/reconcile - admin manually runs the same sweep the periodic
+  // background job runs every 30 minutes (see server.ts) — re-syncs every order with a
+  // linked invoice that isn't already PAID/CANCELLED, so an invoice posted/paid directly
+  // in Odoo doesn't have to wait for the next scheduled pass to be picked up locally.
+  fastify.post('/odoo-invoice/reconcile', {
+    preHandler: [authenticate, authorize('manage', 'order')],
+  }, async () => {
+    return reconcileOpenOrderInvoices(fastify.prisma)
   })
 
   // POST /orders/:id/payment - admin records a cash/EFT/manual-card payment
