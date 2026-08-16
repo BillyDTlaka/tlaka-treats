@@ -166,7 +166,7 @@ const api = {
     getById: (id) => req('GET', `/orders/${id}`),
     update: (id, data) => req('PATCH', `/orders/${id}`, data),
     updateItems: (id, items) => req('PUT', `/orders/${id}/items`, { items }),
-    updateStatus: (id, status, note) => req('PATCH', `/orders/${id}/status`, { status, ...(note ? { note } : {}) }),
+    updateStatus: (id, status, note, fulfillmentMode) => req('PATCH', `/orders/${id}/status`, { status, ...(note ? { note } : {}), ...(fulfillmentMode ? { fulfillmentMode } : {}) }),
     invoice:      (id)               => req('POST',  `/orders/${id}/invoice`),
     retryOdooInvoice: (id)           => req('POST',  `/orders/${id}/odoo-invoice/retry`),
     retryOdooCogs:    (id)           => req('POST',  `/orders/${id}/odoo-cogs/retry`),
@@ -279,7 +279,7 @@ const api = {
     getAll:   ()      => req('GET',   '/packaging'),
     getById:  (id)    => req('GET',   `/packaging/${id}`),
     update:   (id, d) => req('PATCH', `/packaging/${id}`, d),
-    complete: (id)    => req('POST',  `/packaging/${id}/complete`),
+    complete: (id, data)    => req('POST',  `/packaging/${id}/complete`, data || {}),
   },
   uom: {
     getAll:   ()         => req('GET',    '/uom'),
@@ -5391,6 +5391,21 @@ const STATUS_NEXT_ACTION = {
   READY:     { label: '🚚 Mark Delivered',next: 'DELIVERED',  btnClass: 'bg-gray-600 hover:bg-gray-700 text-white'     },
 };
 
+// Whether any item on this order is for a product with an active, bakeable recipe —
+// determines whether PENDING shows a Fulfil-from-Inventory/Bake choice instead of a
+// single Confirm button. Mirrors OrderService.partitionBakeable on the backend.
+function orderHasBakeableItem(order, recipes) {
+  const recipeByProductId = new Set(
+    (recipes || []).filter(r => r.isActive && Number(r.yieldPerBatch) > 0).map(r => r.outputProductId)
+  );
+  // No stockItem requirement here — a made-to-order product (e.g. fresh scones) may never
+  // have been stocked yet; its StockItem is created lazily on first packaging.
+  return (order.items || []).some(item =>
+    item.variant?.product?.classification === 'SELLABLE' &&
+    recipeByProductId.has(item.variant.product.id)
+  );
+}
+
 function renderAdminOrders(data, container, reload) {
   let allOrders = [...data.orders];
   let allQuotes = [...(data.quotes || [])];
@@ -5824,6 +5839,30 @@ function renderAdminOrders(data, container, reload) {
     }
     if (statusRow.children.length) wrap.append(statusRow);
 
+    // Baking progress — shows the production/packaging run(s) this order triggered so
+    // an admin doesn't have to go dig through the Operations module to see how far along
+    // it is. Auto-advances to READY on its own once every run finishes (see packaging
+    // completion → OrderService.completeBakingForOrder); nothing to click here.
+    if (order.status === 'BAKING' && order.productionRuns?.length) {
+      const runsDone = order.productionRuns.filter(r => r.status === 'COMPLETED' && r.packagingRun?.status === 'COMPLETED').length;
+      wrap.append(
+        el('div', { className: 'bg-orange-50 border border-orange-100 rounded-xl p-4 mb-4' },
+          el('p', { className: 'text-xs font-black text-orange-700 uppercase tracking-wider mb-2' }, `🔥 Baking — ${runsDone} of ${order.productionRuns.length} batch(es) done`),
+          ...order.productionRuns.map(run =>
+            el('div', { className: 'flex items-center justify-between text-sm py-1' },
+              el('span', { className: 'text-gray-700' }, run.recipe?.name || 'Production run'),
+              el('span', { className: 'text-xs font-bold text-gray-500' },
+                run.packagingRun?.status === 'COMPLETED' ? '✓ Packaged' :
+                run.status === 'COMPLETED' ? 'Baked — awaiting packaging' :
+                run.status === 'IN_PROGRESS' ? 'Baking…' : 'Planned'
+              )
+            )
+          ),
+          el('p', { className: 'text-xs text-orange-600 mt-2' }, 'This order moves to Ready automatically once every batch is packaged.'),
+        )
+      );
+    }
+
     // Action panel
     if (!isTerminal) {
       const nextAction = STATUS_NEXT_ACTION[order.status];
@@ -5855,7 +5894,32 @@ function renderAdminOrders(data, container, reload) {
       });
 
       const actionsRow = el('div', { className: 'flex flex-wrap gap-2 items-center' });
-      if (nextAction) {
+      const labels = { BAKING: '🍞 Sent to baking', READY: '✅ Marked Ready', DELIVERED: '🚚 Delivered', CONFIRMED: '✓ Confirmed — stock deducted from inventory' };
+
+      async function runStatusChange(btn, defaultLabel, fulfillmentMode) {
+        btn.disabled = true; btn.textContent = 'Updating…';
+        try {
+          const result = await api.orders.updateStatus(order.id, 'CONFIRMED', undefined, fulfillmentMode);
+          const actual = result?.status || 'CONFIRMED';
+          toast(actual === 'BAKING' ? '🔥 Baking started — production run created' : (labels[actual] || `Marked ${actual} ✓`), 'success');
+          await refreshDetail(order.id);
+        } catch (err) { toast(err.message || 'Failed'); btn.disabled = false; btn.textContent = defaultLabel; }
+      }
+
+      if (order.status === 'PENDING' && orderHasBakeableItem(order, data.recipes)) {
+        // At least one item is for a product with an active recipe — let the admin choose
+        // whether to fulfil from existing stock or bake fresh for this order (which passes
+        // through the normal Production → Packaging flow before auto-advancing to READY).
+        const fulfillBtn = el('button', {
+          className: 'text-sm font-bold px-5 py-2.5 rounded-xl transition bg-blue-500 hover:bg-blue-600 text-white',
+        }, '📦 Fulfill from Inventory');
+        fulfillBtn.addEventListener('click', () => runStatusChange(fulfillBtn, '📦 Fulfill from Inventory'));
+        const bakeBtn = el('button', {
+          className: 'text-sm font-bold px-5 py-2.5 rounded-xl transition bg-orange-500 hover:bg-orange-600 text-white',
+        }, '🔥 Bake');
+        bakeBtn.addEventListener('click', () => runStatusChange(bakeBtn, '🔥 Bake', 'BAKE'));
+        actionsRow.append(fulfillBtn, bakeBtn);
+      } else if (nextAction) {
         const advBtn = el('button', {
           className: `text-sm font-bold px-6 py-2.5 rounded-xl transition ${nextAction.btnClass}`,
         }, nextAction.label);
@@ -5864,7 +5928,6 @@ function renderAdminOrders(data, container, reload) {
           try {
             const result = await api.orders.updateStatus(order.id, nextAction.next);
             const actual = result?.status || nextAction.next;
-            const labels = { BAKING: '🍞 Sent to baking', READY: '✅ Marked Ready', DELIVERED: '🚚 Delivered', CONFIRMED: '✓ Confirmed — stock deducted from inventory' };
             toast(labels[actual] || `Marked ${actual} ✓`, 'success');
             await refreshDetail(order.id);
           } catch (err) { toast(err.message || 'Failed'); advBtn.disabled = false; advBtn.textContent = nextAction.label; }
@@ -8881,6 +8944,54 @@ function renderAdminRecipes(data, container, reload) {
   renderPage();
 }
 
+// Completing a packaging run asks how many units actually came out — real output doesn't
+// always match the recipe's expected yield exactly (breakage, oven variance) — plus how
+// many were waste/reject, since only the good units should count as sellable inventory.
+function showCompletePackagingForm(pr, run, onDone) {
+  const expected = pr.batchCount * Number(run.recipe?.yieldPerBatch || 0);
+  const modal = el('div', { className: 'fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4' });
+  const close = () => document.body.removeChild(modal);
+
+  const producedInp = el('input', {
+    type: 'number', step: '1', min: '0', value: String(expected),
+    className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-1',
+  });
+  const wastedInp = el('input', {
+    type: 'number', step: '1', min: '0', value: '0',
+    className: 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand mb-3',
+  });
+
+  const saveBtn = el('button', {
+    className: 'w-full bg-green-500 text-white font-black py-2.5 rounded-xl hover:opacity-90',
+    onClick: async () => {
+      const unitsProduced = parseInt(producedInp.value, 10);
+      const unitsWasted = parseInt(wastedInp.value, 10) || 0;
+      if (isNaN(unitsProduced) || unitsProduced < 0) { toast('Enter how many units were produced', 'error'); return; }
+      saveBtn.disabled = true; saveBtn.textContent = 'Completing…';
+      try {
+        const result = await api.packaging.complete(pr.id, { unitsProduced, unitsWasted });
+        toast(`Packaging done — ${unitsProduced} unit(s) added to inventory ✅${result?.orderAdvanced ? ' · order moved to Ready' : ''}`, 'success');
+        close(); onDone();
+      } catch (e) { toast(e?.message || 'Failed', 'error'); saveBtn.disabled = false; saveBtn.textContent = 'Complete Packaging'; }
+    },
+  }, 'Complete Packaging');
+
+  modal.append(el('div', { className: 'bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl' },
+    el('div', { className: 'flex items-center justify-between mb-4' },
+      el('h3', { className: 'font-black text-gray-900' }, 'Complete Packaging'),
+      el('button', { className: 'text-gray-400 hover:text-gray-600 text-2xl font-bold', onClick: close }, '×'),
+    ),
+    el('p', { className: 'text-sm text-gray-500 mb-4' }, `Recipe expects ${expected} unit(s) from ${pr.batchCount} batch(es). Adjust if the real count came out different.`),
+    el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Units produced (good, added to inventory)'),
+    producedInp,
+    el('label', { className: 'block text-xs font-bold text-gray-500 mb-1' }, 'Units wasted / rejected'),
+    wastedInp,
+    saveBtn,
+  ));
+  modal.addEventListener('click', e => { if (e.target === modal) close(); });
+  document.body.appendChild(modal);
+}
+
 // ── PRODUCTION MANAGEMENT ─────────────────────────────────────────────────────
 function renderAdminProduction(data, container, reload) {
   const { productionRuns = [], recipes = [], stockItems = [] } = data;
@@ -9056,20 +9167,7 @@ function renderAdminProduction(data, container, reload) {
             if (pr.status === 'IN_PROGRESS') {
               const completeBtn = el('button', {
                 className: 'text-xs font-bold bg-green-500 text-white px-3 py-1 rounded-lg hover:bg-green-600',
-                onClick: () => {
-                  showConfirm({
-                    title: 'Complete packaging?',
-                    message: 'This will add finished goods to inventory.',
-                    confirmLabel: 'Complete Packaging',
-                  }, async () => {
-                    try {
-                      const result = await api.packaging.complete(pr.id);
-                      const units = result?.unitsProduced;
-                      toast(units ? `Packaging done — ${units} unit(s) added to inventory ✅` : 'Packaging completed ✅', 'success');
-                      reload();
-                    } catch(e) { toast(e?.message || 'Failed', 'error'); }
-                  });
-                }
+                onClick: () => showCompletePackagingForm(pr, run, reload),
               }, '✅ Complete Packaging');
               btnRow.append(completeBtn);
             }

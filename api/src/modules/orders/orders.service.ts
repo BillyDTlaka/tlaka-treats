@@ -86,7 +86,96 @@ export class OrderService {
     }
   }
 
-  async updateStatus(orderId: string, status: OrderStatus, note?: string) {
+  // Given SELLABLE order items and the set of active recipes for those products, splits
+  // into items that can be baked (their product has an active recipe with a usable
+  // yieldPerBatch — bakeable regardless of whether a StockItem exists yet, since a
+  // made-to-order product like fresh scones may never have been stocked before; the
+  // output StockItem is created lazily on first packaging, see packaging.routes.ts) vs
+  // items that can only be fulfilled from existing stock (no recipe — nothing to bake —
+  // and only actually deductible if a StockItem exists at all). Used both when deciding
+  // what to deduct immediately at CONFIRMED and, later, what to deduct once a BAKE
+  // order's linked production finishes (see completeBakingForOrder below).
+  private async partitionBakeable(sellableItems: any[]) {
+    const productIds = [...new Set(sellableItems.map((i: any) => i.variant.product.id))] as string[]
+    const db = this.prisma as any
+    const recipes = productIds.length
+      ? await db.recipe.findMany({
+          where: { outputProductId: { in: productIds }, isActive: true, yieldPerBatch: { gt: 0 } },
+        })
+      : []
+    const recipeByProductId = new Map<string, any>()
+    for (const r of recipes) if (!recipeByProductId.has(r.outputProductId)) recipeByProductId.set(r.outputProductId, r)
+
+    const bakeable: Array<{ item: any; recipe: any }> = []
+    const stockOnly: any[] = []
+    for (const item of sellableItems) {
+      const recipe = recipeByProductId.get(item.variant.product.id)
+      if (recipe) bakeable.push({ item, recipe })
+      else if (item.variant.product.stockItem != null) stockOnly.push(item)
+    }
+    return { bakeable, stockOnly }
+  }
+
+  private async deductStockForItem(orderId: string, item: any, noteVerb: string) {
+    const db = this.prisma as any
+    const stockItem = item.variant.product.stockItem
+    // item.quantity counts how many of *this variant* were ordered (e.g. "2 packs") —
+    // unitsPerPack converts that into a count of individual stock units to deduct.
+    const qty = Number(item.quantity) * Number(item.variant.unitsPerPack || 1)
+    await db.stockMovement.create({
+      data: {
+        stockItemId: stockItem.id,
+        type: 'ORDER_FULFILLMENT',
+        quantity: -qty,
+        reference: orderId,
+        note: `Order ${noteVerb} — ${item.variant.product.name} × ${qty}`,
+      },
+    })
+    await db.stockItem.update({
+      where: { id: stockItem.id },
+      data: { currentStock: { decrement: qty } },
+    })
+  }
+
+  // Once every production run this BAKE order triggered has finished packaging, deducts
+  // the just-baked stock for this order (any batch surplus stays in inventory for other
+  // orders/sales, per how "pass through inventory" was scoped) and advances the order to
+  // READY. Called from packaging.routes.ts after a packaging run completes. A no-op
+  // (returns null) if the order isn't in BAKING, or if any linked run is still pending —
+  // safe to call after every packaging completion regardless of whether it's the last one.
+  async completeBakingForOrder(orderId: string) {
+    const db = this.prisma as any
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        customer: { select: { email: true, phone: true, firstName: true, lastName: true } },
+        items: { include: { variant: { include: { product: { include: { stockItem: true } } } } } },
+        productionRuns: { include: { recipe: { select: { outputProductId: true } }, packagingRun: true } },
+      },
+    })
+    if (!order || order.status !== 'BAKING') return null
+    if (!order.productionRuns.length) return null
+    const allDone = order.productionRuns.every((r: any) => r.status === 'COMPLETED' && r.packagingRun?.status === 'COMPLETED')
+    if (!allDone) return null
+
+    const bakedProductIds = new Set(order.productionRuns.map((r: any) => r.recipe.outputProductId))
+    const bakedItems = (order as any).items.filter((item: any) => bakedProductIds.has(item.variant?.product?.id))
+    for (const item of bakedItems) {
+      await this.deductStockForItem(orderId, item, 'baked')
+    }
+
+    const updated = await this.prisma.order.update({
+      where: { id: orderId },
+      data: { status: 'READY', statusLogs: { create: { status: 'READY', note: 'Baking complete' } } },
+    })
+
+    const notifyOrder = { ...updated, customer: order.customer, items: order.items, total: order.total, notes: order.notes }
+    this.fireNotification(notifyOrder, order.customer as any)
+
+    return updated
+  }
+
+  async updateStatus(orderId: string, status: OrderStatus, note?: string, fulfillmentMode?: 'INVENTORY' | 'BAKE') {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: {
@@ -107,31 +196,25 @@ export class OrderService {
 
     const db = this.prisma as any
 
-    // ── Stock deduction at CONFIRMED ──────────────────────────────────────────
+    // ── Stock deduction / bake kickoff at CONFIRMED ────────────────────────────
+    // fulfillmentMode 'BAKE' defers stock deduction for recipe-backed items until
+    // their production finishes (see completeBakingForOrder) — only items with no
+    // recipe (nothing to bake) are deducted immediately either way. The default
+    // (no fulfillmentMode, i.e. fulfil-from-inventory) path is untouched — same
+    // items, same query — so it needs no extra recipe lookup at all. Note: the
+    // default path still requires an existing StockItem to deduct from (can't
+    // deduct from nothing); bakeability itself does not (see partitionBakeable).
+    let bakeable: Array<{ item: any; recipe: any }> = []
     if (status === 'CONFIRMED') {
-      const sellableItems = (order as any).items.filter(
-        (item: any) =>
-          item.variant?.product?.classification === 'SELLABLE' &&
-          item.variant?.product?.stockItem != null,
-      )
-      for (const item of sellableItems) {
-        const stockItem = item.variant.product.stockItem
-        // item.quantity counts how many of *this variant* were ordered (e.g. "2 packs") —
-        // unitsPerPack converts that into a count of individual stock units to deduct.
-        const qty = Number(item.quantity) * Number(item.variant.unitsPerPack || 1)
-        await db.stockMovement.create({
-          data: {
-            stockItemId: stockItem.id,
-            type: 'ORDER_FULFILLMENT',
-            quantity: -qty,
-            reference: orderId,
-            note: `Order confirmed — ${item.variant.product.name} × ${qty}`,
-          },
-        })
-        await db.stockItem.update({
-          where: { id: stockItem.id },
-          data: { currentStock: { decrement: qty } },
-        })
+      const sellableItems = (order as any).items.filter((item: any) => item.variant?.product?.classification === 'SELLABLE')
+      let toDeductNow = sellableItems.filter((item: any) => item.variant?.product?.stockItem != null)
+      if (fulfillmentMode === 'BAKE') {
+        const partitioned = await this.partitionBakeable(sellableItems)
+        bakeable = partitioned.bakeable
+        toDeductNow = partitioned.stockOnly
+      }
+      for (const item of toDeductNow) {
+        await this.deductStockForItem(orderId, item, 'confirmed')
       }
     }
 
@@ -255,7 +338,26 @@ export class OrderService {
       cogsOdoo = await syncOrderCogs(this.prisma, orderId)
     }
 
-    return { ...updated, ...(odoo ? { odoo } : {}), ...(commissionOdoo ? { commissionOdoo } : {}), ...(cogsOdoo ? { cogsOdoo } : {}) }
+    // ── Bake kickoff — runs after everything above so invoicing/finance/commission
+    // still fire exactly as they do for a normal CONFIRMED order; this just also
+    // creates the production run(s) and moves the order straight on to BAKING,
+    // which completeBakingForOrder later resolves once packaging finishes.
+    let finalOrder = updated
+    if (status === 'CONFIRMED' && bakeable.length) {
+      for (const { item, recipe } of bakeable) {
+        const orderedUnits = Number(item.quantity) * Number(item.variant.unitsPerPack || 1)
+        const batches = Math.ceil(orderedUnits / Number(recipe.yieldPerBatch))
+        await db.productionRun.create({
+          data: { recipeId: recipe.id, batches, orderId, status: 'PLANNED', notes: `Baking for order ${orderId}` },
+        })
+      }
+      finalOrder = await this.prisma.order.update({
+        where: { id: orderId },
+        data: { status: 'BAKING', statusLogs: { create: { status: 'BAKING', note: 'Baking started' } } },
+      })
+    }
+
+    return { ...finalOrder, ...(odoo ? { odoo } : {}), ...(commissionOdoo ? { commissionOdoo } : {}), ...(cogsOdoo ? { cogsOdoo } : {}) }
   }
 
   // Records a cash/EFT/manual-card payment against an order (there was previously no way
@@ -310,6 +412,7 @@ export class OrderService {
         commission: true,
         items: { include: { variant: { include: { product: true } } } },
         statusLogs: { orderBy: { createdAt: 'asc' } },
+        productionRuns: { include: { recipe: { select: { id: true, name: true } }, packagingRun: true } },
       },
       orderBy: { createdAt: 'desc' },
     })
@@ -321,6 +424,7 @@ export class OrderService {
     commission: true,
     items: { include: { variant: { include: { product: true } } } },
     statusLogs: { orderBy: { createdAt: 'asc' } as const },
+    productionRuns: { include: { recipe: { select: { id: true, name: true } }, packagingRun: true } },
   }
 
   async getById(orderId: string) {

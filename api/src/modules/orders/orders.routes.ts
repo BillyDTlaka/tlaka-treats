@@ -240,8 +240,8 @@ const orderRoutes: FastifyPluginAsync = async (fastify) => {
     preHandler: [authenticate, authorize('update', 'order')],
   }, async (request) => {
     const { id } = request.params as { id: string }
-    const { status, note } = request.body as { status: any; note?: string }
-    return orderService.updateStatus(id, status, note)
+    const { status, note, fulfillmentMode } = request.body as { status: any; note?: string; fulfillmentMode?: 'INVENTORY' | 'BAKE' }
+    return orderService.updateStatus(id, status, note, fulfillmentMode)
   })
 
   // POST /orders/:id/odoo-invoice/retry - admin manually (re)runs the Odoo invoice sync.

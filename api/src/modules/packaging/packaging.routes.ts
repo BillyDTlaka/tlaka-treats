@@ -1,9 +1,11 @@
 import { FastifyPluginAsync } from 'fastify'
 import { authenticate, authorize } from '../../shared/middleware/auth'
 import { AppError, NotFoundError } from '../../shared/errors'
+import { OrderService } from '../orders/orders.service'
 
 const packagingRoutes: FastifyPluginAsync = async (fastify) => {
   const db = fastify.prisma as any
+  const orderService = new OrderService(fastify.prisma)
 
   // ── GET /packaging ─── All packaging runs
   fastify.get('/', { preHandler: [authenticate, authorize('manage', 'product')] }, async () => {
@@ -74,6 +76,7 @@ const packagingRoutes: FastifyPluginAsync = async (fastify) => {
   // ── POST /packaging/:id/complete ─── Complete run → deduct packaging stock + add finished goods
   fastify.post('/:id/complete', { preHandler: [authenticate, authorize('manage', 'product')] }, async (req, reply) => {
     const { id } = req.params as { id: string }
+    const { unitsProduced: enteredUnitsProduced, unitsWasted } = (req.body || {}) as { unitsProduced?: number; unitsWasted?: number }
 
     const run = await db.packagingRun.findUnique({
       where: { id },
@@ -115,10 +118,14 @@ const packagingRoutes: FastifyPluginAsync = async (fastify) => {
       })
     }
 
-    // 2. Add finished goods to stock (if recipe has outputProduct and yieldPerBatch set)
+    // 2. Add finished goods to stock (if recipe has outputProduct and yieldPerBatch set).
+    // Actual output can be entered at completion — it doesn't always match the recipe's
+    // expected yield exactly (breakage, oven variance) — defaulting to the computed
+    // expectation when not provided keeps every existing/programmatic caller unaffected.
     let unitsProduced = 0
     if (recipe.outputProduct && Number(recipe.yieldPerBatch) > 0) {
-      unitsProduced = batchCount * Number(recipe.yieldPerBatch)
+      const expectedUnits = batchCount * Number(recipe.yieldPerBatch)
+      unitsProduced = enteredUnitsProduced != null ? Number(enteredUnitsProduced) : expectedUnits
       let stockItem = recipe.outputProduct.stockItem
 
       // Create stockItem for output product if it doesn't exist yet
@@ -133,31 +140,46 @@ const packagingRoutes: FastifyPluginAsync = async (fastify) => {
         })
       }
 
-      await db.stockMovement.create({
-        data: {
-          stockItemId: stockItem.id,
-          type: 'PRODUCTION_OUTPUT',
-          quantity: unitsProduced,
-          reference: id,
-          note: `Finished goods from packaging run — ${recipe.name} × ${batchCount} batch(es)`,
-        },
-      })
-      await db.stockItem.update({
-        where: { id: stockItem.id },
-        data: { currentStock: { increment: unitsProduced } },
-      })
+      if (unitsProduced > 0) {
+        await db.stockMovement.create({
+          data: {
+            stockItemId: stockItem.id,
+            type: 'PRODUCTION_OUTPUT',
+            quantity: unitsProduced,
+            reference: id,
+            note: `Finished goods from packaging run — ${recipe.name} × ${batchCount} batch(es)`,
+          },
+        })
+        await db.stockItem.update({
+          where: { id: stockItem.id },
+          data: { currentStock: { increment: unitsProduced } },
+        })
+      }
     }
 
     const updated = await db.packagingRun.update({
       where: { id },
-      data: { status: 'COMPLETED', completedAt: new Date() },
+      data: {
+        status: 'COMPLETED',
+        completedAt: new Date(),
+        unitsProduced,
+        unitsWasted: unitsWasted != null ? Number(unitsWasted) : 0,
+      },
       include: {
         items: { include: { stockItem: { select: { id: true, name: true, unit: true } } } },
         productionRun: { include: { recipe: { select: { id: true, name: true } } } },
       },
     })
 
-    return reply.code(200).send({ ...updated, unitsProduced })
+    // If this run was baking for a specific order, this may be the last piece it was
+    // waiting on — check and auto-advance it to READY (no-op if other runs are still
+    // pending, or this run wasn't linked to an order at all).
+    let orderAdvanced = null
+    if (run.productionRun.orderId) {
+      orderAdvanced = await orderService.completeBakingForOrder(run.productionRun.orderId)
+    }
+
+    return reply.code(200).send({ ...updated, unitsProduced, ...(orderAdvanced ? { orderAdvanced } : {}) })
   })
 }
 

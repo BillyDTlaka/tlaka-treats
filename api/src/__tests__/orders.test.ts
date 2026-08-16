@@ -415,6 +415,143 @@ describe('Order routes', () => {
       expect(prisma.commission.update).not.toHaveBeenCalled()
       expect(prisma.financeTransaction.create).not.toHaveBeenCalled()
     })
+
+    it('ORD-22 — confirming with fulfillmentMode BAKE for a recipe-backed item skips stock deduction, creates a linked ProductionRun, and lands on BAKING', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'order' }])
+      const bakeOrder = makeOrder({
+        status: 'PENDING',
+        items: [{
+          id: 'item-1', variantId: 'variant-1', quantity: 2, unitPrice: 65, subtotal: 130,
+          variant: {
+            id: 'variant-1', name: '6 Pack', unitsPerPack: 6, odooProductId: null, odooProductReference: null,
+            product: { id: 'product-1', name: 'Scones', classification: 'SELLABLE', stockItem: { id: 'stock-1' } },
+          },
+        }],
+      })
+      prisma.order.findUnique
+        .mockResolvedValueOnce(bakeOrder) // updateStatus's own lookup
+        .mockResolvedValueOnce(makeOrder({ status: 'CONFIRMED' })) // syncOrderInvoice's independent lookup
+      prisma.recipe.findMany.mockResolvedValueOnce([{ id: 'recipe-1', outputProductId: 'product-1', yieldPerBatch: 40 }])
+      prisma.order.update
+        .mockResolvedValueOnce(makeOrder({ status: 'CONFIRMED' })) // CONFIRMED transition
+        .mockResolvedValueOnce({}) // syncOrderInvoice persisting its own FAILED status (Odoo unconfigured) — return value unused
+        .mockResolvedValueOnce(makeOrder({ status: 'BAKING' }))    // bake-kickoff transition
+      prisma.productionRun.create.mockResolvedValueOnce({ id: 'run-1' })
+      prisma.financeTransaction.findUnique.mockResolvedValueOnce(null)
+      prisma.financeAccount.findFirst.mockResolvedValueOnce(null)
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .patch('/orders/order-1/status')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'CONFIRMED', fulfillmentMode: 'BAKE' })
+
+      expect(res.status).toBe(200)
+      expect(res.body.status).toBe('BAKING')
+
+      // 2 × 6-per-pack = 12 needed; recipe yields 40/batch → 1 batch, not deducted from stock yet.
+      expect(prisma.productionRun.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ recipeId: 'recipe-1', batches: 1, orderId: 'order-1', status: 'PLANNED' }),
+      })
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled()
+      expect(prisma.stockItem.update).not.toHaveBeenCalled()
+    })
+
+    it('ORD-23 — a mixed order in BAKE mode deducts only the item with no recipe, and bakes the recipe-backed one', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'order' }])
+      const mixedOrder = makeOrder({
+        status: 'PENDING',
+        items: [
+          {
+            id: 'item-1', variantId: 'variant-1', quantity: 2, unitPrice: 65, subtotal: 130,
+            variant: {
+              id: 'variant-1', name: '6 Pack', unitsPerPack: 6, odooProductId: null, odooProductReference: null,
+              product: { id: 'product-1', name: 'Scones', classification: 'SELLABLE', stockItem: { id: 'stock-1' } },
+            },
+          },
+          {
+            id: 'item-2', variantId: 'variant-2', quantity: 3, unitPrice: 20, subtotal: 60,
+            variant: {
+              id: 'variant-2', name: 'Single', unitsPerPack: 1, odooProductId: null, odooProductReference: null,
+              product: { id: 'product-2', name: 'Bottled Juice', classification: 'SELLABLE', stockItem: { id: 'stock-2' } },
+            },
+          },
+        ],
+      })
+      prisma.order.findUnique
+        .mockResolvedValueOnce(mixedOrder)
+        .mockResolvedValueOnce(makeOrder({ status: 'CONFIRMED' }))
+      // Only product-1 (Scones) has an active recipe — product-2 (Juice) has none, so it
+      // falls back to immediate stock deduction even though the order is in BAKE mode.
+      prisma.recipe.findMany.mockResolvedValueOnce([{ id: 'recipe-1', outputProductId: 'product-1', yieldPerBatch: 40 }])
+      prisma.order.update
+        .mockResolvedValueOnce(makeOrder({ status: 'CONFIRMED' }))
+        .mockResolvedValueOnce({}) // syncOrderInvoice persisting its own FAILED status (Odoo unconfigured) — return value unused
+        .mockResolvedValueOnce(makeOrder({ status: 'BAKING' }))
+      prisma.productionRun.create.mockResolvedValueOnce({ id: 'run-1' })
+      prisma.financeTransaction.findUnique.mockResolvedValueOnce(null)
+      prisma.financeAccount.findFirst.mockResolvedValueOnce(null)
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .patch('/orders/order-1/status')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'CONFIRMED', fulfillmentMode: 'BAKE' })
+
+      expect(res.status).toBe(200)
+      expect(prisma.productionRun.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ recipeId: 'recipe-1', orderId: 'order-1' }),
+      })
+      // Juice (no recipe) deducted immediately — 3 × 1 = 3 units.
+      expect(prisma.stockMovement.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ stockItemId: 'stock-2', type: 'ORDER_FULFILLMENT', quantity: -3 }),
+      })
+      expect(prisma.stockItem.update).toHaveBeenCalledWith({
+        where: { id: 'stock-2' },
+        data: { currentStock: { decrement: 3 } },
+      })
+      // Scones (has recipe) not deducted at all.
+      expect(prisma.stockMovement.create).not.toHaveBeenCalledWith({
+        data: expect.objectContaining({ stockItemId: 'stock-1' }),
+      })
+    })
+
+    it('ORD-24 — a made-to-order product with no StockItem yet is still recognised as bakeable (regression: found by end-to-end testing — a fresh SELLABLE product never gets an auto-created StockItem, only a lazily-created one on first packaging, so bakeability must not require one)', async () => {
+      prisma.permission.findMany.mockResolvedValueOnce([{ action: 'update', subject: 'order' }])
+      const bakeOrder = makeOrder({
+        status: 'PENDING',
+        items: [{
+          id: 'item-1', variantId: 'variant-1', quantity: 1, unitPrice: 65, subtotal: 65,
+          variant: {
+            id: 'variant-1', name: 'Half Dozen', unitsPerPack: 6, odooProductId: null, odooProductReference: null,
+            product: { id: 'product-1', name: 'Scones', classification: 'SELLABLE', stockItem: null },
+          },
+        }],
+      })
+      prisma.order.findUnique
+        .mockResolvedValueOnce(bakeOrder)
+        .mockResolvedValueOnce(makeOrder({ status: 'CONFIRMED' }))
+      prisma.recipe.findMany.mockResolvedValueOnce([{ id: 'recipe-1', outputProductId: 'product-1', yieldPerBatch: 12 }])
+      prisma.order.update
+        .mockResolvedValueOnce(makeOrder({ status: 'CONFIRMED' }))
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce(makeOrder({ status: 'BAKING' }))
+      prisma.productionRun.create.mockResolvedValueOnce({ id: 'run-1' })
+      prisma.financeTransaction.findUnique.mockResolvedValueOnce(null)
+      prisma.financeAccount.findFirst.mockResolvedValueOnce(null)
+
+      const token = adminToken(app)
+      const res = await supertest(app.server)
+        .patch('/orders/order-1/status')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'CONFIRMED', fulfillmentMode: 'BAKE' })
+
+      expect(res.status).toBe(200)
+      expect(res.body.status).toBe('BAKING')
+      expect(prisma.productionRun.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ recipeId: 'recipe-1', orderId: 'order-1' }),
+      })
+    })
   })
 
   // ── POST /orders/:id/payment ───────────────────────────────────────────────
